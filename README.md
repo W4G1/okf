@@ -276,10 +276,6 @@ cargo test             # unit + integration tests (incl. ports of the reference 
 cargo clippy --all-targets
 ```
 
-The v0.2 integration tests in `tests/v0_2.rs` are built from the specification's
-Appendix A worked example, transcribed verbatim, so they double as a fidelity
-check against the spec's own documents.
-
 ## License
 
 Licensed under the **Apache License, Version 2.0**, the same license as the
