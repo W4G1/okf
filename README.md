@@ -1,3 +1,5 @@
+<div align="center">
+
 # okf
 
 A **pure-Rust, zero-dependency** implementation of the [Open Knowledge Format
@@ -5,11 +7,12 @@ A **pure-Rust, zero-dependency** implementation of the [Open Knowledge Format
 Google's open, human- and agent-friendly format for representing *knowledge* as
 a directory of markdown files with YAML frontmatter.
 
-> OKF is intentionally minimal: "if you can `cat` a file, you can read OKF; if
-> you can `git clone` a repo, you can ship it." This crate honors that spirit:
-> it is implemented entirely on the Rust **standard library**, with **no
-> third-party dependencies** (it includes its own YAML-subset parser, markdown
-> link scanner, date arithmetic, directory walker, and CLI argument parsing).
+[![crates.io](https://img.shields.io/crates/v/okf.svg)](https://crates.io/crates/okf)
+[![docs.rs](https://img.shields.io/docsrs/okf)](https://docs.rs/okf)
+[![CI](https://github.com/W4G1/okf/actions/workflows/rust.yml/badge.svg)](https://github.com/W4G1/okf/actions/workflows/rust.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](#license)
+
+</div>
 
 ## Installation
 
