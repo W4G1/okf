@@ -67,13 +67,73 @@ impl Link {
     /// (targets ending in `/`), or targets that cannot form a valid concept id.
     /// The result is *not* guaranteed to exist in the bundle: broken links are
     /// permitted by the spec (§6.1).
+    ///
+    /// Where a target is percent-encoded this returns the literal reading; use
+    /// [`Link::resolve_all`] to also consider the decoded one.
     pub fn resolve(&self, source: &ConceptId) -> Option<ConceptId> {
-        match self.kind {
-            LinkKind::Absolute => resolve_absolute(&self.target),
-            LinkKind::Relative => resolve_relative(&self.target, source),
-            _ => None,
+        self.resolve_all(source).into_iter().next()
+    }
+
+    /// Every concept id this link may denote, most likely first.
+    ///
+    /// A markdown destination is a URL, so a concept whose filename contains a
+    /// space is normally linked as `/tables/my%20notes.md`. Decoding is offered
+    /// as a second candidate rather than applied outright, so that a file
+    /// genuinely named `my%20notes.md` still resolves by its literal spelling.
+    /// Callers should prefer the first candidate that exists in the bundle.
+    pub fn resolve_all(&self, source: &ConceptId) -> Vec<ConceptId> {
+        let mut out = Vec::new();
+        let mut push = |target: &str| {
+            let id = match self.kind {
+                LinkKind::Absolute => resolve_absolute(target),
+                LinkKind::Relative => resolve_relative(target, source),
+                _ => None,
+            };
+            if let Some(id) = id {
+                if !out.contains(&id) {
+                    out.push(id);
+                }
+            }
+        };
+        push(&self.target);
+        if let Some(decoded) = percent_decode(&self.target) {
+            push(&decoded);
+        }
+        out
+    }
+}
+
+/// Percent-decodes a link destination, or `None` if there is nothing to decode
+/// or the result is not valid UTF-8.
+fn percent_decode(s: &str) -> Option<String> {
+    if !s.contains('%') {
+        return None;
+    }
+    let bytes = s.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut decoded_any = false;
+    let mut i = 0;
+    while i < bytes.len() {
+        let escape = (bytes[i] == b'%' && i + 3 <= bytes.len())
+            .then(|| &bytes[i + 1..i + 3])
+            .filter(|hex| hex.iter().all(u8::is_ascii_hexdigit));
+        match escape {
+            Some(hex) => {
+                let hex = std::str::from_utf8(hex).ok()?;
+                out.push(u8::from_str_radix(hex, 16).ok()?);
+                decoded_any = true;
+                i += 3;
+            }
+            None => {
+                out.push(bytes[i]);
+                i += 1;
+            }
         }
     }
+    if !decoded_any {
+        return None;
+    }
+    String::from_utf8(out).ok()
 }
 
 /// A numbered entry under a legacy v0.1 `# Citations` heading.
@@ -281,7 +341,7 @@ fn scan_line_links(line: &str, out: &mut Vec<Link>) {
     while i < chars.len() {
         if chars[i] == '[' {
             if let Some((text, dest, next)) = parse_inline_link(&chars, i) {
-                let target = strip_title(&dest);
+                let target = clean_destination(&dest);
                 out.push(Link {
                     text,
                     kind: Link::classify(&target),
@@ -349,6 +409,22 @@ fn parse_inline_link(chars: &[char], start: usize) -> Option<(String, String, us
     Some((text, dest, j + 1))
 }
 
+/// Normalizes a raw link destination.
+///
+/// Unwraps the CommonMark `<...>` form, which is how a destination is allowed
+/// to contain spaces, and otherwise removes an optional title suffix. A
+/// bracketed destination is taken literally, since a space inside it is part of
+/// the path rather than a separator before a title.
+fn clean_destination(dest: &str) -> String {
+    let d = dest.trim();
+    if let Some(rest) = d.strip_prefix('<') {
+        if let Some(end) = rest.find('>') {
+            return rest[..end].to_string();
+        }
+    }
+    strip_title(d)
+}
+
 /// Removes an optional `"title"` (or `'title'`) suffix from a link destination.
 fn strip_title(dest: &str) -> String {
     let d = dest.trim();
@@ -401,7 +477,7 @@ fn parse_citation_line(line: &str) -> Option<Citation> {
     if let Some(open) = chars.iter().position(|&c| c == '[') {
         if let Some((t, dest, _)) = parse_inline_link(&chars, open) {
             text = Some(t);
-            target = Some(strip_title(&dest));
+            target = Some(clean_destination(&dest));
         }
     }
     Some(Citation {

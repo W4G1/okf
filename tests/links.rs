@@ -180,3 +180,59 @@ fn document_links_and_citations_integration() {
     assert_eq!(internal.len(), 1);
     assert_eq!(doc.citations().len(), 1);
 }
+
+#[test]
+fn angle_bracket_destinations_are_unwrapped() {
+    // The CommonMark `<...>` form is how a destination carries a space.
+    let body = "See [notes](</tables/my notes.md>) and [t](<https://example.com> \"title\").";
+    let links = extract_links(body);
+    assert_eq!(links[0].target, "/tables/my notes.md");
+    assert_eq!(links[0].kind, LinkKind::Absolute);
+    assert_eq!(links[1].target, "https://example.com");
+}
+
+#[test]
+fn a_bare_space_in_a_destination_is_not_mistaken_for_a_title() {
+    let links = extract_links("See [notes](/tables/my notes.md).");
+    assert_eq!(links[0].target, "/tables/my notes.md");
+}
+
+#[test]
+fn resolves_links_to_names_with_spaces_and_emoji() {
+    let source = ConceptId::parse("tables/orders").unwrap();
+    for target in [
+        "/tables/my notes.md",
+        "</tables/my notes.md>",
+        "./my notes.md",
+        "/tables/rocket\u{1f680}.md",
+    ] {
+        let link = extract_links(&format!("[x]({target})")).remove(0);
+        assert!(
+            link.resolve(&source).is_some(),
+            "did not resolve: {target:?}"
+        );
+    }
+}
+
+#[test]
+fn percent_encoded_targets_offer_both_readings() {
+    let source = ConceptId::parse("tables/orders").unwrap();
+    let link = extract_links("[x](/tables/my%20notes.md)").remove(0);
+    let ids: Vec<String> = link
+        .resolve_all(&source)
+        .iter()
+        .map(ConceptId::to_string)
+        .collect();
+    // Literal first, so a file really named `my%20notes.md` still wins.
+    assert_eq!(ids, vec!["tables/my%20notes", "tables/my notes"]);
+}
+
+#[test]
+fn a_target_with_no_escapes_has_a_single_reading() {
+    let source = ConceptId::parse("a").unwrap();
+    let link = extract_links("[x](/tables/customers.md)").remove(0);
+    assert_eq!(link.resolve_all(&source).len(), 1);
+    // A stray `%` is not an escape.
+    let link = extract_links("[x](/tables/100%.md)").remove(0);
+    assert_eq!(link.resolve_all(&source).len(), 1);
+}

@@ -2,9 +2,10 @@
 //!
 //! A *concept id* is the path of a concept's file within the bundle with the
 //! `.md` suffix removed, e.g. `tables/users.md` has id `tables/users` (§2).
-//! This module ports the reference `bundle/paths.py`, including its segment
-//! validation rule. Ported to Rust and modified from the original Apache-2.0
-//! Python source; see the NOTICE file.
+//! This module ports the reference `bundle/paths.py`. Its ASCII segment rule is
+//! kept as [`is_portable_segment`], a guidance check, rather than as a parse
+//! error: see [`validate_segment`]. Ported to Rust and modified from the
+//! original Apache-2.0 Python source; see the NOTICE file.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -99,9 +100,11 @@ impl ConceptId {
     /// `path_to_concept_id` (only `parse_concept_id` validates). A file already
     /// on disk is a concept whatever it is called, and §11 makes conformance a
     /// question of frontmatter, not filenames, so a name such as
-    /// `my notes.md` must not turn a readable document into an error. The
-    /// consequence is that [`ConceptId::parse`] may reject the string form of an
-    /// id that this returns.
+    /// `my notes.md` must not turn a readable document into an error.
+    ///
+    /// [`ConceptId::parse`] accepts everything this can return, with one
+    /// exception: a Unix filename containing a literal `\`, which
+    /// [`validate_segment`] rejects because it is a separator elsewhere.
     pub fn from_path(bundle_root: &Path, path: &Path) -> Result<Self, ConceptIdError> {
         let rel = path
             .strip_prefix(bundle_root)
@@ -137,24 +140,61 @@ impl std::str::FromStr for ConceptId {
     }
 }
 
-/// Validates a single path segment against the reference rule
-/// `[A-Za-z0-9_][A-Za-z0-9_.\-]*`.
+/// Validates a single path segment, rejecting only what cannot be a concept id.
+///
+/// The reference `bundle/paths.py` restricts segments to
+/// `[A-Za-z0-9_][A-Za-z0-9_.\-]*`, but that rule is an artifact of the reference
+/// implementation rather than a requirement: the specification states no
+/// character constraint on filenames, and §11 makes conformance a question of
+/// frontmatter. [`ConceptId::from_path`] accordingly accepts whatever is on
+/// disk, so applying the ASCII rule here only meant that ids the loader had
+/// just produced could not be parsed back, and that links to those concepts
+/// vanished from the graph without even being reported as broken.
+///
+/// What stays rejected is the set that cannot round-trip through the
+/// `/`-joined string form or through [`ConceptId::to_path`]: an empty segment,
+/// the traversal names `.` and `..`, the path separators `/` and `\`, and
+/// control characters. Spaces, emoji, and other Unicode are accepted.
+///
+/// The ASCII convention is still worth following, so `validate_bundle` reports
+/// segments outside it as a warning instead of refusing to parse them.
 pub fn validate_segment(seg: &str) -> Result<(), ConceptIdError> {
-    let mut chars = seg.chars();
-    match chars.next() {
-        Some(c) if c.is_ascii_alphanumeric() || c == '_' => {}
-        _ => {
-            return Err(ConceptIdError(format!(
-                "Invalid concept id segment: {seg:?}"
-            )))
-        }
+    let reject = |reason: &str| {
+        Err(ConceptIdError(format!(
+            "Invalid concept id segment: {seg:?} ({reason})"
+        )))
+    };
+    if seg.is_empty() {
+        return reject("empty");
     }
-    for c in chars {
-        if !(c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '-') {
-            return Err(ConceptIdError(format!(
-                "Invalid concept id segment: {seg:?}"
-            )));
+    if seg == "." || seg == ".." {
+        return reject("`.` and `..` cannot name a concept");
+    }
+    for c in seg.chars() {
+        // `\` is a separator on Windows, so allowing it would let one segment
+        // silently become two in `to_path`.
+        if c == '/' || c == '\\' {
+            return reject("contains a path separator");
+        }
+        if c.is_control() {
+            return reject("contains a control character");
         }
     }
     Ok(())
+}
+
+/// Whether a segment is within the reference implementation's
+/// `[A-Za-z0-9_][A-Za-z0-9_.\-]*` convention.
+///
+/// [`validate_segment`] no longer enforces this, because the spec does not, but
+/// a name outside it needs `<...>` or percent-encoding to be linked from
+/// markdown and is not guaranteed to survive every filesystem unchanged. It is
+/// reported as guidance, never as an error.
+pub fn is_portable_segment(seg: &str) -> bool {
+    let mut chars = seg.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_alphanumeric() || c == '_' => {}
+        _ => return false,
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '-')
 }

@@ -167,10 +167,97 @@ fn a_filename_that_is_not_a_valid_concept_id_segment_still_loads() {
         bundle.parse_errors()
     );
     assert_eq!(bundle.len(), 1);
-    assert_eq!(bundle.concepts()[0].id.to_string(), "tables/my notes");
-    assert!(validate_bundle(&bundle).is_conformant());
+    let id = &bundle.concepts()[0].id;
+    assert_eq!(id.to_string(), "tables/my notes");
 
-    // Parsing that same id from a string is still rejected, as it is upstream:
-    // only `parse` applies the segment rule.
-    assert!(ConceptId::parse("tables/my notes").is_err());
+    // The id the loader produced round-trips, so a consumer can look the
+    // concept back up by the id it was handed.
+    assert_eq!(ConceptId::parse(&id.to_string()).as_ref(), Ok(id));
+    assert!(bundle.contains(&ConceptId::parse("tables/my notes").unwrap()));
+
+    // Still conformant: the name is only worth a warning, since §11 makes
+    // conformance a question of frontmatter.
+    let report = validate_bundle(&bundle);
+    assert!(report.is_conformant());
+    assert!(
+        report
+            .of(Severity::Warning)
+            .any(|d| d.message.contains("my notes")),
+        "{:?}",
+        report.diagnostics
+    );
+}
+
+#[test]
+fn links_to_names_with_spaces_and_emoji_join_the_graph() {
+    // Before the segment rule was relaxed these links resolved to nothing and
+    // were not even reported as broken: the edge vanished silently.
+    let tmp = TempDir::new();
+    tmp.write(
+        "tables/my notes.md",
+        "---\ntype: Reference\ntitle: Notes\ndescription: d\n---\n\nProse.\n",
+    );
+    tmp.write(
+        "tables/rocket\u{1f680}.md",
+        "---\ntype: Reference\ntitle: Rocket\ndescription: d\n---\n\nProse.\n",
+    );
+    tmp.write(
+        "tables/orders.md",
+        "---\ntype: Reference\ntitle: Orders\ndescription: d\n---\n\n\
+         Plain [a](/tables/my notes.md), bracketed [b](</tables/my notes.md>),\n\
+         encoded [c](/tables/my%20notes.md), emoji [d](/tables/rocket\u{1f680}.md).\n",
+    );
+
+    let bundle = Bundle::load(tmp.path()).unwrap();
+    let orders = ConceptId::parse("tables/orders").unwrap();
+    let notes = ConceptId::parse("tables/my notes").unwrap();
+    let rocket = ConceptId::parse("tables/rocket\u{1f680}").unwrap();
+
+    let resolved = bundle.links_from(&orders);
+    assert_eq!(resolved.len(), 4);
+    assert!(
+        resolved.iter().all(|l| l.exists),
+        "unresolved: {:?}",
+        resolved.iter().filter(|l| !l.exists).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        resolved.iter().filter(|l| l.target == notes).count(),
+        3,
+        "all three spellings should name the same concept"
+    );
+    assert_eq!(bundle.backlinks(&notes), std::slice::from_ref(&orders));
+    assert_eq!(bundle.backlinks(&rocket), std::slice::from_ref(&orders));
+    assert!(bundle.broken_links().is_empty());
+}
+
+#[test]
+fn a_broken_link_to_a_spaced_name_is_still_reported() {
+    let tmp = TempDir::new();
+    tmp.write(
+        "a.md",
+        "---\ntype: Reference\ntitle: A\ndescription: d\n---\n\n[gone](/tables/no such.md)\n",
+    );
+    let bundle = Bundle::load(tmp.path()).unwrap();
+    let broken = bundle.broken_links();
+    assert_eq!(broken.len(), 1);
+    assert_eq!(broken[0].1, "/tables/no such.md");
+}
+
+#[test]
+fn an_awkward_segment_warns_once_not_once_per_file() {
+    let tmp = TempDir::new();
+    for name in ["a", "b", "c"] {
+        tmp.write(
+            &format!("my dir/{name}.md"),
+            "---\ntype: Reference\ntitle: T\ndescription: d\n---\n\nProse.\n",
+        );
+    }
+    let bundle = Bundle::load(tmp.path()).unwrap();
+    let report = validate_bundle(&bundle);
+    assert!(report.is_conformant());
+    let warnings: Vec<_> = report
+        .of(Severity::Warning)
+        .filter(|d| d.message.contains("my dir"))
+        .collect();
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
 }

@@ -378,7 +378,16 @@ fn build_graph(
     for c in concepts {
         let mut resolved = Vec::new();
         for link in c.document.links() {
-            if let Some(target) = link.resolve(&c.id) {
+            // A percent-encoded target has two readings (§6.1); take whichever
+            // names a concept that is really there, else the literal one so the
+            // link is still reported as broken rather than dropped.
+            let candidates = link.resolve_all(&c.id);
+            let target = candidates
+                .iter()
+                .find(|t| index.contains_key(*t))
+                .or_else(|| candidates.first())
+                .cloned();
+            if let Some(target) = target {
                 let exists = index.contains_key(&target);
                 if exists {
                     let entry = backlinks.entry(target.clone()).or_default();

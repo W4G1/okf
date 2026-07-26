@@ -158,6 +158,7 @@ pub fn validate_bundle_at(bundle: &Bundle, today: Option<Date>) -> Report {
     }
 
     // (3) Reserved files must follow their structure when present.
+    check_segment_portability(bundle, &mut report);
     validate_reserved(bundle, &mut report);
     check_declared_version(bundle, &mut report);
 
@@ -572,6 +573,39 @@ fn check_path_fields(cx: &mut Context, bundle: &Bundle, fm: &Frontmatter) {
             cx.info(format!(
                 "`{field}` does not resolve to a file in the bundle: {raw} (§6.2)"
             ));
+        }
+    }
+}
+
+/// Concept-id segments outside the reference implementation's
+/// `[A-Za-z0-9_][A-Za-z0-9_.\-]*` convention (§2).
+///
+/// Never an error. The spec places no character constraint on filenames and
+/// §11 makes conformance a question of frontmatter, so [`ConceptId`] accepts
+/// these names and the bundle stays conformant. It is still worth telling a
+/// producer: such a name has to be written as `<...>` or percent-encoded to be
+/// linked from markdown, and is not guaranteed to survive every filesystem
+/// unchanged.
+///
+/// Each distinct segment is reported once, against the first concept that uses
+/// it, so one awkwardly named directory does not warn on every file inside it.
+fn check_segment_portability(bundle: &Bundle, report: &mut Report) {
+    let mut seen: HashSet<&str> = HashSet::new();
+    for concept in bundle.concepts() {
+        for segment in concept.id.segments() {
+            if crate::concept_id::is_portable_segment(segment) || !seen.insert(segment) {
+                continue;
+            }
+            report.warn(
+                Some(concept.path.clone()),
+                Some(concept.id.clone()),
+                format!(
+                    "concept-id segment {segment:?} is outside the conventional \
+                     `[A-Za-z0-9_][A-Za-z0-9_.-]*` set; the bundle is still conformant, but \
+                     such a name needs `<...>` or percent-encoding to link portably and is \
+                     not guaranteed to survive every filesystem unchanged (§2)"
+                ),
+            );
         }
     }
 }

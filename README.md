@@ -18,9 +18,13 @@ a directory of markdown files with YAML frontmatter.
 - A **concept** is one markdown document: a YAML **frontmatter** block delimited
   by `---`, followed by a markdown **body**.
 - A **concept id** is the file's path within the bundle with `.md` removed
-  (`tables/users.md` becomes `tables/users`).
+  (`tables/users.md` becomes `tables/users`). The spec constrains no character
+  in a filename, so ids may contain spaces, emoji, and other Unicode; an id
+  outside the conventional `[A-Za-z0-9_][A-Za-z0-9_.-]*` set is reported as a
+  warning, never rejected.
 - Concepts **cross-link** via ordinary markdown links, absolute
-  (`/tables/users.md`, bundle-relative) or relative (`./other.md`).
+  (`/tables/users.md`, bundle-relative) or relative (`./other.md`). A target
+  containing a space may also be written `<...>` or percent-encoded.
 - `index.md` files provide directory listings for *progressive disclosure*;
   `log.md` files record date-grouped change history. Both are **reserved**
   filenames.
@@ -78,7 +82,7 @@ concerns.
 | [`yaml`]        | A YAML-*subset* `Value`/`Mapping`, parser, and emitter for frontmatter |
 | [`document`]    | `Document` = frontmatter + body; parse / serialize / validate (§4)    |
 | [`frontmatter`] | `Frontmatter`: typed accessors over an order-preserving mapping (§4.1)|
-| [`concept_id`]  | `ConceptId` to/from path conversion and segment validation (§2)       |
+| [`concept_id`]  | `ConceptId` to/from path conversion and segment rules (§2)            |
 | [`provenance`]  | `sources`, credibility signals, and footnote attribution (§5.1)       |
 | [`trust`]       | `generated`, `verified`, trust tiers, `status`, `stale_after` (§5.2 to §5.5) |
 | [`actor`]       | The `human:` / `process:` / `<producer>/<version>` convention (§7)    |
