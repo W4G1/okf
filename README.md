@@ -11,6 +11,23 @@ a directory of markdown files with YAML frontmatter.
 > third-party dependencies** (it includes its own YAML-subset parser, markdown
 > link scanner, date arithmetic, directory walker, and CLI argument parsing).
 
+## Installation
+
+Install the CLI from [crates.io](https://crates.io/crates/okf):
+
+```sh
+cargo install okf
+
+# Run the cli
+okf --version    # okf 0.2.0 (OKF spec v0.2)
+```
+
+Or add it as a library dependency to your project:
+
+```sh
+cargo add okf
+```
+
 ## What OKF is
 
 - A **bundle** is a directory tree of UTF-8 markdown files (the unit of
@@ -31,6 +48,115 @@ a directory of markdown files with YAML frontmatter.
 - The only hard requirement for **conformance** is a non-empty `type` field on
   every concept; consumers must otherwise be permissive (unknown types, unknown
   keys, broken links, and missing optional fields are all tolerated).
+
+## Usage
+
+### As a CLI
+
+```text
+okf validate     <bundle>    Check a bundle against OKF v0.2 conformance (§11)
+okf info         <bundle>    Summarize a bundle (concepts, types, trust, links)
+okf trust        <bundle>    Report trust tier, status, and staleness per concept
+okf computations <bundle>    List Attested Computation contracts (§10)
+okf index        <bundle>    (Re)generate every index.md in the bundle
+okf graph        <bundle>    Print the cross-link graph (--dot for Graphviz DOT)
+okf parse        <file>      Parse one concept document and print its structure
+okf fmt          <file>      Normalize a document by parse + re-serialize (-w writes)
+```
+
+`okf validate` exits non-zero when a bundle is not conformant, so it drops
+straight into CI:
+
+```sh
+okf validate ./bundles/finance
+okf validate ./bundles/finance --today 2026-07-01   # pin staleness for reproducible runs
+okf graph ./bundles/finance --dot --sources | dot -Tsvg > graph.svg
+```
+
+`okf trust` gives the per-concept view the trust families exist for:
+
+```text
+computations/profit [stable] machine-confirmed STALE
+  generated: reference_agent/gemini-2.5-pro at 2026-06-14T14:00:00Z
+  verified:  process:finance-nightly at 2026-06-12T08:00:00Z
+  stale_after: 2026-06-15
+  source:    [cost-alloc] Cost allocation standard
+computations/revenue [stable] human-reviewed
+  generated: reference_agent/gemini-2.5-pro at 2026-06-28T14:00:00Z
+  verified:  human:ahormati at 2026-06-25T09:00:00Z
+  stale_after: 2026-12-31
+```
+
+### As a library
+
+```rust,no_run
+use okf::{Bundle, validate_bundle, ConceptId, Date, TrustTier};
+
+let bundle = Bundle::load("./my_bundle")?;
+println!("{} concepts", bundle.len());
+
+// Conformance check
+let report = validate_bundle(&bundle);
+if report.is_conformant() {
+    println!("conformant with OKF v{}", okf::OKF_VERSION);
+}
+
+// Traverse the cross-link graph
+let id = ConceptId::parse("tables/orders")?;
+for link in bundle.links_from(&id) {
+    println!("{} -> {} (exists: {})", id, link.target, link.exists);
+}
+for backlink in bundle.backlinks(&id) {
+    println!("cited by {backlink}");
+}
+
+// Trust and freshness
+let today = Date::today_utc().unwrap();
+for concept in bundle.concepts() {
+    if concept.trust_tier() < TrustTier::HumanReviewed && concept.is_stale_on(today) {
+        println!("{} needs review", concept.id);
+    }
+}
+
+// Provenance: recurse into sources that are themselves concepts
+for source in bundle.derived_from(&id) {
+    println!("{id} derives from {source}");
+}
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+Reading an Attested Computation contract:
+
+```rust
+use okf::Document;
+
+let doc = Document::parse(
+    "---\n\
+     type: Attested Computation\n\
+     runtime: bigquery\n\
+     parameters:\n\
+     \x20 - { name: year, type: integer, required: true }\n\
+     executor:\n\
+     \x20 resource: references/skills/run-on-bq.md\n\
+     \x20 receipt: [job_id, executed_sql, result]\n\
+     ---\n\n# Computation\n\n\
+     \x20   SELECT SUM(amount) FROM finance.recognized_revenue WHERE fiscal_year = @year\n",
+)?;
+
+let contract = doc.attested_computation().unwrap();
+assert_eq!(contract.runtime.as_deref(), Some("bigquery"));
+assert_eq!(contract.required_parameters().count(), 1);
+assert!(contract.computation.code().unwrap().starts_with("SELECT SUM(amount)"));
+# Ok::<(), okf::DocumentError>(())
+```
+
+## Building & testing
+
+```sh
+cargo build            # library + `okf` binary
+cargo test             # unit + integration tests
+cargo clippy --all-targets
+```
 
 ## What v0.2 adds
 
@@ -107,7 +233,27 @@ Compatibility is checked against the reference's four published bundles
 every one is conformant, and each document's frontmatter re-serializes to a value
 PyYAML reads back identically.
 
-### Design choices
+## Mapping to the spec
+
+| Spec section                | Implemented by                                            |
+|-----------------------------|-----------------------------------------------------------|
+| §2 Terminology / concept id | [`concept_id::ConceptId`]                                 |
+| §3 Bundle structure         | [`bundle::Bundle`], [`bundle::RESERVED_FILENAMES`]        |
+| §4 Concept documents        | [`document::Document`], [`frontmatter::Frontmatter`]      |
+| §5.1 Provenance             | [`provenance::Source`], [`provenance::attributions`]      |
+| §5.2 Trust                  | [`trust::Generated`], [`trust::Verification`]             |
+| §5.3 Trust tiers            | [`trust::TrustTier`]                                      |
+| §5.4 / §5.5 Lifecycle       | [`trust::Status`], [`trust::is_stale_on`]                 |
+| §6 Cross-linking and paths  | [`links`], [`links::field_path_candidates`]               |
+| §7 Actor convention         | [`actor::Actor`]                                          |
+| §8 Index files              | [`index::regenerate_indexes`]                             |
+| §9 Log files                | [`log::Log`]                                              |
+| §10 Attested computations   | [`computation::AttestedComputation`]                      |
+| §11 Conformance             | [`validate::validate_bundle`]                             |
+| §12 Versioning              | [`bundle::Bundle::okf_version`], [`OKF_VERSION`]          |
+| §13 Changes from v0.1       | [`frontmatter::LEGACY_FRONTMATTER_KEYS`]                  |
+
+## Design choices
 
 - **Frontmatter preserves everything.** Rather than deserializing into a fixed
   struct (which would drop producer-defined keys), `Frontmatter` keeps the full
@@ -146,135 +292,6 @@ PyYAML reads back identically.
   emitted quoted, because a bare one is not stable even under the reference's own
   round-trip: PyYAML re-dumps it as `2026-06-30 14:00:00+00:00`, losing the `T`
   and `Z` that §5.2 asks for. A bare `YYYY-MM-DD` stays plain.
-
-## Usage
-
-### As a library
-
-```rust,no_run
-use okf::{Bundle, validate_bundle, ConceptId, Date, TrustTier};
-
-let bundle = Bundle::load("./my_bundle")?;
-println!("{} concepts", bundle.len());
-
-// Conformance check (§11).
-let report = validate_bundle(&bundle);
-if report.is_conformant() {
-    println!("conformant with OKF v{}", okf::OKF_VERSION);
-}
-
-// Traverse the cross-link graph.
-let id = ConceptId::parse("tables/orders")?;
-for link in bundle.links_from(&id) {
-    println!("{} -> {} (exists: {})", id, link.target, link.exists);
-}
-for backlink in bundle.backlinks(&id) {
-    println!("cited by {backlink}");
-}
-
-// Trust and freshness (§5).
-let today = Date::today_utc().unwrap();
-for concept in bundle.concepts() {
-    if concept.trust_tier() < TrustTier::HumanReviewed && concept.is_stale_on(today) {
-        println!("{} needs review", concept.id);
-    }
-}
-
-// Provenance: recurse into sources that are themselves concepts (§5.1).
-for source in bundle.derived_from(&id) {
-    println!("{id} derives from {source}");
-}
-# Ok::<(), Box<dyn std::error::Error>>(())
-```
-
-Reading an Attested Computation contract:
-
-```rust
-use okf::Document;
-
-let doc = Document::parse(
-    "---\n\
-     type: Attested Computation\n\
-     runtime: bigquery\n\
-     parameters:\n\
-     \x20 - { name: year, type: integer, required: true }\n\
-     executor:\n\
-     \x20 resource: references/skills/run-on-bq.md\n\
-     \x20 receipt: [job_id, executed_sql, result]\n\
-     ---\n\n# Computation\n\n\
-     \x20   SELECT SUM(amount) FROM finance.recognized_revenue WHERE fiscal_year = @year\n",
-)?;
-
-let contract = doc.attested_computation().unwrap();
-assert_eq!(contract.runtime.as_deref(), Some("bigquery"));
-assert_eq!(contract.required_parameters().count(), 1);
-assert!(contract.computation.code().unwrap().starts_with("SELECT SUM(amount)"));
-# Ok::<(), okf::DocumentError>(())
-```
-
-### As a CLI
-
-```text
-okf validate     <bundle>    Check a bundle against OKF v0.2 conformance (§11)
-okf info         <bundle>    Summarize a bundle (concepts, types, trust, links)
-okf trust        <bundle>    Report trust tier, status, and staleness per concept
-okf computations <bundle>    List Attested Computation contracts (§10)
-okf index        <bundle>    (Re)generate every index.md in the bundle
-okf graph        <bundle>    Print the cross-link graph (--dot for Graphviz DOT)
-okf parse        <file>      Parse one concept document and print its structure
-okf fmt          <file>      Normalize a document by parse + re-serialize (-w writes)
-```
-
-`okf validate` exits non-zero when a bundle is not conformant, so it drops
-straight into CI:
-
-```sh
-okf validate ./bundles/finance
-okf validate ./bundles/finance --today 2026-07-01   # pin staleness for reproducible runs
-okf graph ./bundles/finance --dot --sources | dot -Tsvg > graph.svg
-```
-
-`okf trust` gives the per-concept view the trust families exist for:
-
-```text
-computations/profit [stable] machine-confirmed STALE
-  generated: reference_agent/gemini-2.5-pro at 2026-06-14T14:00:00Z
-  verified:  process:finance-nightly at 2026-06-12T08:00:00Z
-  stale_after: 2026-06-15
-  source:    [cost-alloc] Cost allocation standard
-computations/revenue [stable] human-reviewed
-  generated: reference_agent/gemini-2.5-pro at 2026-06-28T14:00:00Z
-  verified:  human:ahormati at 2026-06-25T09:00:00Z
-  stale_after: 2026-12-31
-```
-
-## Mapping to the spec
-
-| Spec section                | Implemented by                                            |
-|-----------------------------|-----------------------------------------------------------|
-| §2 Terminology / concept id | [`concept_id::ConceptId`]                                 |
-| §3 Bundle structure         | [`bundle::Bundle`], [`bundle::RESERVED_FILENAMES`]        |
-| §4 Concept documents        | [`document::Document`], [`frontmatter::Frontmatter`]      |
-| §5.1 Provenance             | [`provenance::Source`], [`provenance::attributions`]      |
-| §5.2 Trust                  | [`trust::Generated`], [`trust::Verification`]             |
-| §5.3 Trust tiers            | [`trust::TrustTier`]                                      |
-| §5.4 / §5.5 Lifecycle       | [`trust::Status`], [`trust::is_stale_on`]                 |
-| §6 Cross-linking and paths  | [`links`], [`links::field_path_candidates`]               |
-| §7 Actor convention         | [`actor::Actor`]                                          |
-| §8 Index files              | [`index::regenerate_indexes`]                             |
-| §9 Log files                | [`log::Log`]                                              |
-| §10 Attested computations   | [`computation::AttestedComputation`]                      |
-| §11 Conformance             | [`validate::validate_bundle`]                             |
-| §12 Versioning              | [`bundle::Bundle::okf_version`], [`OKF_VERSION`]          |
-| §13 Changes from v0.1       | [`frontmatter::LEGACY_FRONTMATTER_KEYS`]                  |
-
-## Building & testing
-
-```sh
-cargo build            # library + `okf` binary
-cargo test             # unit + integration tests (incl. ports of the reference tests)
-cargo clippy --all-targets
-```
 
 ## License
 
