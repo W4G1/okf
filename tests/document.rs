@@ -230,3 +230,37 @@ fn reorder_preferred_matches_the_reference_key_order() {
     );
     assert_eq!(doc.frontmatter.as_mapping().len(), 5);
 }
+
+#[test]
+fn section_reads_the_lines_under_a_conventional_heading() {
+    // §4.2's conventional headings carry no required behaviour, so this is the
+    // primitive for reading them. Ported from the reference's
+    // `_section_content_lines`, whose details this locks in.
+    let doc = Document::parse(
+        "---\ntype: BigQuery Table\n---\n\n\
+         Prose.\n\n\
+         # Schema\n\n\
+         - `id` STRING: the order id\n\
+         \n\
+         ## Nested\n\
+         - `total` NUMERIC: order total\n\n\
+         # Examples\n\
+         \x20   SELECT 1\n",
+    )
+    .unwrap();
+
+    // Blank lines are dropped, a `##` subheading stays inside the section, and
+    // each line keeps its own indentation.
+    assert_eq!(
+        doc.section("# Schema"),
+        [
+            "- `id` STRING: the order id",
+            "## Nested",
+            "- `total` NUMERIC: order total",
+        ]
+    );
+    assert_eq!(doc.section("# Examples"), ["    SELECT 1"]);
+    assert!(doc.section("# Computation").is_empty());
+    // The heading is matched in full, so the leading `# ` is required.
+    assert!(doc.section("Schema").is_empty());
+}

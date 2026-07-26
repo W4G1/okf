@@ -162,6 +162,35 @@ impl Document {
         links::extract_links(&self.body)
     }
 
+    /// The non-blank lines under a top-level `# heading` in the body, up to the
+    /// next top-level heading.
+    ///
+    /// §4.2 gives `# Schema`, `# Examples`, and `# Computation` conventional
+    /// meaning without attaching required behaviour, so this is the primitive a
+    /// consumer needs to read any of them. A port of the reference's
+    /// `_section_content_lines`, including its details: `heading` is matched in
+    /// full (pass `"# Schema"`), only `# ` counts as a heading so `##`
+    /// subheadings stay inside the section, and each line keeps its original
+    /// indentation.
+    ///
+    /// Returns an empty vector when no such section exists. A repeated heading
+    /// contributes its lines to the same result.
+    pub fn section(&self, heading: &str) -> Vec<&str> {
+        let mut in_section = false;
+        let mut lines = Vec::new();
+        for line in self.body.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("# ") {
+                in_section = trimmed == heading;
+                continue;
+            }
+            if in_section && !trimmed.is_empty() {
+                lines.push(line);
+            }
+        }
+        lines
+    }
+
     /// Extracts the body's `[^label]` attribution markers (§5.1).
     pub fn footnote_refs(&self) -> Vec<FootnoteRef> {
         footnotes::extract_refs(&self.body)
