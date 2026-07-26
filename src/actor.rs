@@ -172,7 +172,11 @@ mod tests {
 
     #[test]
     fn display_round_trips_the_raw_string() {
-        for s in ["human:ahormati", "reference_agent/gemini-2.5-pro", "anything"] {
+        for s in [
+            "human:ahormati",
+            "reference_agent/gemini-2.5-pro",
+            "anything",
+        ] {
             assert_eq!(Actor::parse(s).to_string(), s);
         }
     }

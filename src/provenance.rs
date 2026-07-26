@@ -53,8 +53,14 @@ impl UsageWindow {
     pub fn from_value(value: &Value) -> Option<UsageWindow> {
         let map = value.as_mapping()?;
         Some(UsageWindow {
-            from: map.get("from").and_then(Value::as_display_string).map(DateField::new),
-            to: map.get("to").and_then(Value::as_display_string).map(DateField::new),
+            from: map
+                .get("from")
+                .and_then(Value::as_display_string)
+                .map(DateField::new),
+            to: map
+                .get("to")
+                .and_then(Value::as_display_string)
+                .map(DateField::new),
         })
     }
 }
@@ -62,7 +68,9 @@ impl UsageWindow {
 impl fmt::Display for UsageWindow {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let dash = |d: &Option<DateField>| {
-            d.as_ref().map(|d| d.raw.clone()).unwrap_or_else(|| "?".to_string())
+            d.as_ref()
+                .map(|d| d.raw.clone())
+                .unwrap_or_else(|| "?".to_string())
         };
         write!(f, "{} to {}", dash(&self.from), dash(&self.to))
     }
@@ -268,7 +276,10 @@ mod tests {
         assert_eq!(s[0].id.as_deref(), Some("rev-policy"));
         assert_eq!(s[0].resource_kind(), ResourceKind::Url);
         assert_eq!(s[0].author.as_ref().unwrap().as_str(), "team:finance-fpa");
-        assert_eq!(s[0].last_modified.as_ref().unwrap().date, Date::new(2026, 4, 2));
+        assert_eq!(
+            s[0].last_modified.as_ref().unwrap().date,
+            Date::new(2026, 4, 2)
+        );
         assert_eq!(s[0].usage_count, None);
 
         assert_eq!(s[1].usage_count, Some(5000));
@@ -290,10 +301,9 @@ mod tests {
 
     #[test]
     fn usage_window_entry_overrides_shared() {
-        let shared = UsageWindow::from_value(
-            &Value::parse("{ from: 2026-06-01, to: 2026-06-30 }").unwrap(),
-        )
-        .unwrap();
+        let shared =
+            UsageWindow::from_value(&Value::parse("{ from: 2026-06-01, to: 2026-06-30 }").unwrap())
+                .unwrap();
         let plain = &sources()[1];
         assert_eq!(plain.effective_usage_window(Some(&shared)), Some(&shared));
 
@@ -320,7 +330,10 @@ mod tests {
         assert_eq!(attributions[0].references, 2);
         assert_eq!(attributions[0].definitions, 1);
         assert!(attributions[0].is_resolved());
-        assert_eq!(attributions[0].source.as_ref().unwrap().title.as_deref(), Some("Revenue recognition policy"));
+        assert_eq!(
+            attributions[0].source.as_ref().unwrap().title.as_deref(),
+            Some("Revenue recognition policy")
+        );
 
         // A label with no matching source is reported, not dropped.
         assert_eq!(attributions[2].label, "ghost");
@@ -336,6 +349,9 @@ mod tests {
         let a = attributions(&sources(), body);
         let b = attributions(&reversed, body);
         assert_eq!(a, b);
-        assert_eq!(a[0].source.as_ref().unwrap().id.as_deref(), Some("exec-rev-dash"));
+        assert_eq!(
+            a[0].source.as_ref().unwrap().id.as_deref(),
+            Some("exec-rev-dash")
+        );
     }
 }

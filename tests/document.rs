@@ -89,7 +89,8 @@ fn missing_recommended_is_the_producer_checklist_not_a_rejection() {
 fn a_legacy_timestamp_stands_in_for_generated() {
     // §13.1: consumers MAY fall back to a v0.1 `timestamp` when `generated` is
     // absent, so a v0.1 document has nothing left on the checklist.
-    let doc = with_frontmatter("type: X\ntitle: Y\ndescription: Z\ntimestamp: 2026-05-27T00:00:00+00:00");
+    let doc =
+        with_frontmatter("type: X\ntitle: Y\ndescription: Z\ntimestamp: 2026-05-27T00:00:00+00:00");
     assert!(doc.missing_recommended().is_empty());
     assert_eq!(
         doc.frontmatter.content_changed_at().unwrap().raw,
@@ -117,13 +118,17 @@ fn an_attested_computation_should_carry_a_runtime() {
 
 #[test]
 fn a_bare_verified_mapping_is_read_as_a_one_element_list() {
-    let doc = with_frontmatter("type: X\nverified: { by: human:ahormati, at: 2026-06-25T09:00:00Z }");
+    let doc =
+        with_frontmatter("type: X\nverified: { by: human:ahormati, at: 2026-06-25T09:00:00Z }");
     let events = doc.frontmatter.verified();
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].by.as_ref().unwrap().as_str(), "human:ahormati");
     assert_eq!(events[0].at.as_ref().unwrap().raw, "2026-06-25T09:00:00Z");
 
-    assert!(with_frontmatter("type: X").frontmatter.verified().is_empty());
+    assert!(with_frontmatter("type: X")
+        .frontmatter
+        .verified()
+        .is_empty());
 }
 
 #[test]
@@ -158,7 +163,10 @@ fn staleness_compares_stale_after_against_a_given_day() {
     let today = Date::new(2026, 9, 23).unwrap();
     let stale = |frontmatter: &str| with_frontmatter(frontmatter).frontmatter.is_stale_on(today);
 
-    assert!(stale("type: X\nstale_after: 2026-09-23"), "stale on the day itself");
+    assert!(
+        stale("type: X\nstale_after: 2026-09-23"),
+        "stale on the day itself"
+    );
     assert!(!stale("type: X\nstale_after: 2026-09-24"));
     assert!(!stale("type: X"));
     assert!(!stale("type: X\nstale_after: not-a-date"));
@@ -216,6 +224,9 @@ fn reorder_preferred_matches_the_reference_key_order() {
     let keys: Vec<&str> = doc.frontmatter.as_mapping().keys().collect();
     assert_eq!(keys, ["type", "title", "status", "sources", "custom_key"]);
     // Reordering neither drops nor rewrites anything.
-    assert_eq!(doc.frontmatter.get("custom_key").unwrap().as_str(), Some("keep me"));
+    assert_eq!(
+        doc.frontmatter.get("custom_key").unwrap().as_str(),
+        Some("keep me")
+    );
     assert_eq!(doc.frontmatter.as_mapping().len(), 5);
 }

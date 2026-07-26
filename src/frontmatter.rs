@@ -23,7 +23,7 @@
 //!
 //! [spec]: https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md
 
-use crate::computation::{ATTESTED_COMPUTATION_TYPE, Attester, Executor, Parameter};
+use crate::computation::{Attester, Executor, Parameter, ATTESTED_COMPUTATION_TYPE};
 use crate::date::{Date, DateField, DateTimeField};
 use crate::provenance::{Source, UsageWindow};
 use crate::trust::{self, Generated, Status, TrustTier, Verification};
@@ -203,19 +203,26 @@ impl Frontmatter {
     /// display form; a non-sequence `tags` value yields an empty vector.
     pub fn tags(&self) -> Vec<String> {
         match self.map.get("tags") {
-            Some(Value::Sequence(items)) => items.iter().filter_map(Value::as_display_string).collect(),
+            Some(Value::Sequence(items)) => {
+                items.iter().filter_map(Value::as_display_string).collect()
+            }
             _ => Vec::new(),
         }
     }
 
     /// The `sources` entries: the materials this concept derives from.
     pub fn sources(&self) -> Vec<Source> {
-        self.map.get("sources").map(Source::list_from_value).unwrap_or_default()
+        self.map
+            .get("sources")
+            .map(Source::list_from_value)
+            .unwrap_or_default()
     }
 
     /// The shared `usage_window` that frames every `sources[].usage_count`.
     pub fn usage_window(&self) -> Option<UsageWindow> {
-        self.map.get("usage_window").and_then(UsageWindow::from_value)
+        self.map
+            .get("usage_window")
+            .and_then(UsageWindow::from_value)
     }
 
     /// The `generated` block: how the current content was produced.
@@ -228,7 +235,10 @@ impl Frontmatter {
     /// A bare `{ by, at }` mapping is returned as a one-element list, as §5.2
     /// requires.
     pub fn verified(&self) -> Vec<Verification> {
-        self.map.get("verified").map(Verification::list_from_value).unwrap_or_default()
+        self.map
+            .get("verified")
+            .map(Verification::list_from_value)
+            .unwrap_or_default()
     }
 
     /// The verification with the latest parseable `at` (§5.2).
@@ -292,7 +302,10 @@ impl Frontmatter {
 
     /// The declared `parameters` an agent may fill.
     pub fn parameters(&self) -> Vec<Parameter> {
-        self.map.get("parameters").map(Parameter::list_from_value).unwrap_or_default()
+        self.map
+            .get("parameters")
+            .map(Parameter::list_from_value)
+            .unwrap_or_default()
     }
 
     /// The `computation` path, when the computation lives in a file rather than
@@ -327,8 +340,14 @@ impl Frontmatter {
         };
         push("resource", self.resource());
         push("computation", self.computation());
-        push("executor.resource", self.executor().and_then(|e| e.resource));
-        push("attester.resource", self.attester().and_then(|a| a.resource));
+        push(
+            "executor.resource",
+            self.executor().and_then(|e| e.resource),
+        );
+        push(
+            "attester.resource",
+            self.attester().and_then(|a| a.resource),
+        );
         out
     }
 

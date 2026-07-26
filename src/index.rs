@@ -147,7 +147,9 @@ pub fn regenerate_indexes_with(
                 continue;
             }
             if child.is_file() && child.extension().map(|e| e == "md").unwrap_or(false) {
-                let Some(doc) = load_doc(&child) else { continue };
+                let Some(doc) = load_doc(&child) else {
+                    continue;
+                };
                 let stem = child
                     .file_stem()
                     .map(|s| s.to_string_lossy().to_string())

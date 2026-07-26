@@ -155,10 +155,8 @@ impl Bundle {
                     match Document::parse(&text) {
                         Ok(document) => match ConceptId::from_path(&root, &path) {
                             Ok(id) => concepts.push(Concept { id, path, document }),
-                            Err(e) => parse_errors.push((
-                                path,
-                                DocumentError::MissingKeys(vec![e.to_string()]),
-                            )),
+                            Err(e) => parse_errors
+                                .push((path, DocumentError::MissingKeys(vec![e.to_string()]))),
                         },
                         Err(e) => parse_errors.push((path, e)),
                     }
@@ -300,7 +298,9 @@ impl Bundle {
 
     /// Every concept whose `type` matches exactly.
     pub fn concepts_of_type<'a>(&'a self, type_: &'a str) -> impl Iterator<Item = &'a Concept> {
-        self.concepts.iter().filter(move |c| c.type_().as_deref() == Some(type_))
+        self.concepts
+            .iter()
+            .filter(move |c| c.type_().as_deref() == Some(type_))
     }
 
     /// Every `Attested Computation` concept in the bundle (§10.1).
@@ -328,7 +328,10 @@ impl Bundle {
 
     /// Every concept that is stale on `today`: `today >= stale_after` (§5.5).
     pub fn stale_on(&self, today: Date) -> Vec<&Concept> {
-        self.concepts.iter().filter(|c| c.is_stale_on(today)).collect()
+        self.concepts
+            .iter()
+            .filter(|c| c.is_stale_on(today))
+            .collect()
     }
 
     /// Resolves a path-valued frontmatter field to a file inside the bundle.
@@ -354,9 +357,7 @@ fn collect_markdown(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), BundleErro
         let file_type = entry.file_type()?;
         if file_type.is_dir() {
             collect_markdown(&path, out)?;
-        } else if file_type.is_file()
-            && path.extension().map(|e| e == "md").unwrap_or(false)
-        {
+        } else if file_type.is_file() && path.extension().map(|e| e == "md").unwrap_or(false) {
             out.push(path);
         }
     }

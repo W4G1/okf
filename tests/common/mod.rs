@@ -23,7 +23,8 @@ impl TempDir {
             .unwrap()
             .as_nanos();
         let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let path = std::env::temp_dir().join(format!("okf-test-{}-{nanos}-{n}", std::process::id()));
+        let path =
+            std::env::temp_dir().join(format!("okf-test-{}-{nanos}-{n}", std::process::id()));
         std::fs::create_dir_all(&path).unwrap();
         TempDir { path }
     }

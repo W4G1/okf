@@ -32,7 +32,9 @@ impl ConceptId {
     /// Builds a concept id from segments, validating each.
     pub fn new(segments: Vec<String>) -> Result<Self, ConceptIdError> {
         if segments.is_empty() {
-            return Err(ConceptIdError("concept_id must have at least one segment".into()));
+            return Err(ConceptIdError(
+                "concept_id must have at least one segment".into(),
+            ));
         }
         for seg in &segments {
             validate_segment(seg)?;
@@ -44,7 +46,11 @@ impl ConceptId {
     /// dropped (so leading/trailing/duplicate slashes are tolerated), matching
     /// the reference `parse_concept_id`.
     pub fn parse(s: &str) -> Result<Self, ConceptIdError> {
-        let segments: Vec<String> = s.split('/').filter(|p| !p.is_empty()).map(String::from).collect();
+        let segments: Vec<String> = s
+            .split('/')
+            .filter(|p| !p.is_empty())
+            .map(String::from)
+            .collect();
         if segments.is_empty() {
             return Err(ConceptIdError(format!("Empty concept id: {s:?}")));
         }
@@ -110,7 +116,9 @@ impl ConceptId {
             }
         }
         if segments.is_empty() {
-            return Err(ConceptIdError("concept_id must have at least one segment".into()));
+            return Err(ConceptIdError(
+                "concept_id must have at least one segment".into(),
+            ));
         }
         Ok(ConceptId { segments })
     }
@@ -135,11 +143,17 @@ pub fn validate_segment(seg: &str) -> Result<(), ConceptIdError> {
     let mut chars = seg.chars();
     match chars.next() {
         Some(c) if c.is_ascii_alphanumeric() || c == '_' => {}
-        _ => return Err(ConceptIdError(format!("Invalid concept id segment: {seg:?}"))),
+        _ => {
+            return Err(ConceptIdError(format!(
+                "Invalid concept id segment: {seg:?}"
+            )))
+        }
     }
     for c in chars {
         if !(c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '-') {
-            return Err(ConceptIdError(format!("Invalid concept id segment: {seg:?}")));
+            return Err(ConceptIdError(format!(
+                "Invalid concept id segment: {seg:?}"
+            )));
         }
     }
     Ok(())

@@ -487,7 +487,10 @@ policy.[^rev-policy]
         assert_eq!(c.required_parameters().count(), 1);
 
         let executor = c.executor.as_ref().unwrap();
-        assert_eq!(executor.resource.as_deref(), Some("references/skills/run-on-bq.md"));
+        assert_eq!(
+            executor.resource.as_deref(),
+            Some("references/skills/run-on-bq.md")
+        );
         assert_eq!(executor.receipt, vec!["job_id", "executed_sql", "result"]);
         assert_eq!(
             c.attester.as_ref().unwrap().resource.as_deref(),
@@ -524,7 +527,10 @@ policy.[^rev-policy]
             Some("references/computations/lib/revenue.sql")
         );
         assert!(!c.has_redundant_inline);
-        assert_eq!(c.path_fields(), vec![("computation", "references/computations/lib/revenue.sql")]);
+        assert_eq!(
+            c.path_fields(),
+            vec![("computation", "references/computations/lib/revenue.sql")]
+        );
     }
 
     #[test]
@@ -540,7 +546,8 @@ policy.[^rev-policy]
 
     #[test]
     fn missing_computation_is_representable() {
-        let doc = Document::parse("---\ntype: Attested Computation\n---\n\n# Definition\n").unwrap();
+        let doc =
+            Document::parse("---\ntype: Attested Computation\n---\n\n# Definition\n").unwrap();
         let c = AttestedComputation::from_parts(&doc.frontmatter, &doc.body);
         assert!(c.computation.is_missing());
         assert!(c.runtime.is_none());

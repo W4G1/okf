@@ -87,12 +87,17 @@ impl Report {
     /// `true` if there are no [`Severity::Error`] diagnostics, i.e. the bundle
     /// conforms to §11.
     pub fn is_conformant(&self) -> bool {
-        !self.diagnostics.iter().any(|d| d.severity == Severity::Error)
+        !self
+            .diagnostics
+            .iter()
+            .any(|d| d.severity == Severity::Error)
     }
 
     /// Iterates over diagnostics of a given severity.
     pub fn of(&self, severity: Severity) -> impl Iterator<Item = &Diagnostic> {
-        self.diagnostics.iter().filter(move |d| d.severity == severity)
+        self.diagnostics
+            .iter()
+            .filter(move |d| d.severity == severity)
     }
 
     /// Count of error-level diagnostics.
@@ -121,7 +126,11 @@ pub fn validate_bundle_at(bundle: &Bundle, today: Option<Date>) -> Report {
 
     // (1) Files whose frontmatter could not be parsed are conformance errors.
     for (path, error) in bundle.parse_errors() {
-        report.error(Some(path.clone()), None, format!("unparseable concept document: {error}"));
+        report.error(
+            Some(path.clone()),
+            None,
+            format!("unparseable concept document: {error}"),
+        );
     }
 
     // (2) Every concept must carry a non-empty `type`. Everything else the
@@ -281,7 +290,10 @@ fn check_trust(cx: &mut Context, fm: &Frontmatter) {
                     cx.warn("`generated.by` is required within `generated` (§5.2)");
                 }
                 if let Some(at) = generated.at.filter(|a| !a.is_valid()) {
-                    cx.warn(format!("`generated.at` is not an ISO-8601 datetime: {:?} (§5.2)", at.raw));
+                    cx.warn(format!(
+                        "`generated.at` is not an ISO-8601 datetime: {:?} (§5.2)",
+                        at.raw
+                    ));
                 }
             }
         }
@@ -378,7 +390,9 @@ fn check_provenance(cx: &mut Context, fm: &Frontmatter) {
     let mut seen_ids: HashSet<String> = HashSet::new();
     for (i, source) in fm.sources().iter().enumerate() {
         if source.resource_kind() == ResourceKind::Missing {
-            cx.warn(format!("`sources[{i}].resource` is required within an entry (§5.1)"));
+            cx.warn(format!(
+                "`sources[{i}].resource` is required within an entry (§5.1)"
+            ));
         }
         if let Some(id) = &source.id {
             if !seen_ids.insert(id.clone()) {
@@ -393,7 +407,11 @@ fn check_provenance(cx: &mut Context, fm: &Frontmatter) {
                 last_modified.raw
             ));
         }
-        if source.usage_count.is_some() && source.effective_usage_window(shared_window.as_ref()).is_none() {
+        if source.usage_count.is_some()
+            && source
+                .effective_usage_window(shared_window.as_ref())
+                .is_none()
+        {
             cx.warn(format!(
                 "`sources[{i}].usage_count` has no `usage_window` to frame it (§5.1)"
             ));
@@ -446,14 +464,22 @@ fn check_legacy(cx: &mut Context, doc: &Document) {
         }
     }
     if doc.has_legacy_citations() {
-        cx.warn("the body `# Citations` list is superseded by the `sources` frontmatter field (§13.1)");
+        cx.warn(
+            "the body `# Citations` list is superseded by the `sources` frontmatter field (§13.1)",
+        );
     }
 }
 
 /// The Attested Computation contract (§10).
 fn check_computation(cx: &mut Context, doc: &Document) {
     let fm = &doc.frontmatter;
-    let computation_keys = ["runtime", "parameters", "computation", "executor", "attester"];
+    let computation_keys = [
+        "runtime",
+        "parameters",
+        "computation",
+        "executor",
+        "attester",
+    ];
 
     if !fm.is_attested_computation() {
         let present: Vec<&str> = computation_keys
@@ -501,7 +527,9 @@ fn check_computation(cx: &mut Context, doc: &Document) {
         None => cx.warn("missing `executor`: nothing says how to run the computation (§10.2)"),
         Some(executor) => {
             if executor.resource.is_none() {
-                cx.warn("`executor.resource` is missing; it names the run instructions or code (§10.2)");
+                cx.warn(
+                    "`executor.resource` is missing; it names the run instructions or code (§10.2)",
+                );
             }
             if executor.receipt.is_empty() {
                 cx.warn(
@@ -541,7 +569,9 @@ fn check_path_fields(cx: &mut Context, bundle: &Bundle, fm: &Frontmatter) {
             continue; // a URI, nothing in the bundle to resolve
         }
         if bundle.resolve_path_field(&id, target).is_none() {
-            cx.info(format!("`{field}` does not resolve to a file in the bundle: {raw} (§6.2)"));
+            cx.info(format!(
+                "`{field}` does not resolve to a file in the bundle: {raw} (§6.2)"
+            ));
         }
     }
 }
@@ -550,8 +580,12 @@ fn validate_reserved(bundle: &Bundle, report: &mut Report) {
     let root_index = bundle.root().join("index.md");
 
     for path in bundle.index_files() {
-        let Ok(text) = fs::read_to_string(path) else { continue };
-        let Ok(doc) = Document::parse(&text) else { continue };
+        let Ok(text) = fs::read_to_string(path) else {
+            continue;
+        };
+        let Ok(doc) = Document::parse(&text) else {
+            continue;
+        };
         if doc.frontmatter.is_empty() {
             continue;
         }
@@ -565,7 +599,11 @@ fn validate_reserved(bundle: &Bundle, report: &mut Report) {
                 "index.md should not contain frontmatter (§8)".to_string(),
             );
         } else {
-            let only_version = doc.frontmatter.as_mapping().keys().all(|k| k == "okf_version");
+            let only_version = doc
+                .frontmatter
+                .as_mapping()
+                .keys()
+                .all(|k| k == "okf_version");
             if !only_version {
                 report.warn(
                     Some(path.clone()),
@@ -577,7 +615,9 @@ fn validate_reserved(bundle: &Bundle, report: &mut Report) {
     }
 
     for path in bundle.log_files() {
-        let Ok(text) = fs::read_to_string(path) else { continue };
+        let Ok(text) = fs::read_to_string(path) else {
+            continue;
+        };
         let log = Log::parse(&text);
         for bad in log.invalid_dates() {
             report.warn(

@@ -6,13 +6,19 @@ fn roundtrip(src: &str) -> Value {
     let v = Value::parse(src).unwrap();
     let emitted = v.to_yaml_string();
     let reparsed = Value::parse(&emitted).unwrap();
-    assert_eq!(v, reparsed, "round-trip mismatch.\nsrc:\n{src}\nemitted:\n{emitted}");
+    assert_eq!(
+        v, reparsed,
+        "round-trip mismatch.\nsrc:\n{src}\nemitted:\n{emitted}"
+    );
     v
 }
 
 #[test]
 fn scalars() {
-    assert_eq!(Value::parse("hello").unwrap(), Value::String("hello".into()));
+    assert_eq!(
+        Value::parse("hello").unwrap(),
+        Value::String("hello".into())
+    );
     assert_eq!(Value::parse("42").unwrap(), Value::Int(42));
     assert_eq!(Value::parse("-7").unwrap(), Value::Int(-7));
     assert_eq!(Value::parse("2.5").unwrap(), Value::Float(2.5));
@@ -26,7 +32,10 @@ fn scalars() {
 #[test]
 fn quoted_scalars() {
     assert_eq!(Value::parse("\"42\"").unwrap(), Value::String("42".into()));
-    assert_eq!(Value::parse("'true'").unwrap(), Value::String("true".into()));
+    assert_eq!(
+        Value::parse("'true'").unwrap(),
+        Value::String("true".into())
+    );
     assert_eq!(
         Value::parse("\"line1\\nline2\"").unwrap(),
         Value::String("line1\nline2".into())
@@ -51,7 +60,13 @@ fn block_mapping() {
 fn flow_and_block_sequences() {
     let flow = roundtrip("tags: [sales, orders, revenue]\n");
     assert_eq!(
-        flow.as_mapping().unwrap().get("tags").unwrap().as_sequence().unwrap().len(),
+        flow.as_mapping()
+            .unwrap()
+            .get("tags")
+            .unwrap()
+            .as_sequence()
+            .unwrap()
+            .len(),
         3
     );
     let block = roundtrip("tags:\n  - sales\n  - orders\n");
@@ -67,7 +82,13 @@ fn nested_mappings() {
 #[test]
 fn flow_mapping() {
     let v = roundtrip("obj: {x: 1, y: two}\n");
-    let obj = v.as_mapping().unwrap().get("obj").unwrap().as_mapping().unwrap();
+    let obj = v
+        .as_mapping()
+        .unwrap()
+        .get("obj")
+        .unwrap()
+        .as_mapping()
+        .unwrap();
     assert_eq!(obj.get("x").unwrap().as_int(), Some(1));
     assert_eq!(obj.get("y").unwrap().as_str(), Some("two"));
 }
@@ -76,13 +97,32 @@ fn flow_mapping() {
 fn colons_inside_flow_scalars_are_content() {
     // OKF v0.2 frontmatter depends on this: `human:ahormati` and an ISO-8601
     // time both carry colons that do not separate a key from a value (§5.2, §7).
-    let v = roundtrip("generated: { by: reference_agent/gemini-2.5-pro, at: 2026-06-20T22:53:05Z }\n");
-    let generated = v.as_mapping().unwrap().get("generated").unwrap().as_mapping().unwrap();
-    assert_eq!(generated.get("by").unwrap().as_str(), Some("reference_agent/gemini-2.5-pro"));
-    assert_eq!(generated.get("at").unwrap().as_str(), Some("2026-06-20T22:53:05Z"));
+    let v =
+        roundtrip("generated: { by: reference_agent/gemini-2.5-pro, at: 2026-06-20T22:53:05Z }\n");
+    let generated = v
+        .as_mapping()
+        .unwrap()
+        .get("generated")
+        .unwrap()
+        .as_mapping()
+        .unwrap();
+    assert_eq!(
+        generated.get("by").unwrap().as_str(),
+        Some("reference_agent/gemini-2.5-pro")
+    );
+    assert_eq!(
+        generated.get("at").unwrap().as_str(),
+        Some("2026-06-20T22:53:05Z")
+    );
 
     let verified = roundtrip("verified: { by: human:ahormati, at: 2026-06-25T09:00:00Z }\n");
-    let by = verified.as_mapping().unwrap().get("verified").unwrap().as_mapping().unwrap();
+    let by = verified
+        .as_mapping()
+        .unwrap()
+        .get("verified")
+        .unwrap()
+        .as_mapping()
+        .unwrap();
     assert_eq!(by.get("by").unwrap().as_str(), Some("human:ahormati"));
 
     // A URL in a flow scalar survives too.
@@ -98,7 +138,13 @@ fn block_sequence_of_flow_mappings() {
     let v = roundtrip(
         "parameters:\n  - { name: year, type: integer, required: true }\n  - { name: segment, type: string, required: true }\n",
     );
-    let params = v.as_mapping().unwrap().get("parameters").unwrap().as_sequence().unwrap();
+    let params = v
+        .as_mapping()
+        .unwrap()
+        .get("parameters")
+        .unwrap()
+        .as_sequence()
+        .unwrap();
     assert_eq!(params.len(), 2);
     let first = params[0].as_mapping().unwrap();
     assert_eq!(first.get("name").unwrap().as_str(), Some("year"));
@@ -189,7 +235,13 @@ fn block_sequence_at_parent_indent() {
     assert_eq!(m.get("title").unwrap().as_str(), Some("Y"));
     // And nested under a deeper mapping.
     let nested = Value::parse("outer:\n  tags:\n  - a\n  - b\n").unwrap();
-    let inner = nested.as_mapping().unwrap().get("outer").unwrap().as_mapping().unwrap();
+    let inner = nested
+        .as_mapping()
+        .unwrap()
+        .get("outer")
+        .unwrap()
+        .as_mapping()
+        .unwrap();
     assert_eq!(inner.get("tags").unwrap().as_sequence().unwrap().len(), 2);
 }
 
@@ -274,10 +326,15 @@ fn pyyaml_wrapped_plain_scalars_fold_into_one_value() {
     assert_eq!(m.get("tags").unwrap().as_sequence().unwrap().len(), 2);
 
     let generated = m.get("generated").unwrap().as_mapping().unwrap();
-    assert_eq!(generated.get("at").unwrap().as_str(), Some("2026-07-10T21:15:20+00:00"));
+    assert_eq!(
+        generated.get("at").unwrap().as_str(),
+        Some("2026-07-10T21:15:20+00:00")
+    );
 
     // A quoted scalar containing a `: ` stays one scalar, not a nested mapping.
-    let source = m.get("sources").unwrap().as_sequence().unwrap()[0].as_mapping().unwrap();
+    let source = m.get("sources").unwrap().as_sequence().unwrap()[0]
+        .as_mapping()
+        .unwrap();
     assert_eq!(
         source.get("title").unwrap().as_str(),
         Some("Google Analytics Help: BigQuery Export Schema")
@@ -289,7 +346,8 @@ fn a_wrapped_quoted_scalar_folds_even_across_a_key_shaped_line() {
     // Inside an unclosed quote every line belongs to the scalar, so a wrapped
     // value that happens to break before `Something: else` is not misread as a
     // mapping entry.
-    let v = Value::parse("title: 'Database schema documentation and\n  SEDE: the sequel'\n").unwrap();
+    let v =
+        Value::parse("title: 'Database schema documentation and\n  SEDE: the sequel'\n").unwrap();
     assert_eq!(
         v.as_mapping().unwrap().get("title").unwrap().as_str(),
         Some("Database schema documentation and SEDE: the sequel")
@@ -299,8 +357,17 @@ fn a_wrapped_quoted_scalar_folds_even_across_a_key_shaped_line() {
 #[test]
 fn a_multi_line_plain_sequence_item_folds() {
     let v = Value::parse("tags:\n- a tag that wraps\n  onto a second line\n- short\n").unwrap();
-    let tags = v.as_mapping().unwrap().get("tags").unwrap().as_sequence().unwrap();
-    assert_eq!(tags[0].as_str(), Some("a tag that wraps onto a second line"));
+    let tags = v
+        .as_mapping()
+        .unwrap()
+        .get("tags")
+        .unwrap()
+        .as_sequence()
+        .unwrap();
+    assert_eq!(
+        tags[0].as_str(),
+        Some("a tag that wraps onto a second line")
+    );
     assert_eq!(tags[1].as_str(), Some("short"));
 }
 
@@ -315,8 +382,14 @@ fn iso_datetimes_emit_quoted_but_bare_dates_stay_plain() {
     m.insert("offset", Value::String("2026-07-10T21:15:20+00:00".into()));
     let emitted = Value::Mapping(m).to_yaml_string();
 
-    assert!(emitted.contains("at: \"2026-06-30T14:00:00Z\""), "{emitted}");
-    assert!(emitted.contains("offset: \"2026-07-10T21:15:20+00:00\""), "{emitted}");
+    assert!(
+        emitted.contains("at: \"2026-06-30T14:00:00Z\""),
+        "{emitted}"
+    );
+    assert!(
+        emitted.contains("offset: \"2026-07-10T21:15:20+00:00\""),
+        "{emitted}"
+    );
     // A date carries no time, so it stays plain: that is how the spec and the
     // reference both write `stale_after`, `last_modified`, and `usage_window`.
     assert!(emitted.contains("stale_after: 2026-12-31"), "{emitted}");
@@ -324,6 +397,12 @@ fn iso_datetimes_emit_quoted_but_bare_dates_stay_plain() {
     // Either spelling still reads back as the same string for this crate.
     let reparsed = Value::parse(&emitted).unwrap();
     let back = reparsed.as_mapping().unwrap();
-    assert_eq!(back.get("at").unwrap().as_str(), Some("2026-06-30T14:00:00Z"));
-    assert_eq!(back.get("stale_after").unwrap().as_str(), Some("2026-12-31"));
+    assert_eq!(
+        back.get("at").unwrap().as_str(),
+        Some("2026-06-30T14:00:00Z")
+    );
+    assert_eq!(
+        back.get("stale_after").unwrap().as_str(),
+        Some("2026-12-31")
+    );
 }

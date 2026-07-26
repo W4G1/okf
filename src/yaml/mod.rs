@@ -113,7 +113,10 @@ impl Mapping {
 
     /// Removes a value by string key, preserving order of the rest.
     pub fn remove(&mut self, key: &str) -> Option<Value> {
-        let idx = self.entries.iter().position(|(k, _)| k.as_str() == Some(key))?;
+        let idx = self
+            .entries
+            .iter()
+            .position(|(k, _)| k.as_str() == Some(key))?;
         Some(self.entries.remove(idx).1)
     }
 

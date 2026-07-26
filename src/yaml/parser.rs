@@ -275,7 +275,11 @@ impl Parser {
 
     /// Parses a `|` (literal) or `>` (folded) block scalar. The header (`r`)
     /// is the text after the `key:` (e.g. `|`, `|-`, `>+`).
-    fn parse_block_scalar(&mut self, parent_indent: usize, header: &str) -> Result<Value, YamlError> {
+    fn parse_block_scalar(
+        &mut self,
+        parent_indent: usize,
+        header: &str,
+    ) -> Result<Value, YamlError> {
         let style = header.as_bytes()[0]; // b'|' or b'>'
         let chomp = header[1..].chars().find(|c| *c == '+' || *c == '-');
 
@@ -297,7 +301,11 @@ impl Parser {
                 block_indent = Some(ind);
             }
             let bi = block_indent.unwrap();
-            let stripped = if line.len() >= bi { line[bi..].to_string() } else { String::new() };
+            let stripped = if line.len() >= bi {
+                line[bi..].to_string()
+            } else {
+                String::new()
+            };
             body.push(stripped);
             self.pos += 1;
         }
@@ -743,7 +751,10 @@ impl FlowParser {
 
     fn parse_flow_scalar(&mut self) -> Result<Value, YamlError> {
         self.skip_ws();
-        let c = *self.chars.get(self.pos).ok_or_else(|| self.err("expected scalar"))?;
+        let c = *self
+            .chars
+            .get(self.pos)
+            .ok_or_else(|| self.err("expected scalar"))?;
         if c == '"' || c == '\'' {
             let start = self.pos;
             self.pos += 1;

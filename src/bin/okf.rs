@@ -40,7 +40,11 @@ fn main() -> ExitCode {
             return ExitCode::SUCCESS;
         }
         "-V" | "--version" | "version" => {
-            println!("okf {} (OKF spec v{})", env!("CARGO_PKG_VERSION"), okf::OKF_VERSION);
+            println!(
+                "okf {} (OKF spec v{})",
+                env!("CARGO_PKG_VERSION"),
+                okf::OKF_VERSION
+            );
             return ExitCode::SUCCESS;
         }
         other => {
@@ -126,7 +130,9 @@ fn flag_value<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
 /// The date staleness is evaluated against: `--today YYYY-MM-DD`, else the
 /// system clock in UTC.
 fn today(args: &[String]) -> Result<Option<Date>, String> {
-    let uses_flag = args.iter().any(|a| a == "--today" || a.starts_with("--today="));
+    let uses_flag = args
+        .iter()
+        .any(|a| a == "--today" || a.starts_with("--today="));
     if !uses_flag {
         return Ok(Date::today_utc());
     }
@@ -173,7 +179,9 @@ fn cmd_info(args: &[String]) -> Result<ExitCode, String> {
     println!("bundle:      {}", bundle.root().display());
     println!(
         "okf_version: {}",
-        bundle.okf_version().unwrap_or_else(|| "(undeclared)".to_string())
+        bundle
+            .okf_version()
+            .unwrap_or_else(|| "(undeclared)".to_string())
     );
     println!("concepts:    {}", bundle.len());
     println!("index.md:    {}", bundle.index_files().len());
@@ -211,7 +219,11 @@ fn cmd_info(args: &[String]) -> Result<ExitCode, String> {
         println!("\nstale on {today}: {} concept(s)", stale.len());
     }
 
-    let with_sources = bundle.concepts().iter().filter(|c| !c.sources().is_empty()).count();
+    let with_sources = bundle
+        .concepts()
+        .iter()
+        .filter(|c| !c.sources().is_empty())
+        .count();
     let derivation_edges: usize = bundle
         .concepts()
         .iter()
@@ -229,7 +241,10 @@ fn cmd_info(args: &[String]) -> Result<ExitCode, String> {
         .iter()
         .map(|c| bundle.links_from(&c.id).len())
         .sum();
-    println!("links:       {total_links} internal ({} broken)", broken.len());
+    println!(
+        "links:       {total_links} internal ({} broken)",
+        broken.len()
+    );
 
     let tags = bundle.tags();
     if !tags.is_empty() {
@@ -293,13 +308,22 @@ fn cmd_computations(args: &[String]) -> Result<ExitCode, String> {
 
     let mut found = 0;
     for c in bundle.attested_computations() {
-        let Some(contract) = c.attested_computation() else { continue };
+        let Some(contract) = c.attested_computation() else {
+            continue;
+        };
         found += 1;
         println!("{} ({})", c.id, c.display_title());
-        println!("  runtime:     {}", contract.runtime.as_deref().unwrap_or("(missing)"));
+        println!(
+            "  runtime:     {}",
+            contract.runtime.as_deref().unwrap_or("(missing)")
+        );
         println!("  computation: {}", contract.computation);
         if !contract.parameters.is_empty() {
-            let params: Vec<String> = contract.parameters.iter().map(ToString::to_string).collect();
+            let params: Vec<String> = contract
+                .parameters
+                .iter()
+                .map(ToString::to_string)
+                .collect();
             println!("  parameters:  {}", params.join(", "));
         }
         if let Some(executor) = &contract.executor {
@@ -314,7 +338,10 @@ fn cmd_computations(args: &[String]) -> Result<ExitCode, String> {
             );
         }
         if let Some(attester) = &contract.attester {
-            println!("  attester:    {}", attester.resource.as_deref().unwrap_or("(missing)"));
+            println!(
+                "  attester:    {}",
+                attester.resource.as_deref().unwrap_or("(missing)")
+            );
         }
         let used_by = bundle.backlinks(&c.id);
         if !used_by.is_empty() {
@@ -324,7 +351,10 @@ fn cmd_computations(args: &[String]) -> Result<ExitCode, String> {
     }
 
     if found == 0 {
-        println!("no `Attested Computation` concepts in {}", bundle.root().display());
+        println!(
+            "no `Attested Computation` concepts in {}",
+            bundle.root().display()
+        );
     } else {
         println!("\n{found} attested computation(s).");
     }
@@ -356,8 +386,16 @@ fn cmd_graph(args: &[String]) -> Result<ExitCode, String> {
         println!("  rankdir=LR; node [shape=box, fontsize=10];");
         for c in bundle.concepts() {
             for link in bundle.links_from(&c.id) {
-                let style = if link.exists { "" } else { " [style=dashed, color=red]" };
-                println!("  {:?} -> {:?}{style};", c.id.to_string(), link.target.to_string());
+                let style = if link.exists {
+                    ""
+                } else {
+                    " [style=dashed, color=red]"
+                };
+                println!(
+                    "  {:?} -> {:?}{style};",
+                    c.id.to_string(),
+                    link.target.to_string()
+                );
             }
             if sources {
                 for target in bundle.derived_from(&c.id) {
@@ -373,8 +411,11 @@ fn cmd_graph(args: &[String]) -> Result<ExitCode, String> {
     } else {
         for c in bundle.concepts() {
             let links = bundle.links_from(&c.id);
-            let derived: Vec<&okf::ConceptId> =
-                if sources { bundle.derived_from(&c.id) } else { Vec::new() };
+            let derived: Vec<&okf::ConceptId> = if sources {
+                bundle.derived_from(&c.id)
+            } else {
+                Vec::new()
+            };
             if links.is_empty() && derived.is_empty() {
                 continue;
             }
@@ -459,17 +500,26 @@ fn cmd_parse(args: &[String]) -> Result<ExitCode, String> {
 
     if let Some(contract) = doc.attested_computation() {
         println!("\nattested computation (§10):");
-        println!("  runtime:     {}", contract.runtime.as_deref().unwrap_or("(missing)"));
+        println!(
+            "  runtime:     {}",
+            contract.runtime.as_deref().unwrap_or("(missing)")
+        );
         println!("  computation: {}", contract.computation);
         for parameter in &contract.parameters {
             println!("  parameter:   {parameter}");
         }
         if let Some(executor) = &contract.executor {
-            println!("  executor:    {}", executor.resource.as_deref().unwrap_or("(missing)"));
+            println!(
+                "  executor:    {}",
+                executor.resource.as_deref().unwrap_or("(missing)")
+            );
             println!("  receipt:     {}", executor.receipt.join(", "));
         }
         if let Some(attester) = &contract.attester {
-            println!("  attester:    {}", attester.resource.as_deref().unwrap_or("(missing)"));
+            println!(
+                "  attester:    {}",
+                attester.resource.as_deref().unwrap_or("(missing)")
+            );
         }
     }
 
@@ -482,7 +532,10 @@ fn cmd_parse(args: &[String]) -> Result<ExitCode, String> {
     }
     let citations = doc.citations();
     if !citations.is_empty() {
-        println!("\nlegacy citations ({}), superseded by `sources` (§13.1):", citations.len());
+        println!(
+            "\nlegacy citations ({}), superseded by `sources` (§13.1):",
+            citations.len()
+        );
         for cit in &citations {
             println!("  [{}] {}", cit.number, cit.raw);
         }

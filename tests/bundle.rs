@@ -67,7 +67,11 @@ fn resolves_cross_links_and_backlinks() {
     let orders = ConceptId::parse("tables/orders").unwrap();
     let customers = ConceptId::parse("tables/customers").unwrap();
 
-    let sales_links: Vec<_> = bundle.links_from(&sales).iter().map(|l| l.target.clone()).collect();
+    let sales_links: Vec<_> = bundle
+        .links_from(&sales)
+        .iter()
+        .map(|l| l.target.clone())
+        .collect();
     assert!(sales_links.contains(&orders));
     assert!(sales_links.contains(&customers));
     assert!(bundle.links_from(&sales).iter().all(|l| l.exists));
@@ -95,7 +99,9 @@ fn broken_links_are_detected_but_not_fatal() {
     // Broken links are informational, not conformance errors.
     let report = validate_bundle(&bundle);
     assert!(report.is_conformant());
-    assert!(report.of(Severity::Info).any(|d| d.message.contains("does/not/exist")));
+    assert!(report
+        .of(Severity::Info)
+        .any(|d| d.message.contains("does/not/exist")));
 }
 
 #[test]
@@ -114,7 +120,9 @@ fn missing_type_is_a_conformance_error() {
     let bundle = Bundle::load(tmp.path()).unwrap();
     let report = validate_bundle(&bundle);
     assert!(!report.is_conformant());
-    assert!(report.of(Severity::Error).any(|d| d.message.contains("type")));
+    assert!(report
+        .of(Severity::Error)
+        .any(|d| d.message.contains("type")));
 }
 
 #[test]
@@ -122,7 +130,10 @@ fn reserved_files_are_recognized_not_concepts() {
     let tmp = TempDir::new();
     tmp.write("a.md", "---\ntype: Note\n---\nbody\n");
     tmp.write("index.md", "# Listing\n\n* [a](a.md)\n");
-    tmp.write("log.md", "# Log\n\n## 2026-05-22\n* **Update**: did a thing.\n");
+    tmp.write(
+        "log.md",
+        "# Log\n\n## 2026-05-22\n* **Update**: did a thing.\n",
+    );
     let bundle = Bundle::load(tmp.path()).unwrap();
     assert_eq!(bundle.len(), 1); // only a.md is a concept
     assert_eq!(bundle.index_files().len(), 1);
@@ -150,7 +161,11 @@ fn a_filename_that_is_not_a_valid_concept_id_segment_still_loads() {
     );
     let bundle = Bundle::load(tmp.path()).unwrap();
 
-    assert!(bundle.parse_errors().is_empty(), "{:?}", bundle.parse_errors());
+    assert!(
+        bundle.parse_errors().is_empty(),
+        "{:?}",
+        bundle.parse_errors()
+    );
     assert_eq!(bundle.len(), 1);
     assert_eq!(bundle.concepts()[0].id.to_string(), "tables/my notes");
     assert!(validate_bundle(&bundle).is_conformant());

@@ -27,29 +27,69 @@ fn written_dirs(written: &[std::path::PathBuf]) -> Vec<String> {
 #[test]
 fn regenerate_groups_by_type_and_links_relative() {
     let tmp = TempDir::new();
-    write_doc(&tmp, "datasets/ga4.md", "BigQuery Dataset", "GA4 Dataset", "GA4 obfuscated ecommerce sample.");
-    write_doc(&tmp, "tables/events_.md", "BigQuery Table", "events_*", "Daily-sharded GA4 event tables.");
-    write_doc(&tmp, "tables/users.md", "BigQuery Table", "users", "Per-user dimension.");
+    write_doc(
+        &tmp,
+        "datasets/ga4.md",
+        "BigQuery Dataset",
+        "GA4 Dataset",
+        "GA4 obfuscated ecommerce sample.",
+    );
+    write_doc(
+        &tmp,
+        "tables/events_.md",
+        "BigQuery Table",
+        "events_*",
+        "Daily-sharded GA4 event tables.",
+    );
+    write_doc(
+        &tmp,
+        "tables/users.md",
+        "BigQuery Table",
+        "users",
+        "Per-user dimension.",
+    );
 
     // Deterministic synthesizer so we can assert on the root index text.
-    let synth = |_rel: &str, children: &[(String, String)]| format!("stub: {} items", children.len());
+    let synth =
+        |_rel: &str, children: &[(String, String)]| format!("stub: {} items", children.len());
     let written = regenerate_indexes_with(tmp.path(), &synth).unwrap();
     let dirs = written_dirs(&written);
-    let root = tmp.path().file_name().unwrap().to_str().unwrap().to_string();
+    let root = tmp
+        .path()
+        .file_name()
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
     assert!(dirs.contains(&"datasets".to_string()), "{dirs:?}");
     assert!(dirs.contains(&"tables".to_string()), "{dirs:?}");
-    assert!(dirs.contains(&root), "the bundle root gets an index too: {dirs:?}");
+    assert!(
+        dirs.contains(&root),
+        "the bundle root gets an index too: {dirs:?}"
+    );
 
     let tables_index = tmp.read("tables/index.md");
-    assert!(tables_index.starts_with("# BigQuery Table"), "{tables_index}");
-    assert!(tables_index.contains("[events_*](events_.md)"), "{tables_index}");
+    assert!(
+        tables_index.starts_with("# BigQuery Table"),
+        "{tables_index}"
+    );
+    assert!(
+        tables_index.contains("[events_*](events_.md)"),
+        "{tables_index}"
+    );
     assert!(tables_index.contains("[users](users.md)"), "{tables_index}");
     assert!(tables_index.contains("Daily-sharded GA4 event tables."));
 
     let root_index = tmp.read("index.md");
     assert!(root_index.contains("# Subdirectories"), "{root_index}");
-    assert!(root_index.contains("(datasets/index.md) - GA4 obfuscated ecommerce sample."), "{root_index}");
-    assert!(root_index.contains("(tables/index.md) - stub: 2 items"), "{root_index}");
+    assert!(
+        root_index.contains("(datasets/index.md) - GA4 obfuscated ecommerce sample."),
+        "{root_index}"
+    );
+    assert!(
+        root_index.contains("(tables/index.md) - stub: 2 items"),
+        "{root_index}"
+    );
 }
 
 #[test]
@@ -64,7 +104,13 @@ fn regenerate_skips_empty_directories() {
 #[test]
 fn regenerate_single_child_reuses_description() {
     let tmp = TempDir::new();
-    write_doc(&tmp, "datasets/only.md", "BigQuery Dataset", "Only Dataset", "The only dataset in this bundle.");
+    write_doc(
+        &tmp,
+        "datasets/only.md",
+        "BigQuery Dataset",
+        "Only Dataset",
+        "The only dataset in this bundle.",
+    );
 
     let calls = std::cell::Cell::new(0u32);
     let counting = |_rel: &str, children: &[(String, String)]| {
@@ -78,7 +124,11 @@ fn regenerate_single_child_reuses_description() {
         root_index.contains("(datasets/index.md) - The only dataset in this bundle."),
         "{root_index}"
     );
-    assert_eq!(calls.get(), 0, "single child with a description should be reused, not synthesized");
+    assert_eq!(
+        calls.get(),
+        0,
+        "single child with a description should be reused, not synthesized"
+    );
 }
 
 #[test]
@@ -94,7 +144,10 @@ fn an_empty_title_falls_back_to_the_filename() {
     regenerate_indexes(tmp.path()).unwrap();
 
     let tables_index = tmp.read("tables/index.md");
-    assert!(tables_index.contains("[orders](orders.md)"), "{tables_index}");
+    assert!(
+        tables_index.contains("[orders](orders.md)"),
+        "{tables_index}"
+    );
 }
 
 #[test]

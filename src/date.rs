@@ -49,7 +49,11 @@ impl Date {
         if b.len() != 10 || b[4] != b'-' || b[7] != b'-' {
             return None;
         }
-        if !b.iter().enumerate().all(|(i, c)| i == 4 || i == 7 || c.is_ascii_digit()) {
+        if !b
+            .iter()
+            .enumerate()
+            .all(|(i, c)| i == 4 || i == 7 || c.is_ascii_digit())
+        {
             return None;
         }
         Date::new(
@@ -454,7 +458,12 @@ mod tests {
         assert_eq!(z.to_string(), "2026-06-20T22:53:05Z");
 
         let offset = DateTime::parse("2026-05-28T22:53:05+00:00").unwrap();
-        assert_eq!(offset.to_utc_seconds(), DateTime::parse("2026-05-28T22:53:05Z").unwrap().to_utc_seconds());
+        assert_eq!(
+            offset.to_utc_seconds(),
+            DateTime::parse("2026-05-28T22:53:05Z")
+                .unwrap()
+                .to_utc_seconds()
+        );
 
         // Same instant, written in two zones.
         let a = DateTime::parse("2026-06-25T09:00:00+02:00").unwrap();
@@ -465,7 +474,9 @@ mod tests {
         assert!(!DateTime::parse("2026-06-20").unwrap().has_time);
         assert_eq!(DateTime::parse("2026-06-20T22:53").unwrap().second, 0);
         assert_eq!(
-            DateTime::parse("2026-06-20T22:53:05.25Z").unwrap().nanosecond,
+            DateTime::parse("2026-06-20T22:53:05.25Z")
+                .unwrap()
+                .nanosecond,
             250_000_000
         );
         assert_eq!(DateTime::parse("2026-06-20T25:00:00Z"), None);

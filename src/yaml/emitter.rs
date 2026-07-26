@@ -93,7 +93,11 @@ fn format_float(f: f64) -> String {
         return ".nan".to_string();
     }
     if f.is_infinite() {
-        return if f > 0.0 { ".inf".to_string() } else { "-.inf".to_string() };
+        return if f > 0.0 {
+            ".inf".to_string()
+        } else {
+            "-.inf".to_string()
+        };
     }
     // `{:?}` is the shortest round-tripping representation, but it can omit the
     // decimal point for exponential forms (`1e30`). Ensure a `.` is present so
@@ -123,7 +127,10 @@ fn is_safe_plain(s: &str) -> bool {
         return false;
     }
     // Must not be reinterpreted as null/bool/number.
-    if super::Value::parse(s).map(|v| v != Value::String(s.to_string())).unwrap_or(true) {
+    if super::Value::parse(s)
+        .map(|v| v != Value::String(s.to_string()))
+        .unwrap_or(true)
+    {
         // parse() of a multiline/odd string may error; fall through to quoting.
         return false;
     }

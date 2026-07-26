@@ -80,8 +80,14 @@ fn protocol_relative_url_is_external() {
 fn any_uri_scheme_is_external() {
     // §4.1's `resource` is a URI, not necessarily an http URL, so a warehouse
     // identifier must not be mistaken for a relative path.
-    assert_eq!(Link::classify("bigquery:acme.sales.orders"), LinkKind::External);
-    assert_eq!(Link::classify("urn:acme:metric:revenue"), LinkKind::External);
+    assert_eq!(
+        Link::classify("bigquery:acme.sales.orders"),
+        LinkKind::External
+    );
+    assert_eq!(
+        Link::classify("urn:acme:metric:revenue"),
+        LinkKind::External
+    );
     assert_eq!(Link::classify("s3://bucket/key"), LinkKind::External);
     // A path with a colon later on is still a path.
     assert_eq!(Link::classify("./notes/a:b.md"), LinkKind::Relative);
@@ -144,7 +150,10 @@ fn citations_section_parsed() {
     assert_eq!(citations.len(), 2);
     assert_eq!(citations[0].number, 1);
     assert_eq!(citations[0].text.as_deref(), Some("BigQuery schema"));
-    assert_eq!(citations[0].target.as_deref(), Some("https://bq.example/schema"));
+    assert_eq!(
+        citations[0].target.as_deref(),
+        Some("https://bq.example/schema")
+    );
     assert_eq!(citations[1].number, 2);
 }
 
@@ -163,7 +172,11 @@ fn document_links_and_citations_integration() {
     .unwrap();
     // links() returns every body link, including the one in the citation list.
     assert_eq!(doc.links().len(), 2);
-    let internal: Vec<_> = doc.links().into_iter().filter(|l| l.kind == LinkKind::Absolute).collect();
+    let internal: Vec<_> = doc
+        .links()
+        .into_iter()
+        .filter(|l| l.kind == LinkKind::Absolute)
+        .collect();
     assert_eq!(internal.len(), 1);
     assert_eq!(doc.citations().len(), 1);
 }

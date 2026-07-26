@@ -137,8 +137,14 @@ fn finance_bundle() -> TempDir {
         "references/skills/run-dbt.md",
         "---\ntype: Reference\ntitle: Run dbt\n---\n\nRun instructions.\n",
     );
-    tmp.write("references/attesters/sql-equality.py", "# deterministic check\n");
-    tmp.write("references/attesters/dbt-binding.py", "# deterministic check\n");
+    tmp.write(
+        "references/attesters/sql-equality.py",
+        "# deterministic check\n",
+    );
+    tmp.write(
+        "references/attesters/dbt-binding.py",
+        "# deterministic check\n",
+    );
     tmp
 }
 
@@ -207,7 +213,10 @@ fn trust_tiers_and_freshness_differ_per_computation() {
     assert_eq!(verified[0].by.as_ref().unwrap().kind(), ActorKind::Human);
 
     let generated = revenue.document.frontmatter.generated().unwrap();
-    assert_eq!(generated.by.as_ref().unwrap().producer(), Some("reference_agent"));
+    assert_eq!(
+        generated.by.as_ref().unwrap().producer(),
+        Some("reference_agent")
+    );
     // `verified` is independent of `generated.at`: content changed after the
     // human sign-off, and that is legal (§5.2).
     let generated_at = generated.at.unwrap().datetime.unwrap();
@@ -228,7 +237,10 @@ fn sources_carry_credibility_signals_framed_by_a_usage_window() {
     let policy = &sources[0];
     assert_eq!(policy.resource_kind(), ResourceKind::Url);
     assert_eq!(policy.author.as_ref().unwrap().as_str(), "team:finance-fpa");
-    assert_eq!(policy.last_modified.as_ref().unwrap().date, Date::new(2026, 4, 2));
+    assert_eq!(
+        policy.last_modified.as_ref().unwrap().date,
+        Date::new(2026, 4, 2)
+    );
     assert_eq!(policy.usage_count, None);
 
     // The shared window frames the dashboard's usage_count (§5.1).
@@ -298,8 +310,17 @@ fn attested_computation_contracts_are_read_in_full() {
     assert_eq!(profit.runtime.as_deref(), Some("dbt"));
     assert_eq!(profit.parameters.len(), 2);
     assert_eq!(profit.parameters[1].name.as_deref(), Some("segment"));
-    assert!(profit.executor.as_ref().unwrap().receipt.contains(&"compiled_sql".to_string()));
-    assert!(profit.computation.code().unwrap().contains("{{ ref('fct_income_statement') }}"));
+    assert!(profit
+        .executor
+        .as_ref()
+        .unwrap()
+        .receipt
+        .contains(&"compiled_sql".to_string()));
+    assert!(profit
+        .computation
+        .code()
+        .unwrap()
+        .contains("{{ ref('fct_income_statement') }}"));
 }
 
 #[test]
@@ -320,8 +341,12 @@ fn contract_paths_resolve_from_the_bundle_root() {
         .unwrap();
     assert!(attester.exists(), "non-markdown attester code resolves too");
 
-    assert!(bundle.resolve_path_field(&revenue_id, "references/nope.py").is_none());
-    assert!(bundle.resolve_path_field(&revenue_id, "https://example.com").is_none());
+    assert!(bundle
+        .resolve_path_field(&revenue_id, "references/nope.py")
+        .is_none());
+    assert!(bundle
+        .resolve_path_field(&revenue_id, "https://example.com")
+        .is_none());
 }
 
 #[test]
@@ -360,7 +385,10 @@ fn source_resources_that_name_concepts_become_derivation_edges() {
     assert_eq!(resolved.len(), 3);
     assert_eq!(resolved[0].concept, Some(id("tables/orders")));
     assert_eq!(resolved[1].concept, None, "a URL is not a bundle concept");
-    assert_eq!(resolved[2].concept, None, "a scope descriptor is not a path");
+    assert_eq!(
+        resolved[2].concept, None,
+        "a scope descriptor is not a path"
+    );
     assert_eq!(resolved[2].source.resource_kind(), ResourceKind::Scope);
 
     assert_eq!(bundle.derived_from(&aov), vec![&id("tables/orders")]);
@@ -374,7 +402,9 @@ fn staleness_reporting_is_opt_in_and_deterministic() {
 
     // No date supplied: nothing is reported stale, whatever the clock says.
     let plain = validate_bundle(&bundle);
-    assert!(!plain.of(Severity::Info).any(|d| d.message.contains("stale since")));
+    assert!(!plain
+        .of(Severity::Info)
+        .any(|d| d.message.contains("stale since")));
 
     let dated = validate_bundle_at(&bundle, Date::new(2026, 7, 1));
     let stale: Vec<&str> = dated
@@ -384,7 +414,10 @@ fn staleness_reporting_is_opt_in_and_deterministic() {
         .collect();
     assert_eq!(stale.len(), 1);
     assert!(stale[0].contains("2026-06-15"), "{}", stale[0]);
-    assert!(dated.is_conformant(), "staleness is informational, not a violation");
+    assert!(
+        dated.is_conformant(),
+        "staleness is informational, not a violation"
+    );
 }
 
 #[test]
@@ -410,7 +443,10 @@ fn v0_1_documents_still_load_under_the_documented_fallbacks() {
     // `generated` is absent, so `timestamp` stands in for `generated.at`.
     assert!(doc.frontmatter.generated().is_none());
     let changed = doc.frontmatter.content_changed_at().unwrap();
-    assert_eq!(changed.datetime.unwrap().date, Date::new(2026, 5, 28).unwrap());
+    assert_eq!(
+        changed.datetime.unwrap().date,
+        Date::new(2026, 5, 28).unwrap()
+    );
     // Absent trust frontmatter has meaning, and is never a rejection (§11).
     assert_eq!(doc.frontmatter.trust_tier(), TrustTier::Unverified);
     assert_eq!(doc.frontmatter.status(), Status::Stable);
@@ -429,10 +465,24 @@ fn v0_1_bundles_are_conformant_but_flagged_for_migration() {
     let bundle = Bundle::load(tmp.path()).unwrap();
     let report = validate_bundle(&bundle);
 
-    assert!(report.is_conformant(), "a v0.1 bundle is still a conformant v0.2 bundle");
-    let warnings: Vec<&str> = report.of(Severity::Warning).map(|d| d.message.as_str()).collect();
-    assert!(warnings.iter().any(|w| w.contains("`timestamp` is superseded")), "{warnings:?}");
-    assert!(warnings.iter().any(|w| w.contains("`# Citations`")), "{warnings:?}");
+    assert!(
+        report.is_conformant(),
+        "a v0.1 bundle is still a conformant v0.2 bundle"
+    );
+    let warnings: Vec<&str> = report
+        .of(Severity::Warning)
+        .map(|d| d.message.as_str())
+        .collect();
+    assert!(
+        warnings
+            .iter()
+            .any(|w| w.contains("`timestamp` is superseded")),
+        "{warnings:?}"
+    );
+    assert!(
+        warnings.iter().any(|w| w.contains("`# Citations`")),
+        "{warnings:?}"
+    );
 }
 
 #[test]
@@ -459,10 +509,19 @@ fn malformed_families_warn_without_breaking_conformance() {
     let bundle = Bundle::load(tmp.path()).unwrap();
     let report = validate_bundle(&bundle);
 
-    assert!(report.is_conformant(), "`type` is present, so §11 is satisfied");
-    let warnings: Vec<&str> = report.of(Severity::Warning).map(|d| d.message.as_str()).collect();
+    assert!(
+        report.is_conformant(),
+        "`type` is present, so §11 is satisfied"
+    );
+    let warnings: Vec<&str> = report
+        .of(Severity::Warning)
+        .map(|d| d.message.as_str())
+        .collect();
     let has = |needle: &str| {
-        assert!(warnings.iter().any(|w| w.contains(needle)), "missing {needle:?} in {warnings:#?}");
+        assert!(
+            warnings.iter().any(|w| w.contains(needle)),
+            "missing {needle:?} in {warnings:#?}"
+        );
     };
     has("`tags` should be a list of short strings");
     has("unknown `status` value");
@@ -486,12 +545,20 @@ fn declared_version_is_reported_never_enforced() {
     ] {
         let tmp = TempDir::new();
         tmp.write("a.md", "---\ntype: Note\n---\nbody\n");
-        tmp.write("index.md", &format!("---\nokf_version: \"{declared}\"\n---\n\n# Listing\n"));
+        tmp.write(
+            "index.md",
+            &format!("---\nokf_version: \"{declared}\"\n---\n\n# Listing\n"),
+        );
         let bundle = Bundle::load(tmp.path()).unwrap();
         let report = validate_bundle(&bundle);
-        assert!(report.is_conformant(), "a version mismatch is never a violation (§12)");
         assert!(
-            report.of(Severity::Info).any(|d| d.message.contains(needle)),
+            report.is_conformant(),
+            "a version mismatch is never a violation (§12)"
+        );
+        assert!(
+            report
+                .of(Severity::Info)
+                .any(|d| d.message.contains(needle)),
             "{declared}: {:#?}",
             report.diagnostics
         );
@@ -507,9 +574,9 @@ fn computation_keys_on_another_type_are_noted() {
     );
     let bundle = Bundle::load(tmp.path()).unwrap();
     let report = validate_bundle(&bundle);
-    assert!(report
-        .of(Severity::Info)
-        .any(|d| d.message.contains("a sanctioned computation is its own concept")));
+    assert!(report.of(Severity::Info).any(|d| d
+        .message
+        .contains("a sanctioned computation is its own concept")));
 }
 
 #[test]
@@ -532,7 +599,10 @@ fn regenerating_indexes_keeps_the_declared_version() {
     okf::index::regenerate_indexes(tmp.path()).unwrap();
 
     let root = tmp.read("index.md");
-    assert!(root.starts_with("---\nokf_version: \"0.2\"\n---\n"), "{root}");
+    assert!(
+        root.starts_with("---\nokf_version: \"0.2\"\n---\n"),
+        "{root}"
+    );
     assert!(root.contains("# Subdirectories"), "{root}");
 
     let bundle = Bundle::load(tmp.path()).unwrap();
@@ -541,5 +611,8 @@ fn regenerating_indexes_keeps_the_declared_version() {
     // Attested Computations get their own index section, which is how §10.5's
     // discovery-by-type works from an index.
     let computations = tmp.read("computations/index.md");
-    assert!(computations.starts_with("# Attested Computation"), "{computations}");
+    assert!(
+        computations.starts_with("# Attested Computation"),
+        "{computations}"
+    );
 }

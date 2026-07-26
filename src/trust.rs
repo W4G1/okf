@@ -38,8 +38,14 @@ impl Generated {
     pub fn from_value(value: &Value) -> Option<Generated> {
         let map = value.as_mapping()?;
         Some(Generated {
-            by: map.get("by").and_then(Value::as_display_string).map(Actor::parse),
-            at: map.get("at").and_then(Value::as_display_string).map(DateTimeField::new),
+            by: map
+                .get("by")
+                .and_then(Value::as_display_string)
+                .map(Actor::parse),
+            at: map
+                .get("at")
+                .and_then(Value::as_display_string)
+                .map(DateTimeField::new),
         })
     }
 }
@@ -73,8 +79,14 @@ impl Verification {
     pub fn from_value(value: &Value) -> Option<Verification> {
         let map = value.as_mapping()?;
         Some(Verification {
-            by: map.get("by").and_then(Value::as_display_string).map(Actor::parse),
-            at: map.get("at").and_then(Value::as_display_string).map(DateTimeField::new),
+            by: map
+                .get("by")
+                .and_then(Value::as_display_string)
+                .map(Actor::parse),
+            at: map
+                .get("at")
+                .and_then(Value::as_display_string)
+                .map(DateTimeField::new),
         })
     }
 
@@ -135,7 +147,10 @@ impl TrustTier {
     pub fn derive(events: &[Verification]) -> TrustTier {
         if events.is_empty() {
             TrustTier::Unverified
-        } else if events.iter().any(|v| v.by.as_ref().is_some_and(Actor::is_human)) {
+        } else if events
+            .iter()
+            .any(|v| v.by.as_ref().is_some_and(Actor::is_human))
+        {
             TrustTier::HumanReviewed
         } else {
             TrustTier::MachineConfirmed
@@ -227,7 +242,8 @@ mod tests {
 
     #[test]
     fn bare_verified_mapping_is_a_one_element_list() {
-        let bare = Verification::list_from_value(&v("{ by: human:ahormati, at: 2026-06-25T09:00:00Z }"));
+        let bare =
+            Verification::list_from_value(&v("{ by: human:ahormati, at: 2026-06-25T09:00:00Z }"));
         assert_eq!(bare.len(), 1);
         assert!(bare[0].by.as_ref().unwrap().is_human());
         assert_eq!(TrustTier::derive(&bare), TrustTier::HumanReviewed);
@@ -269,7 +285,10 @@ mod tests {
     fn staleness_is_a_plain_date_comparison() {
         let stale_after = Date::new(2026, 9, 23);
         assert!(!is_stale_on(stale_after, Date::new(2026, 9, 22).unwrap()));
-        assert!(is_stale_on(stale_after, Date::new(2026, 9, 23).unwrap()), "stale on the day itself");
+        assert!(
+            is_stale_on(stale_after, Date::new(2026, 9, 23).unwrap()),
+            "stale on the day itself"
+        );
         assert!(is_stale_on(stale_after, Date::new(2026, 9, 24).unwrap()));
         assert!(!is_stale_on(None, Date::new(2099, 1, 1).unwrap()));
     }

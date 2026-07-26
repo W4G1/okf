@@ -137,7 +137,10 @@ fn resolve_relative(target: &str, source: &ConceptId) -> Option<ConceptId> {
         return None;
     }
     // Start from the source concept's directory.
-    let base = source.parent().map(|p| p.segments().to_vec()).unwrap_or_default();
+    let base = source
+        .parent()
+        .map(|p| p.segments().to_vec())
+        .unwrap_or_default();
     strip_md(normalize_segments(t, &base)).and_then(|segs| ConceptId::new(segs).ok())
 }
 
@@ -189,7 +192,10 @@ pub fn field_path_candidates(raw: &str, from: &ConceptId) -> Vec<String> {
             vec![normalize_segments(strip_anchor(target), &[]).join("/")]
         }
         LinkKind::Relative => {
-            let base = from.parent().map(|p| p.segments().to_vec()).unwrap_or_default();
+            let base = from
+                .parent()
+                .map(|p| p.segments().to_vec())
+                .unwrap_or_default();
             let stripped = strip_anchor(target);
             let mut out = vec![normalize_segments(stripped, &base).join("/")];
             let from_root = normalize_segments(stripped, &[]).join("/");
