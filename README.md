@@ -54,10 +54,10 @@ cargo add okf
 ### As a CLI
 
 ```text
-okf validate     <bundle>    Check a bundle against OKF v0.2 conformance (§11)
+okf validate     <bundle>    Check a bundle against OKF v0.2 conformance
 okf info         <bundle>    Summarize a bundle (concepts, types, trust, links)
 okf trust        <bundle>    Report trust tier, status, and staleness per concept
-okf computations <bundle>    List Attested Computation contracts (§10)
+okf computations <bundle>    List Attested Computation contracts
 okf index        <bundle>    (Re)generate every index.md in the bundle
 okf graph        <bundle>    Print the cross-link graph (--dot for Graphviz DOT)
 okf parse        <file>      Parse one concept document and print its structure
