@@ -1,19 +1,28 @@
-//! Markdown link extraction, classification, and citation parsing (§5, §8).
+//! Markdown link extraction, classification, and path-valued fields (§6).
 //!
 //! OKF relationships are expressed as ordinary markdown links, so this module
 //! provides a small, dependency-free scanner for inline `[text](dest)` links
-//! plus the link-classification rules from §5 (absolute bundle-relative vs.
+//! plus the link-classification rules from §6.1 (absolute bundle-relative vs.
 //! relative vs. external). It ignores links inside fenced code blocks and
 //! inline code spans, which are content rather than relationships.
+//!
+//! §6.2 extends the same path grammar to *frontmatter* fields (`resource`,
+//! `sources[].resource`, `computation`, `executor.resource`, and
+//! `attester.resource`), which are resolved by
+//! [`field_path_candidates`] rather than by [`Link::resolve`].
+//!
+//! It also still parses the v0.1 body `# Citations` list
+//! ([`extract_citations`]), which v0.2 supersedes with `sources` (§13.1) but
+//! which consumers MAY keep reading for legacy documents.
 
 use crate::concept_id::ConceptId;
 
-/// How a link target is interpreted under §5.
+/// How a link target is interpreted under §6.1.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LinkKind {
-    /// Begins with `/`: resolved relative to the bundle root (§5.1, recommended).
+    /// Begins with `/`: resolved relative to the bundle root (recommended).
     Absolute,
-    /// A relative path such as `./other.md` (§5.2).
+    /// A relative path such as `./other.md`.
     Relative,
     /// An external URI (`https://…`, `mailto:…`, …).
     External,
@@ -35,7 +44,7 @@ pub struct Link {
 }
 
 impl Link {
-    /// Classifies a raw target string per §5.
+    /// Classifies a raw target string per §6.
     pub fn classify(target: &str) -> LinkKind {
         let t = target.trim();
         if t.is_empty() {
@@ -56,8 +65,8 @@ impl Link {
     ///
     /// Returns `None` for external links, anchors, links to directories
     /// (targets ending in `/`), or targets that cannot form a valid concept id.
-    /// The result is *not* guaranteed to exist in the bundle — broken links are
-    /// permitted by the spec (§5.3).
+    /// The result is *not* guaranteed to exist in the bundle: broken links are
+    /// permitted by the spec (§6.1).
     pub fn resolve(&self, source: &ConceptId) -> Option<ConceptId> {
         match self.kind {
             LinkKind::Absolute => resolve_absolute(&self.target),
@@ -67,7 +76,11 @@ impl Link {
     }
 }
 
-/// A numbered entry under the `# Citations` heading (§8).
+/// A numbered entry under a legacy v0.1 `# Citations` heading.
+///
+/// v0.2 supersedes the body citations list with the `sources` frontmatter field
+/// and footnote attribution (§5.1); consumers MAY still parse this form for
+/// v0.1 documents (§13.1).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Citation {
     /// The citation number (the `n` in `[n]`).
@@ -80,13 +93,25 @@ pub struct Citation {
     pub raw: String,
 }
 
+/// Whether a target names something outside the bundle.
+///
+/// Any RFC-3986 scheme prefix counts, not just `http`. §4.1 calls `resource`
+/// "a URI that uniquely identifies the underlying asset", and producers do use
+/// non-http schemes for warehouse assets (`bigquery:project.dataset.table`);
+/// treating those as relative paths would have a consumer looking for a file
+/// that was never meant to exist.
 fn is_external(t: &str) -> bool {
-    let lower = t.to_ascii_lowercase();
-    lower.starts_with("//") // protocol-relative URL
-        || lower.contains("://")
-        || lower.starts_with("mailto:")
-        || lower.starts_with("tel:")
-        || lower.starts_with("data:")
+    t.starts_with("//") /* protocol-relative URL */ || has_uri_scheme(t)
+}
+
+/// Matches `scheme:` where scheme is `ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )`.
+fn has_uri_scheme(t: &str) -> bool {
+    let Some((scheme, _)) = t.split_once(':') else {
+        return false;
+    };
+    let mut chars = scheme.chars();
+    chars.next().is_some_and(|c| c.is_ascii_alphabetic())
+        && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
 }
 
 fn strip_anchor(target: &str) -> &str {
@@ -103,22 +128,7 @@ fn resolve_absolute(target: &str) -> Option<ConceptId> {
     }
     // Normalize `.`/`..` segments relative to the bundle root, consistent with
     // relative-link resolution.
-    let mut segs: Vec<String> = Vec::new();
-    for comp in t.trim_start_matches('/').split('/') {
-        match comp {
-            "" | "." => continue,
-            ".." => {
-                segs.pop();
-            }
-            other => segs.push(other.to_string()),
-        }
-    }
-    if let Some(last) = segs.last_mut() {
-        if let Some(s) = last.strip_suffix(".md") {
-            *last = s.to_string();
-        }
-    }
-    ConceptId::new(segs).ok()
+    strip_md(normalize_segments(t, &[])).and_then(|segs| ConceptId::new(segs).ok())
 }
 
 fn resolve_relative(target: &str, source: &ConceptId) -> Option<ConceptId> {
@@ -127,11 +137,14 @@ fn resolve_relative(target: &str, source: &ConceptId) -> Option<ConceptId> {
         return None;
     }
     // Start from the source concept's directory.
-    let mut segs: Vec<String> = match source.parent() {
-        Some(p) => p.segments().to_vec(),
-        None => Vec::new(),
-    };
-    for comp in t.split('/') {
+    let base = source.parent().map(|p| p.segments().to_vec()).unwrap_or_default();
+    strip_md(normalize_segments(t, &base)).and_then(|segs| ConceptId::new(segs).ok())
+}
+
+/// Resolves `.`/`..`/empty components in a `/`-separated path against `base`.
+fn normalize_segments(path: &str, base: &[String]) -> Vec<String> {
+    let mut segs = base.to_vec();
+    for comp in path.split('/') {
         match comp {
             "" | "." => continue,
             ".." => {
@@ -140,30 +153,82 @@ fn resolve_relative(target: &str, source: &ConceptId) -> Option<ConceptId> {
             other => segs.push(other.to_string()),
         }
     }
-    if let Some(last) = segs.last_mut() {
-        if let Some(s) = last.strip_suffix(".md") {
-            *last = s.to_string();
-        }
+    segs
+}
+
+/// Drops a trailing `.md` from the last segment, or `None` if there are none.
+fn strip_md(mut segs: Vec<String>) -> Option<Vec<String>> {
+    let last = segs.last_mut()?;
+    if let Some(s) = last.strip_suffix(".md") {
+        *last = s.to_string();
     }
-    ConceptId::new(segs).ok()
+    Some(segs)
+}
+
+/// Normalizes a **path-valued frontmatter field** (§6.2) into the
+/// bundle-relative paths it might name, most likely first.
+///
+/// `resource`, `sources[].resource`, `computation`, `executor.resource`, and
+/// `attester.resource` all accept an absolute URL, a bundle-relative path
+/// beginning with `/`, or a relative path. URLs (and anchors) yield an empty
+/// vector, since there is nothing in the bundle to resolve.
+///
+/// A relative path yields **two** candidates, because the spec uses both
+/// readings: §6.2 calls `../computations/revenue.md` relative to the concept,
+/// while §6.3's `references/` convention is written from the bundle root
+/// (`executor.resource: references/skills/run-on-bq.md` on a concept that lives
+/// in `computations/`). Callers should take the first candidate that exists.
+///
+/// Unlike [`Link::resolve`], the returned paths keep their file extension:
+/// these fields routinely name non-markdown files such as
+/// `references/attesters/revenue.py`.
+pub fn field_path_candidates(raw: &str, from: &ConceptId) -> Vec<String> {
+    let target = raw.trim();
+    match Link::classify(target) {
+        LinkKind::Absolute => {
+            vec![normalize_segments(strip_anchor(target), &[]).join("/")]
+        }
+        LinkKind::Relative => {
+            let base = from.parent().map(|p| p.segments().to_vec()).unwrap_or_default();
+            let stripped = strip_anchor(target);
+            let mut out = vec![normalize_segments(stripped, &base).join("/")];
+            let from_root = normalize_segments(stripped, &[]).join("/");
+            if !out.contains(&from_root) {
+                out.push(from_root);
+            }
+            out.retain(|p| !p.is_empty());
+            out
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// The concept id a bundle-relative markdown path denotes, or `None` if the
+/// path is not a `.md` file or is not a valid id (§2).
+pub fn concept_id_for_path(path: &str) -> Option<ConceptId> {
+    let stem = path.strip_suffix(".md")?;
+    ConceptId::parse(stem).ok()
 }
 
 /// Extracts all inline markdown links from a body, skipping fenced code blocks
 /// and inline code spans.
 pub fn extract_links(body: &str) -> Vec<Link> {
     let mut links = Vec::new();
-    for line in code_free_lines(body) {
+    for (_, line) in code_free_lines(body) {
         scan_line_links(&line, &mut links);
     }
     links
 }
 
-/// Returns the body's lines with fenced code blocks removed and inline code
-/// spans blanked out.
-fn code_free_lines(body: &str) -> Vec<String> {
+/// Returns the body's lines, as `(1-based line number, text)`, with fenced
+/// code blocks removed and inline code spans blanked out.
+///
+/// Shared with [`footnotes`](crate::footnotes), which needs the same
+/// "prose only" view of the body to find attribution markers (§5.1).
+pub(crate) fn code_free_lines(body: &str) -> Vec<(usize, String)> {
     let mut out = Vec::new();
     let mut fence: Option<char> = None;
-    for line in body.lines() {
+    for (i, line) in body.lines().enumerate() {
         let trimmed = line.trim_start();
         if let Some(f) = fence {
             // Inside a fence; look for the closing marker.
@@ -180,7 +245,7 @@ fn code_free_lines(body: &str) -> Vec<String> {
             fence = Some('~');
             continue;
         }
-        out.push(blank_inline_code(line));
+        out.push((i + 1, blank_inline_code(line)));
     }
     out
 }

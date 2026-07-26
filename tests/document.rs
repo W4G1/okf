@@ -1,10 +1,18 @@
-//! Document parsing/serialization/validation tests.
+//! Document parsing, serialization, and validation tests.
 //!
 //! These mirror the reference implementation's `tests/test_document.py` to
-//! guarantee behavioural parity, plus extra edge cases.
+//! guarantee behavioural parity, plus extra edge cases. Where the reference
+//! calls a free function on a raw frontmatter dict (`normalize_verified`,
+//! `trust_tier`, `is_stale`), the equivalent here is a [`Frontmatter`] accessor,
+//! so the assertions are transcribed rather than the call shapes.
 
 use okf::yaml::Value;
-use okf::{Document, DocumentError};
+use okf::{Date, Document, DocumentError, TrustTier};
+
+/// Builds a document from a frontmatter block with an empty body.
+fn with_frontmatter(frontmatter: &str) -> Document {
+    Document::parse(&format!("---\n{frontmatter}\n---\n")).unwrap()
+}
 
 #[test]
 fn roundtrip_preserves_frontmatter_and_body() {
@@ -46,37 +54,114 @@ fn unterminated_frontmatter_raises() {
 }
 
 #[test]
-fn validate_rejects_missing_required_keys() {
-    let doc = Document::parse("---\ntype: X\ntitle: Y\n---\n").unwrap();
+fn validate_rejects_missing_type() {
+    let doc = with_frontmatter("title: Y");
     let err = doc.validate().unwrap_err();
-    let msg = err.to_string();
-    assert!(msg.contains("description"), "{msg}");
-    assert!(msg.contains("timestamp"), "{msg}");
+    assert!(err.to_string().contains("type"), "{err}");
 }
 
 #[test]
-fn validate_accepts_full_frontmatter() {
-    let doc = Document::parse(
-        "---\ntype: X\ntitle: Y\ndescription: Z\ntimestamp: 2026-05-27T00:00:00+00:00\n---\n",
-    )
-    .unwrap();
-    assert!(doc.validate().is_ok());
+fn validate_accepts_type_only() {
+    // §11: `type` is the only always-required key.
+    assert!(with_frontmatter("type: X").validate().is_ok());
 }
 
 #[test]
-fn conformance_requires_only_type() {
-    let doc = Document::parse("---\ntype: Metric\n---\nbody\n").unwrap();
-    assert!(doc.validate_conformance().is_ok());
-    assert!(doc.validate().is_err()); // strict producer validation still fails
-
-    let no_type = Document::parse("---\ntitle: X\n---\n").unwrap();
-    assert!(no_type.validate_conformance().is_err());
+fn an_empty_type_does_not_count_as_present() {
+    assert!(with_frontmatter("type: \"\"").validate().is_err());
 }
 
 #[test]
-fn empty_type_is_not_conformant() {
-    let doc = Document::parse("---\ntype: \"\"\n---\n").unwrap();
-    assert!(doc.validate_conformance().is_err());
+fn missing_recommended_is_the_producer_checklist_not_a_rejection() {
+    let sparse = with_frontmatter("type: X\ntitle: Y");
+    assert_eq!(sparse.missing_recommended(), ["description", "generated"]);
+    // Every one of them is optional, so the document still conforms (§11).
+    assert!(sparse.validate().is_ok());
+
+    let full = with_frontmatter(
+        "type: X\ntitle: Y\ndescription: Z\n\
+         generated: { by: reference_agent/gemini-2.5-pro, at: 2026-06-20T22:53:05Z }",
+    );
+    assert!(full.missing_recommended().is_empty());
+}
+
+#[test]
+fn a_legacy_timestamp_stands_in_for_generated() {
+    // §13.1: consumers MAY fall back to a v0.1 `timestamp` when `generated` is
+    // absent, so a v0.1 document has nothing left on the checklist.
+    let doc = with_frontmatter("type: X\ntitle: Y\ndescription: Z\ntimestamp: 2026-05-27T00:00:00+00:00");
+    assert!(doc.missing_recommended().is_empty());
+    assert_eq!(
+        doc.frontmatter.content_changed_at().unwrap().raw,
+        "2026-05-27T00:00:00+00:00"
+    );
+}
+
+#[test]
+fn an_attested_computation_should_carry_a_runtime() {
+    let without = with_frontmatter(
+        "type: Attested Computation\ntitle: Revenue\ndescription: Recognized revenue.\n\
+         generated: { by: human:ahormati, at: 2026-06-20T22:53:05Z }",
+    );
+    assert_eq!(without.missing_recommended(), ["runtime"]);
+    // §10.2's `runtime` is a SHOULD like the rest of the families (§11).
+    assert!(without.validate().is_ok());
+
+    let with = with_frontmatter(
+        "type: Attested Computation\ntitle: Revenue\ndescription: Recognized revenue.\n\
+         runtime: bigquery\n\
+         generated: { by: human:ahormati, at: 2026-06-20T22:53:05Z }",
+    );
+    assert!(with.missing_recommended().is_empty());
+}
+
+#[test]
+fn a_bare_verified_mapping_is_read_as_a_one_element_list() {
+    let doc = with_frontmatter("type: X\nverified: { by: human:ahormati, at: 2026-06-25T09:00:00Z }");
+    let events = doc.frontmatter.verified();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].by.as_ref().unwrap().as_str(), "human:ahormati");
+    assert_eq!(events[0].at.as_ref().unwrap().raw, "2026-06-25T09:00:00Z");
+
+    assert!(with_frontmatter("type: X").frontmatter.verified().is_empty());
+}
+
+#[test]
+fn trust_tiers_derive_from_the_verifying_actors() {
+    // The tier strings are part of the interchange vocabulary (§5.3), so assert
+    // on them verbatim, not just on the enum.
+    let tier = |frontmatter: &str| with_frontmatter(frontmatter).frontmatter.trust_tier();
+
+    assert_eq!(tier("type: X"), TrustTier::Unverified);
+    assert_eq!(tier("type: X").to_string(), "unverified");
+
+    let machine = tier("type: X\nverified: [{ by: process:finance-nightly, at: x }]");
+    assert_eq!(machine, TrustTier::MachineConfirmed);
+    assert_eq!(machine.to_string(), "machine-confirmed");
+
+    let both = tier(
+        "type: X\nverified:\n  - { by: process:finance-nightly, at: x }\n  \
+         - { by: human:ahormati, at: y }",
+    );
+    assert_eq!(both, TrustTier::HumanReviewed);
+    assert_eq!(both.to_string(), "human-reviewed");
+
+    // A bare mapping is treated as a one-element list.
+    assert_eq!(
+        tier("type: X\nverified: { by: human:ahormati, at: z }"),
+        TrustTier::HumanReviewed
+    );
+}
+
+#[test]
+fn staleness_compares_stale_after_against_a_given_day() {
+    let today = Date::new(2026, 9, 23).unwrap();
+    let stale = |frontmatter: &str| with_frontmatter(frontmatter).frontmatter.is_stale_on(today);
+
+    assert!(stale("type: X\nstale_after: 2026-09-23"), "stale on the day itself");
+    assert!(!stale("type: X\nstale_after: 2026-09-24"));
+    assert!(!stale("type: X"));
+    assert!(!stale("type: X\nstale_after: not-a-date"));
 }
 
 #[test]
@@ -104,4 +189,33 @@ fn empty_frontmatter_block_is_empty_mapping() {
     // splitlines/join); serialize restores it.
     assert_eq!(doc.body, "body");
     assert!(doc.serialize().ends_with("body\n"));
+}
+
+#[test]
+fn a_datetime_valued_stale_after_is_compared_on_its_date() {
+    // §5.5 asks for "an absolute date (`YYYY-MM-DD`)", so a datetime there is a
+    // deviation the validator reports. It still has to be compared, though, and
+    // the reference truncates to the first ten characters rather than treating
+    // the concept as fresh forever.
+    let doc = with_frontmatter("type: X\nstale_after: '2026-09-23T00:00:00Z'");
+    let field = doc.frontmatter.stale_after().unwrap();
+    assert!(!field.is_valid(), "still reported as not a plain date");
+    assert_eq!(field.effective_date(), Date::new(2026, 9, 23));
+
+    assert!(doc.frontmatter.is_stale_on(Date::new(2026, 9, 23).unwrap()));
+    assert!(!doc.frontmatter.is_stale_on(Date::new(2026, 9, 22).unwrap()));
+}
+
+#[test]
+fn reorder_preferred_matches_the_reference_key_order() {
+    let mut doc = with_frontmatter(
+        "custom_key: keep me\nsources: []\ntitle: Orders\ntype: BigQuery Table\nstatus: stable",
+    );
+    doc.frontmatter.reorder_preferred();
+
+    let keys: Vec<&str> = doc.frontmatter.as_mapping().keys().collect();
+    assert_eq!(keys, ["type", "title", "status", "sources", "custom_key"]);
+    // Reordering neither drops nor rewrites anything.
+    assert_eq!(doc.frontmatter.get("custom_key").unwrap().as_str(), Some("keep me"));
+    assert_eq!(doc.frontmatter.as_mapping().len(), 5);
 }

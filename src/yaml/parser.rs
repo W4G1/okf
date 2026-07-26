@@ -86,10 +86,12 @@ impl Parser {
         } else if split_key_value(trimmed).is_some() {
             self.parse_mapping(indent)
         } else {
-            // A bare scalar / flow collection on a single line.
-            let v = parse_inline_value(trimmed, self.pos)?;
+            // A bare scalar or flow collection. A plain scalar may continue on
+            // the following lines at this same indent.
+            let first = trimmed.to_string();
+            let entry_line = self.pos;
             self.pos += 1;
-            Ok(v)
+            self.read_scalar(&first, indent, entry_line)
         }
     }
 
@@ -123,7 +125,7 @@ impl Parser {
                 Some(r) if r.starts_with('|') || r.starts_with('>') => {
                     self.parse_block_scalar(indent, &r)?
                 }
-                Some(r) => parse_inline_value(&r, entry_line)?,
+                Some(r) => self.read_scalar(&r, indent + 1, entry_line)?,
                 None => {
                     // Nested block on the following more-indented lines, else null.
                     self.parse_nested(indent)?
@@ -178,19 +180,73 @@ impl Parser {
                 let v = self.parse_mapping(item_offset)?;
                 seq.push(v);
             } else {
-                let v = parse_inline_value(&item_text, entry_line)?;
                 self.pos += 1;
+                let v = self.read_scalar(&item_text, indent + 1, entry_line)?;
                 seq.push(v);
             }
         }
         Ok(Value::Sequence(seq))
     }
 
+    /// Reads a scalar that starts as `first` and may continue on the following
+    /// lines, folding each line break into a single space.
+    ///
+    /// YAML lets both plain and quoted scalars span lines (§6.5 line folding),
+    /// and PyYAML's `safe_dump` leans on it: any value longer than its 80-column
+    /// line width comes out wrapped. The reference implementation dumps with
+    /// `safe_dump`, so its own published bundles carry wrapped `description` and
+    /// `title` values, and a parser that rejects them cannot read
+    /// reference-produced OKF at all.
+    ///
+    /// A following line continues the scalar when it reaches `min_indent` and,
+    /// outside an open quote, does not itself open a mapping entry, a sequence
+    /// item, or a comment. Inside an unclosed quote every line belongs to the
+    /// scalar until the closing quote, since a wrapped quoted value may contain
+    /// anything, `key: value` shapes included. Flow collections are returned as
+    /// they stand: nothing emits one across lines.
+    fn read_scalar(
+        &mut self,
+        first: &str,
+        min_indent: usize,
+        line: usize,
+    ) -> Result<Value, YamlError> {
+        if first.starts_with('[') || first.starts_with('{') {
+            return parse_inline_value(first, line);
+        }
+
+        let mut text = first.to_string();
+        let mut open_quote = unclosed_quote(first);
+        while self.pos < self.lines.len() {
+            let raw = &self.lines[self.pos];
+            if raw.trim().is_empty() {
+                break;
+            }
+            let ind = indent_of(raw).ok_or_else(|| self.err("tab character in indentation"))?;
+            if ind < min_indent {
+                break;
+            }
+            let content = raw.trim();
+            if open_quote.is_none() && starts_a_new_node(content) {
+                break;
+            }
+            text.push(' ');
+            text.push_str(content);
+            if let Some(quote) = open_quote {
+                if closes_quote(content, quote, 0) {
+                    open_quote = None;
+                }
+            }
+            self.pos += 1;
+        }
+
+        parse_scalar(&text, line)
+    }
+
     /// Parses a nested block following a `key:` with no inline value.
     ///
     /// A nested *mapping* must be indented deeper than `parent_indent`. A nested
     /// block *sequence*, however, is also permitted at exactly `parent_indent`
-    /// — this is YAML's standard "indentation-relaxed" block sequence, and it is
+    /// which is YAML's standard "indentation-relaxed" block sequence, and it is
     /// what PyYAML's `safe_dump` (used by the reference implementation) emits for
     /// list values such as `tags`. Returns [`Value::Null`] when no block
     /// follows.
@@ -297,6 +353,48 @@ fn fold_lines(lines: &[String]) -> String {
         }
     }
     out
+}
+
+/// Whether a (trimmed) line opens a node of its own rather than continuing the
+/// scalar above it: a comment, a sequence item, or a mapping entry.
+fn starts_a_new_node(content: &str) -> bool {
+    content.starts_with('#')
+        || content == "-"
+        || content.starts_with("- ")
+        || split_key_value(content).is_some()
+}
+
+/// The quote character of a quoted scalar that `s` opens but does not close, or
+/// `None` when `s` is plain or self-contained.
+fn unclosed_quote(s: &str) -> Option<char> {
+    let quote = match s.chars().next() {
+        Some(c @ ('\'' | '"')) => c,
+        _ => return None,
+    };
+    (!closes_quote(s, quote, 1)).then_some(quote)
+}
+
+/// Whether the closing `quote` of an already-open quoted scalar appears in `s`
+/// at or after character index `from`, honouring `''` and `\"` escapes.
+fn closes_quote(s: &str, quote: char, from: usize) -> bool {
+    let chars: Vec<char> = s.chars().collect();
+    let mut i = from;
+    while i < chars.len() {
+        let c = chars[i];
+        if quote == '"' && c == '\\' {
+            i += 2;
+            continue;
+        }
+        if c == quote {
+            if quote == '\'' && chars.get(i + 1) == Some(&'\'') {
+                i += 2;
+                continue;
+            }
+            return true;
+        }
+        i += 1;
+    }
+    false
 }
 
 /// Leading-space count, or `None` if the indentation contains a tab.
@@ -455,7 +553,7 @@ fn interpret_plain(s: &str) -> Value {
     Value::String(s.to_string())
 }
 
-/// `[-+]?(0|[1-9][0-9]*)` — a decimal integer with no redundant leading zero.
+/// `[-+]?(0|[1-9][0-9]*)`: a decimal integer with no redundant leading zero.
 fn is_canonical_int(s: &str) -> bool {
     let digits = s.strip_prefix(['+', '-']).unwrap_or(s);
     if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
@@ -622,11 +720,13 @@ impl FlowParser {
             }
             let key = self.parse_flow_scalar()?;
             self.skip_ws();
-            if self.chars.get(self.pos) != Some(&':') {
-                return Err(self.err("expected ':' in flow mapping"));
-            }
-            self.pos += 1;
-            let value = self.parse_value()?;
+            // A key with no `: value` is a null-valued entry, as in YAML.
+            let value = if self.chars.get(self.pos) == Some(&':') {
+                self.pos += 1;
+                self.parse_value()?
+            } else {
+                Value::Null
+            };
             map.push_raw(key, value);
             self.skip_ws();
             match self.chars.get(self.pos) {
@@ -671,15 +771,32 @@ impl FlowParser {
             };
             return Ok(Value::String(s));
         }
-        // Plain flow scalar: read until , : ] } or end.
+        // Plain flow scalar: read until `,`, `]`, `}`, or a `:` acting as a
+        // key/value separator.
         let start = self.pos;
         while self.pos < self.chars.len() {
             match self.chars[self.pos] {
-                ',' | ':' | ']' | '}' => break,
+                ',' | ']' | '}' => break,
+                ':' if is_separator_colon(&self.chars, self.pos) => break,
                 _ => self.pos += 1,
             }
         }
         let raw: String = self.chars[start..self.pos].iter().collect();
         Ok(interpret_plain(raw.trim()))
+    }
+}
+
+/// Whether the `:` at `i` separates a flow mapping's key from its value, rather
+/// than being an ordinary character inside a plain scalar.
+///
+/// YAML only treats `:` as a separator in flow context when it is followed by
+/// whitespace, a flow indicator, or the end of the collection. OKF v0.2 relies
+/// on this: `{ by: human:ahormati, at: 2026-06-25T09:00:00Z }` is one mapping
+/// of two entries, not a parse error: the colons in `human:ahormati` and
+/// `09:00:00` are content (§5.2, §7).
+fn is_separator_colon(chars: &[char], i: usize) -> bool {
+    match chars.get(i + 1) {
+        None => true,
+        Some(c) => c.is_whitespace() || matches!(c, ',' | '[' | ']' | '{' | '}'),
     }
 }

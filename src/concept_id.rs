@@ -1,7 +1,7 @@
 //! Concept identifiers and their mapping to/from file paths.
 //!
 //! A *concept id* is the path of a concept's file within the bundle with the
-//! `.md` suffix removed — e.g. `tables/users.md` has id `tables/users` (§2).
+//! `.md` suffix removed, e.g. `tables/users.md` has id `tables/users` (§2).
 //! This module ports the reference `bundle/paths.py`, including its segment
 //! validation rule. Ported to Rust and modified from the original Apache-2.0
 //! Python source; see the NOTICE file.
@@ -88,21 +88,31 @@ impl ConceptId {
 
     /// Derives a concept id from a file path relative to `bundle_root`,
     /// stripping the `.md` suffix.
+    ///
+    /// Segments are **not** validated here, matching the reference
+    /// `path_to_concept_id` (only `parse_concept_id` validates). A file already
+    /// on disk is a concept whatever it is called, and §11 makes conformance a
+    /// question of frontmatter, not filenames, so a name such as
+    /// `my notes.md` must not turn a readable document into an error. The
+    /// consequence is that [`ConceptId::parse`] may reject the string form of an
+    /// id that this returns.
     pub fn from_path(bundle_root: &Path, path: &Path) -> Result<Self, ConceptIdError> {
         let rel = path
             .strip_prefix(bundle_root)
             .map_err(|_| ConceptIdError(format!("{} is not under bundle root", path.display())))?;
-        let mut segments: Vec<String> = Vec::new();
-        for comp in rel.components() {
-            let s = comp.as_os_str().to_string_lossy();
-            segments.push(s.to_string());
-        }
+        let mut segments: Vec<String> = rel
+            .components()
+            .map(|comp| comp.as_os_str().to_string_lossy().to_string())
+            .collect();
         if let Some(last) = segments.last_mut() {
             if let Some(stripped) = last.strip_suffix(".md") {
                 *last = stripped.to_string();
             }
         }
-        ConceptId::new(segments)
+        if segments.is_empty() {
+            return Err(ConceptIdError("concept_id must have at least one segment".into()));
+        }
+        Ok(ConceptId { segments })
     }
 }
 

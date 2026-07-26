@@ -1,10 +1,10 @@
 [package]
 name = "okf"
-version = "0.1.0-alpha.1"
+version = "0.2.0-alpha.1"
 edition = "2021"
 rust-version = "1.74"
 authors = ["Walter van der Giessen <waltervdgiessen@gmail.com>"]
-description = "A pure-Rust, zero-dependency implementation of the Open Knowledge Format (OKF) v0.1: parser, model, validator, link graph, and index/log tooling."
+description = "A pure-Rust, zero-dependency implementation of the Open Knowledge Format (OKF) v0.2: parser, model, validator, provenance/trust/attestation families, link graph, and index/log tooling."
 license = "Apache-2.0"
 repository = "https://github.com/W4G1/okf"
 # Informational link to the format this crate implements (the upstream OKF spec).

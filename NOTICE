@@ -1,4 +1,4 @@
-okf — a pure-Rust implementation of the Open Knowledge Format (OKF)
+okf: a pure-Rust implementation of the Open Knowledge Format (OKF)
 Copyright 2026 Walter van der Giessen
 
 Licensed under the Apache License, Version 2.0 (the "License"); you may not
@@ -15,12 +15,14 @@ by Google LLC, which is distributed under the Apache License, Version 2.0:
     Copyright Google LLC
     https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf
 
-Portions of this crate — specifically the concept-document parser/serializer,
-the concept-id/path conventions, and the index-generation logic — are ports of
-the OKF reference implementation (the Python `enrichment_agent.bundle` package:
-`document.py`, `paths.py`, `index.py`). The OKF v0.1 specification (SPEC.md)
-authored by that project is implemented here. These files have been rewritten
-in Rust and modified from their original form.
+Portions of this crate, specifically the concept-document parser/serializer,
+the concept-id/path conventions, the frontmatter key ordering, and the
+index-generation logic, are ports of the OKF reference implementation (the
+Python `reference_agent` package: `bundle/document.py`, `bundle/paths.py`,
+`bundle/index.py`, `bundle/synthesizer.py`, and the frontmatter ordering in
+`tools/bundle_tools.py`). The OKF v0.2 specification (SPEC.md) authored by that
+project is implemented here. These files have been rewritten in Rust and
+modified from their original form.
 
 OKF and Google Cloud are trademarks of Google LLC. This crate is an independent
 implementation and is not affiliated with, endorsed by, or sponsored by Google.

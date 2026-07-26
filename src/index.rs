@@ -1,4 +1,9 @@
-//! Generation of `index.md` directory listings (§6).
+//! Generation of `index.md` directory listings (§8).
+//!
+//! Index files support **progressive disclosure**: they let a human or agent
+//! see what a directory holds before opening individual documents. Grouping is
+//! by concept `type`, which is also how an `Attested Computation` becomes
+//! discoverable from an index (§10.5).
 //!
 //! This is a port of the reference `bundle/index.py`'s `regenerate_indexes` and
 //! `_build_index_text`. The reference synthesizes subdirectory descriptions
@@ -9,6 +14,7 @@
 //! file.
 
 use crate::document::Document;
+use crate::yaml::Value;
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::io;
@@ -69,14 +75,27 @@ pub fn build_index_text(entries: &[IndexEntry]) -> String {
 /// returns a one-line description.
 pub type Synthesize<'a> = dyn Fn(&str, &[(String, String)]) -> String + 'a;
 
-/// The default, deterministic synthesizer: lists the child titles. Used when no
-/// custom (e.g. LLM-backed) synthesizer is supplied.
+/// The default, deterministic synthesizer: lists the child titles.
+///
+/// Used when no custom (for example LLM-backed) synthesizer is supplied. The
+/// wording is the reference `synthesize_description`'s own `_fallback`, which is
+/// what it writes when its model call fails, so an index generated here reads
+/// the same as one generated there without a model.
 pub fn default_synthesize(_rel: &str, children: &[(String, String)]) -> String {
     if children.is_empty() {
         return String::new();
     }
-    let titles: Vec<&str> = children.iter().map(|(t, _)| t.as_str()).collect();
-    format!("Contains {}: {}.", children.len(), titles.join(", "))
+    let titles: Vec<&str> = children
+        .iter()
+        .map(|(title, _)| title.as_str())
+        .filter(|title| !title.is_empty())
+        .collect();
+    let titles = if titles.is_empty() {
+        "no titled entries".to_string()
+    } else {
+        titles.join(", ")
+    };
+    format!("Contains {} entries: {titles}.", children.len())
 }
 
 /// Regenerates every `index.md` in the bundle using [`default_synthesize`].
@@ -133,7 +152,13 @@ pub fn regenerate_indexes_with(
                     .file_stem()
                     .map(|s| s.to_string_lossy().to_string())
                     .unwrap_or_default();
-                let title = doc.frontmatter.title().unwrap_or(stem);
+                // An empty `title` falls back to the filename, as §4.1 permits
+                // and the reference's `fm.get("title") or child.stem` does.
+                let title = doc
+                    .frontmatter
+                    .title()
+                    .filter(|t| !t.is_empty())
+                    .unwrap_or(stem);
                 let description = doc.frontmatter.description().unwrap_or_default();
                 let type_ = doc.frontmatter.type_().unwrap_or_default();
                 entries.push(IndexEntry {
@@ -158,7 +183,12 @@ pub fn regenerate_indexes_with(
         }
 
         let index_path = directory.join(INDEX_FILE);
-        fs::write(&index_path, build_index_text(&entries))?;
+        let body = build_index_text(&entries);
+        let text = match preserved_frontmatter(&index_path) {
+            Some(fm) => format!("---\n{fm}---\n\n{body}"),
+            None => body,
+        };
+        fs::write(&index_path, text)?;
         written.push(index_path);
 
         if directory == bundle_root {
@@ -188,6 +218,21 @@ pub fn regenerate_indexes_with(
 fn load_doc(path: &Path) -> Option<Document> {
     let text = fs::read_to_string(path).ok()?;
     Document::parse(&text).ok()
+}
+
+/// The `okf_version` declaration to carry over when rewriting an `index.md`.
+///
+/// A bundle-root `index.md` is the one place frontmatter is permitted in an
+/// index, and the only key it may hold is `okf_version` (§12). Regenerating the
+/// listing must not silently drop the bundle's declared version, so the key is
+/// read back and re-emitted; anything else in the block is discarded, since it
+/// does not belong there.
+fn preserved_frontmatter(index_path: &Path) -> Option<String> {
+    let doc = load_doc(index_path)?;
+    let version = doc.frontmatter.get("okf_version")?;
+    let mut kept = crate::yaml::Mapping::new();
+    kept.insert("okf_version", version.clone());
+    Some(Value::Mapping(kept).to_yaml_string())
 }
 
 fn depth(root: &Path, dir: &Path) -> usize {

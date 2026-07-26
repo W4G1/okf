@@ -1,14 +1,21 @@
 //! The OKF concept document: YAML frontmatter + markdown body.
 //!
-//! This is a faithful port of the reference implementation's `OKFDocument`
-//! (`okf/src/enrichment_agent/bundle/document.py`), including its exact parse,
-//! serialize, and validation behaviour, so that documents round-trip
-//! compatibly between the two implementations. Ported to Rust and modified from
-//! the original Apache-2.0 Python source; see the NOTICE file.
+//! The parse, serialize, and validation behaviour is a faithful port of the
+//! reference implementation's `OKFDocument`
+//! (`okf/src/reference_agent/bundle/document.py`), so documents round-trip
+//! compatibly between the two. Ported to Rust and modified from the original
+//! Apache-2.0 Python source; see the NOTICE file.
+//!
+//! On top of parsing, [`Document`] exposes the v0.2 body conventions that pair
+//! with frontmatter: footnote attribution keyed to `sources[].id` (§5.1) and
+//! the `# Computation` block of an Attested Computation (§10.3).
 
+use crate::computation::{AttestedComputation, InlineComputation};
 use crate::error::DocumentError;
-use crate::frontmatter::{Frontmatter, REQUIRED_FRONTMATTER_KEYS};
+use crate::footnotes::{self, FootnoteDef, FootnoteRef};
+use crate::frontmatter::{Frontmatter, RECOMMENDED_FRONTMATTER_KEYS, REQUIRED_FRONTMATTER_KEYS};
 use crate::links::{self, Citation, Link};
+use crate::provenance::{self, Attribution};
 use crate::yaml::Value;
 
 const FRONTMATTER_DELIM: &str = "---";
@@ -76,6 +83,8 @@ impl Document {
     ///
     /// `parse` followed by `serialize` preserves frontmatter key order and the
     /// body (modulo trailing-newline normalization), matching the reference.
+    /// Flow collections are re-emitted in block style, which is the same value
+    /// written differently.
     pub fn serialize(&self) -> String {
         let fm_text = Value::Mapping(self.frontmatter.as_mapping().clone())
             .to_yaml_string()
@@ -89,23 +98,22 @@ impl Document {
         format!("{FRONTMATTER_DELIM}\n{fm_text}\n{FRONTMATTER_DELIM}\n\n{body}")
     }
 
-    /// Producer-side validation matching the reference `OKFDocument.validate`:
-    /// requires `type`, `title`, `description`, and `timestamp` to all be
-    /// present and non-empty.
+    /// Validates the document against §11: the frontmatter must carry a
+    /// non-empty `type`, and nothing else is required.
     ///
-    /// For spec **conformance** (§9), which requires only a non-empty `type`,
-    /// use [`Document::validate_conformance`].
+    /// That single check is the whole of document-level validation in v0.2, and
+    /// it matches the reference implementation's `OKFDocument.validate`. Every
+    /// other field the spec describes is a SHOULD, so a concept carrying only
+    /// `type` passes here; see [`Document::missing_recommended`] for the
+    /// producer-side checklist and
+    /// [`validate_bundle`](crate::validate_bundle) for the full diagnostics.
     pub fn validate(&self) -> Result<(), DocumentError> {
         let missing: Vec<String> = REQUIRED_FRONTMATTER_KEYS
             .iter()
-            .filter(|k| {
-                self.frontmatter
-                    .get(k)
-                    .map(Value::is_empty_value)
-                    .unwrap_or(true)
-            })
-            .map(|k| k.to_string())
+            .filter(|key| !self.has(key))
+            .map(|key| key.to_string())
             .collect();
+
         if missing.is_empty() {
             Ok(())
         } else {
@@ -113,29 +121,95 @@ impl Document {
         }
     }
 
-    /// Spec-conformance validation (§9): the frontmatter must contain a
-    /// non-empty `type` field. Optional fields are not required.
-    pub fn validate_conformance(&self) -> Result<(), DocumentError> {
-        let has_type = self
-            .frontmatter
-            .get("type")
-            .map(|v| !v.is_empty_value())
-            .unwrap_or(false);
-        if has_type {
-            Ok(())
-        } else {
-            Err(DocumentError::MissingKeys(vec!["type".to_string()]))
+    /// The [recommended](RECOMMENDED_FRONTMATTER_KEYS) frontmatter keys this
+    /// document leaves unset, plus `runtime` when the concept is an Attested
+    /// Computation, which §10.2 requires it to carry.
+    ///
+    /// None of these is a conformance failure, so [`Document::validate`]
+    /// ignores them: §11 forbids rejecting a concept for a missing optional
+    /// field. This is the checklist a *producer* wants before publishing, and
+    /// it is what [`validate_bundle`](crate::validate_bundle) reports as
+    /// warnings. An empty result means the document is fully filled in.
+    ///
+    /// `generated` counts as set when a legacy v0.1 `timestamp` stands in for
+    /// it, since §13.1 lets consumers read one for the other.
+    pub fn missing_recommended(&self) -> Vec<&'static str> {
+        let mut missing: Vec<&'static str> = RECOMMENDED_FRONTMATTER_KEYS
+            .iter()
+            .copied()
+            .filter(|key| match *key {
+                "generated" => !self.has("generated") && !self.has("timestamp"),
+                other => !self.has(other),
+            })
+            .collect();
+
+        if self.frontmatter.is_attested_computation() && !self.has("runtime") {
+            missing.push("runtime");
         }
+
+        missing
     }
 
-    /// Extracts all markdown links found in the body.
+    /// Whether a frontmatter key is present and carries a non-empty value.
+    fn has(&self, key: &str) -> bool {
+        self.frontmatter
+            .get(key)
+            .is_some_and(|value| !value.is_empty_value())
+    }
+
+    /// Extracts all markdown links found in the body (§6.1).
     pub fn links(&self) -> Vec<Link> {
         links::extract_links(&self.body)
     }
 
-    /// Extracts numbered entries from the `# Citations` section, if present
-    /// (§8).
+    /// Extracts the body's `[^label]` attribution markers (§5.1).
+    pub fn footnote_refs(&self) -> Vec<FootnoteRef> {
+        footnotes::extract_refs(&self.body)
+    }
+
+    /// Extracts the body's `[^label]: text` footnote definitions (§5.1).
+    pub fn footnote_definitions(&self) -> Vec<FootnoteDef> {
+        footnotes::extract_definitions(&self.body)
+    }
+
+    /// Joins the body's footnotes to the `sources` entries they name, giving
+    /// per-claim attribution (§5.1).
+    ///
+    /// Labels that match no source are still returned, with
+    /// [`Attribution::source`] set to `None`.
+    pub fn attributions(&self) -> Vec<Attribution> {
+        provenance::attributions(&self.frontmatter.sources(), &self.body)
+    }
+
+    /// The `# Computation` code block from the body, if there is one (§10.3).
+    pub fn inline_computation(&self) -> Option<InlineComputation> {
+        crate::computation::extract_inline_computation(&self.body)
+    }
+
+    /// The Attested Computation contract: the computation frontmatter (§10.2)
+    /// resolved against the body's `# Computation` block (§10.3).
+    ///
+    /// Returns `None` unless `type` is `Attested Computation`; call
+    /// [`AttestedComputation::from_parts`] directly to read the same keys off a
+    /// concept of another type.
+    pub fn attested_computation(&self) -> Option<AttestedComputation> {
+        self.frontmatter
+            .is_attested_computation()
+            .then(|| AttestedComputation::from_parts(&self.frontmatter, &self.body))
+    }
+
+    /// Extracts numbered entries from a legacy v0.1 `# Citations` section.
+    ///
+    /// v0.2 supersedes this with `sources` and footnote attribution (§5.1);
+    /// [`Document::attributions`] is the v0.2 equivalent. Consumers MAY keep
+    /// reading `# Citations` for v0.1 documents (§13.1).
     pub fn citations(&self) -> Vec<Citation> {
         links::extract_citations(&self.body)
+    }
+
+    /// `true` when the body carries a legacy `# Citations` section, which a
+    /// v0.2 producer should have migrated to `sources` (§13.1).
+    pub fn has_legacy_citations(&self) -> bool {
+        !self.citations().is_empty()
     }
 }

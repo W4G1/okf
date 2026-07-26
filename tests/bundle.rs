@@ -137,3 +137,25 @@ fn okf_version_read_from_root_index() {
     let bundle = Bundle::load(tmp.path()).unwrap();
     assert_eq!(bundle.okf_version().as_deref(), Some("0.1"));
 }
+
+#[test]
+fn a_filename_that_is_not_a_valid_concept_id_segment_still_loads() {
+    // §11 makes conformance a question of frontmatter, not filenames, and the
+    // reference's `path_to_concept_id` validates nothing. So a readable document
+    // under an awkward name is a concept, not a parse error.
+    let tmp = TempDir::new();
+    tmp.write(
+        "tables/my notes.md",
+        "---\ntype: Reference\ntitle: My notes\ndescription: Scratch notes.\n---\n\nProse.\n",
+    );
+    let bundle = Bundle::load(tmp.path()).unwrap();
+
+    assert!(bundle.parse_errors().is_empty(), "{:?}", bundle.parse_errors());
+    assert_eq!(bundle.len(), 1);
+    assert_eq!(bundle.concepts()[0].id.to_string(), "tables/my notes");
+    assert!(validate_bundle(&bundle).is_conformant());
+
+    // Parsing that same id from a string is still rejected, as it is upstream:
+    // only `parse` applies the segment rule.
+    assert!(ConceptId::parse("tables/my notes").is_err());
+}

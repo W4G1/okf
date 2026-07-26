@@ -77,6 +77,42 @@ fn protocol_relative_url_is_external() {
 }
 
 #[test]
+fn any_uri_scheme_is_external() {
+    // §4.1's `resource` is a URI, not necessarily an http URL, so a warehouse
+    // identifier must not be mistaken for a relative path.
+    assert_eq!(Link::classify("bigquery:acme.sales.orders"), LinkKind::External);
+    assert_eq!(Link::classify("urn:acme:metric:revenue"), LinkKind::External);
+    assert_eq!(Link::classify("s3://bucket/key"), LinkKind::External);
+    // A path with a colon later on is still a path.
+    assert_eq!(Link::classify("./notes/a:b.md"), LinkKind::Relative);
+    assert_eq!(Link::classify("/tables/orders.md"), LinkKind::Absolute);
+    // A leading digit is not a valid scheme.
+    assert_eq!(Link::classify("2026:notes.md"), LinkKind::Relative);
+}
+
+#[test]
+fn field_paths_try_both_readings_of_a_relative_target() {
+    // §6.2 reads a relative path against the concept; §6.3's `references/`
+    // convention is written from the bundle root. Both are offered, in that
+    // order.
+    let from = ConceptId::parse("computations/revenue").unwrap();
+    assert_eq!(
+        okf::links::field_path_candidates("references/skills/run-on-bq.md", &from),
+        vec![
+            "computations/references/skills/run-on-bq.md".to_string(),
+            "references/skills/run-on-bq.md".to_string(),
+        ]
+    );
+    // An absolute path has exactly one reading.
+    assert_eq!(
+        okf::links::field_path_candidates("/references/x.py", &from),
+        vec!["references/x.py".to_string()]
+    );
+    // A URI has none.
+    assert!(okf::links::field_path_candidates("https://example.com/x", &from).is_empty());
+}
+
+#[test]
 fn absolute_link_normalizes_dot_segments() {
     let source = ConceptId::parse("a/b").unwrap();
     let link = Link {

@@ -13,15 +13,37 @@
 //! - `#` comments and blank lines;
 //! - the core scalar types: null, bool, int, float, string.
 //!
+//! Plain and quoted scalars may span lines, folding each break into a single
+//! space, because PyYAML's `safe_dump` wraps any value past its 80-column line
+//! width and the reference implementation publishes bundles that way.
+//!
 //! It deliberately does **not** support anchors/aliases, explicit tags
 //! (`!!str`), multiple documents, or complex (non-scalar) mapping keys. Those
 //! never appear in well-formed OKF frontmatter; encountering them yields a
 //! clear [`YamlError`] rather than silent misbehaviour.
 //!
 //! The guarantee that matters for OKF round-tripping is:
-//! `parse(emit(parse(x))) == parse(x)` — emitting and re-parsing preserves the
+//! `parse(emit(parse(x))) == parse(x)`. Emitting and re-parsing preserves the
 //! logical value and key order. This mirrors the reference implementation's
 //! `OKFDocument` round-trip test.
+//!
+//! ## Timestamps are strings
+//!
+//! One deliberate divergence from PyYAML: YAML's implicit resolver types a bare
+//! `2026-12-31` as a date and a bare `2026-06-30T14:00:00Z` as a datetime, while
+//! this module keeps every scalar of either shape as a string. The OKF layer
+//! loses nothing, since [`DateField`](crate::DateField) and
+//! [`DateTimeField`](crate::DateTimeField) keep the text beside the parsed
+//! value, and it means a malformed date can be reported rather than silently
+//! dropped (§11).
+//!
+//! The consequence shows up on the way out. A bare ISO datetime is not stable
+//! even under the reference's own round-trip: PyYAML loads it into a `datetime`
+//! and dumps it back as `2026-06-30 14:00:00+00:00`, losing the `T` and `Z`
+//! separators §5.2 asks for. A quoted one survives byte-identical. So the
+//! emitter quotes a datetime-valued string and leaves a bare `YYYY-MM-DD` plain,
+//! which is how both the specification and the reference write `stale_after`,
+//! `last_modified`, and `usage_window`.
 //!
 //! [spec]: https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md
 

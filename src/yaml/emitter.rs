@@ -46,15 +46,29 @@ fn emit_sequence(seq: &[Value], indent: usize, out: &mut String) {
     for item in seq {
         match item {
             Value::Mapping(m) if !m.is_empty() => {
-                out.push_str(&format!("{pad}-\n"));
-                emit_mapping(m, indent + INDENT_STEP, out);
+                let mut block = String::new();
+                emit_mapping(m, indent + INDENT_STEP, &mut block);
+                out.push_str(&bullet(&block, indent));
             }
             Value::Sequence(s) if !s.is_empty() => {
-                out.push_str(&format!("{pad}-\n"));
-                emit_sequence(s, indent + INDENT_STEP, out);
+                let mut block = String::new();
+                emit_sequence(s, indent + INDENT_STEP, &mut block);
+                out.push_str(&bullet(&block, indent));
             }
             _ => out.push_str(&format!("{pad}- {}\n", emit_scalar(item))),
         }
+    }
+}
+
+/// Turns an indented block into a sequence item by replacing the first line's
+/// indentation with a `- ` marker, so a collection item reads
+/// `- name: year` rather than a bare `-` followed by the block. The marker is
+/// exactly as wide as the indentation it replaces, so the remaining lines stay
+/// aligned.
+fn bullet(block: &str, indent: usize) -> String {
+    match block.strip_prefix(&" ".repeat(indent + INDENT_STEP)) {
+        Some(rest) => format!("{}- {rest}", " ".repeat(indent)),
+        None => block.to_string(),
     }
 }
 
@@ -116,6 +130,9 @@ fn is_safe_plain(s: &str) -> bool {
     if s.starts_with(' ') || s.ends_with(' ') {
         return false;
     }
+    if resolves_as_datetime(s) {
+        return false;
+    }
     let first = s.chars().next().unwrap();
     const INDICATORS: &[char] = &[
         '-', '?', ':', ',', '[', ']', '{', '}', '#', '&', '*', '!', '|', '>', '\'', '"', '%', '@',
@@ -134,6 +151,99 @@ fn is_safe_plain(s: &str) -> bool {
         }
     }
     true
+}
+
+/// Whether YAML's implicit resolver would type this plain scalar as a timestamp
+/// carrying a time of day rather than as a string.
+///
+/// This parser keeps every timestamp as a string, so nothing here depends on the
+/// distinction, but PyYAML (which the reference implementation loads and dumps
+/// with) does not. The reference writes `generated.at` and `verified[].at` with
+/// `datetime.isoformat()`, making them Python strings, and `safe_dump` quotes
+/// them so a loader cannot retype them. Emitting one bare would silently turn a
+/// string into a `datetime` for any PyYAML consumer, so it is quoted here too.
+///
+/// A bare `YYYY-MM-DD` is deliberately left plain: that is how both the
+/// specification and the reference write `stale_after`, `last_modified`, and
+/// `usage_window`, and quoting it would be the same fidelity loss in reverse.
+/// The grammar below is the datetime half of PyYAML's own timestamp pattern.
+fn resolves_as_datetime(s: &str) -> bool {
+    let b = s.as_bytes();
+    let mut i = 0;
+
+    // Date: YYYY-M(M)-D(D).
+    if !(take_digits(b, &mut i, 4, 4)
+        && take_byte(b, &mut i, b'-')
+        && take_digits(b, &mut i, 1, 2)
+        && take_byte(b, &mut i, b'-')
+        && take_digits(b, &mut i, 1, 2))
+    {
+        return false;
+    }
+
+    // Date/time separator: `T`, `t`, or a run of blanks.
+    match b.get(i) {
+        Some(b'T' | b't') => i += 1,
+        Some(b' ' | b'\t') => {
+            while matches!(b.get(i), Some(b' ' | b'\t')) {
+                i += 1;
+            }
+        }
+        _ => return false,
+    }
+
+    // Time: H(H):MM:SS with optional fractional seconds.
+    if !(take_digits(b, &mut i, 1, 2)
+        && take_byte(b, &mut i, b':')
+        && take_digits(b, &mut i, 2, 2)
+        && take_byte(b, &mut i, b':')
+        && take_digits(b, &mut i, 2, 2))
+    {
+        return false;
+    }
+    if take_byte(b, &mut i, b'.') {
+        take_digits(b, &mut i, 0, usize::MAX);
+    }
+
+    // Optional zone: `Z` or +/-HH(:MM). Blanks count only when one follows.
+    let before_blanks = i;
+    while matches!(b.get(i), Some(b' ' | b'\t')) {
+        i += 1;
+    }
+    if i == b.len() {
+        return before_blanks == i;
+    }
+    if !take_byte(b, &mut i, b'Z') {
+        if !(take_byte(b, &mut i, b'+') || take_byte(b, &mut i, b'-')) {
+            return false;
+        }
+        if !take_digits(b, &mut i, 1, 2) {
+            return false;
+        }
+        if take_byte(b, &mut i, b':') && !take_digits(b, &mut i, 2, 2) {
+            return false;
+        }
+    }
+    i == b.len()
+}
+
+/// Consumes up to `max` ASCII digits, reporting whether at least `min` were
+/// there.
+fn take_digits(b: &[u8], i: &mut usize, min: usize, max: usize) -> bool {
+    let start = *i;
+    while *i - start < max && b.get(*i).is_some_and(u8::is_ascii_digit) {
+        *i += 1;
+    }
+    *i - start >= min
+}
+
+/// Consumes `want` when it is the next byte.
+fn take_byte(b: &[u8], i: &mut usize, want: u8) -> bool {
+    let found = b.get(*i) == Some(&want);
+    if found {
+        *i += 1;
+    }
+    found
 }
 
 fn double_quote(s: &str) -> String {

@@ -1,4 +1,4 @@
-//! Parsing and building `log.md` update histories (§7).
+//! Parsing and building `log.md` update histories (§9).
 //!
 //! A log is a flat list of date-grouped entries, newest first:
 //!
@@ -95,7 +95,7 @@ impl Log {
     }
 
     /// Returns the date headings that are not valid ISO-8601 `YYYY-MM-DD`
-    /// (§7 requires this form).
+    /// (§9 requires this form).
     pub fn invalid_dates(&self) -> Vec<&str> {
         self.days
             .iter()
@@ -130,18 +130,7 @@ fn parse_entry(body: &str) -> LogEntry {
     }
 }
 
-/// Checks that a string is a syntactically valid ISO-8601 calendar date
-/// (`YYYY-MM-DD`).
+/// Checks that a string is a valid ISO-8601 calendar date (`YYYY-MM-DD`).
 pub fn is_iso_date(s: &str) -> bool {
-    let bytes = s.as_bytes();
-    if bytes.len() != 10 || bytes[4] != b'-' || bytes[7] != b'-' {
-        return false;
-    }
-    let digits = |range: std::ops::Range<usize>| range.clone().all(|i| bytes[i].is_ascii_digit());
-    if !(digits(0..4) && digits(5..7) && digits(8..10)) {
-        return false;
-    }
-    let month: u32 = s[5..7].parse().unwrap_or(0);
-    let day: u32 = s[8..10].parse().unwrap_or(0);
-    (1..=12).contains(&month) && (1..=31).contains(&day)
+    crate::date::Date::parse(s).is_some()
 }

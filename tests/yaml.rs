@@ -73,6 +73,64 @@ fn flow_mapping() {
 }
 
 #[test]
+fn colons_inside_flow_scalars_are_content() {
+    // OKF v0.2 frontmatter depends on this: `human:ahormati` and an ISO-8601
+    // time both carry colons that do not separate a key from a value (§5.2, §7).
+    let v = roundtrip("generated: { by: reference_agent/gemini-2.5-pro, at: 2026-06-20T22:53:05Z }\n");
+    let generated = v.as_mapping().unwrap().get("generated").unwrap().as_mapping().unwrap();
+    assert_eq!(generated.get("by").unwrap().as_str(), Some("reference_agent/gemini-2.5-pro"));
+    assert_eq!(generated.get("at").unwrap().as_str(), Some("2026-06-20T22:53:05Z"));
+
+    let verified = roundtrip("verified: { by: human:ahormati, at: 2026-06-25T09:00:00Z }\n");
+    let by = verified.as_mapping().unwrap().get("verified").unwrap().as_mapping().unwrap();
+    assert_eq!(by.get("by").unwrap().as_str(), Some("human:ahormati"));
+
+    // A URL in a flow scalar survives too.
+    let url = Value::parse("{ resource: https://wiki.acme/finance/revenue-recognition }").unwrap();
+    assert_eq!(
+        url.as_mapping().unwrap().get("resource").unwrap().as_str(),
+        Some("https://wiki.acme/finance/revenue-recognition")
+    );
+}
+
+#[test]
+fn block_sequence_of_flow_mappings() {
+    let v = roundtrip(
+        "parameters:\n  - { name: year, type: integer, required: true }\n  - { name: segment, type: string, required: true }\n",
+    );
+    let params = v.as_mapping().unwrap().get("parameters").unwrap().as_sequence().unwrap();
+    assert_eq!(params.len(), 2);
+    let first = params[0].as_mapping().unwrap();
+    assert_eq!(first.get("name").unwrap().as_str(), Some("year"));
+    assert_eq!(first.get("type").unwrap().as_str(), Some("integer"));
+    assert_eq!(first.get("required").unwrap().as_bool(), Some(true));
+}
+
+#[test]
+fn sequences_of_mappings_emit_idiomatic_bullets() {
+    let v = Value::parse(
+        "parameters:\n  - { name: year, type: integer }\n  - { name: segment, type: string }\n",
+    )
+    .unwrap();
+    let emitted = v.to_yaml_string();
+    assert_eq!(
+        emitted,
+        "parameters:\n  - name: year\n    type: integer\n  - name: segment\n    type: string\n"
+    );
+    assert_eq!(Value::parse(&emitted).unwrap(), v);
+}
+
+#[test]
+fn flow_key_without_a_value_is_null() {
+    // YAML reads `{a:1}` as one key with no value, since the colon is not
+    // followed by whitespace.
+    let v = Value::parse("{a:1}").unwrap();
+    let m = v.as_mapping().unwrap();
+    assert_eq!(m.keys().collect::<Vec<_>>(), vec!["a:1"]);
+    assert_eq!(m.get("a:1"), Some(&Value::Null));
+}
+
+#[test]
 fn comments_are_ignored() {
     let v = Value::parse("# leading comment\ntype: X  # trailing\ntitle: Y\n").unwrap();
     let m = v.as_mapping().unwrap();
@@ -176,4 +234,96 @@ fn unterminated_flow_is_error() {
 #[test]
 fn tab_indentation_is_error() {
     assert!(Value::parse("a:\n\tb: 1").is_err());
+}
+
+/// Frontmatter exactly as PyYAML's `safe_dump` writes it, which is what the
+/// reference implementation publishes. Every wrapping and quoting decision here
+/// is PyYAML's, not ours.
+const PYYAML_DUMPED: &str = "\
+type: BigQuery Table
+title: GA4 Events Export
+description: Google Analytics 4 event-level daily sharded export tables containing
+  user interaction logs.
+tags:
+- analytics
+- e-commerce
+generated:
+  by: reference_agent/gemini-3.5-flash
+  at: '2026-07-10T21:15:20+00:00'
+sources:
+- title: 'Google Analytics Help: BigQuery Export Schema'
+  id: ga4-export-docs
+  resource: https://support.google.com/analytics/answer/7029846
+";
+
+#[test]
+fn pyyaml_wrapped_plain_scalars_fold_into_one_value() {
+    // `safe_dump` wraps anything past its 80-column width onto a continuation
+    // line, and YAML folds that break into a single space. A parser that treats
+    // the continuation as an indentation error cannot read reference-produced
+    // bundles at all.
+    let v = roundtrip(PYYAML_DUMPED);
+    let m = v.as_mapping().unwrap();
+    assert_eq!(
+        m.get("description").unwrap().as_str(),
+        Some(
+            "Google Analytics 4 event-level daily sharded export tables containing \
+             user interaction logs."
+        )
+    );
+    assert_eq!(m.get("tags").unwrap().as_sequence().unwrap().len(), 2);
+
+    let generated = m.get("generated").unwrap().as_mapping().unwrap();
+    assert_eq!(generated.get("at").unwrap().as_str(), Some("2026-07-10T21:15:20+00:00"));
+
+    // A quoted scalar containing a `: ` stays one scalar, not a nested mapping.
+    let source = m.get("sources").unwrap().as_sequence().unwrap()[0].as_mapping().unwrap();
+    assert_eq!(
+        source.get("title").unwrap().as_str(),
+        Some("Google Analytics Help: BigQuery Export Schema")
+    );
+}
+
+#[test]
+fn a_wrapped_quoted_scalar_folds_even_across_a_key_shaped_line() {
+    // Inside an unclosed quote every line belongs to the scalar, so a wrapped
+    // value that happens to break before `Something: else` is not misread as a
+    // mapping entry.
+    let v = Value::parse("title: 'Database schema documentation and\n  SEDE: the sequel'\n").unwrap();
+    assert_eq!(
+        v.as_mapping().unwrap().get("title").unwrap().as_str(),
+        Some("Database schema documentation and SEDE: the sequel")
+    );
+}
+
+#[test]
+fn a_multi_line_plain_sequence_item_folds() {
+    let v = Value::parse("tags:\n- a tag that wraps\n  onto a second line\n- short\n").unwrap();
+    let tags = v.as_mapping().unwrap().get("tags").unwrap().as_sequence().unwrap();
+    assert_eq!(tags[0].as_str(), Some("a tag that wraps onto a second line"));
+    assert_eq!(tags[1].as_str(), Some("short"));
+}
+
+#[test]
+fn iso_datetimes_emit_quoted_but_bare_dates_stay_plain() {
+    // PyYAML types a bare ISO datetime as a `datetime` and re-dumps it as
+    // `2026-06-30 14:00:00+00:00`, losing the `T` and `Z` the spec asks for. A
+    // quoted timestamp survives that round-trip byte-identical, so emit one.
+    let mut m = okf::yaml::Mapping::new();
+    m.insert("at", Value::String("2026-06-30T14:00:00Z".into()));
+    m.insert("stale_after", Value::String("2026-12-31".into()));
+    m.insert("offset", Value::String("2026-07-10T21:15:20+00:00".into()));
+    let emitted = Value::Mapping(m).to_yaml_string();
+
+    assert!(emitted.contains("at: \"2026-06-30T14:00:00Z\""), "{emitted}");
+    assert!(emitted.contains("offset: \"2026-07-10T21:15:20+00:00\""), "{emitted}");
+    // A date carries no time, so it stays plain: that is how the spec and the
+    // reference both write `stale_after`, `last_modified`, and `usage_window`.
+    assert!(emitted.contains("stale_after: 2026-12-31"), "{emitted}");
+
+    // Either spelling still reads back as the same string for this crate.
+    let reparsed = Value::parse(&emitted).unwrap();
+    let back = reparsed.as_mapping().unwrap();
+    assert_eq!(back.get("at").unwrap().as_str(), Some("2026-06-30T14:00:00Z"));
+    assert_eq!(back.get("stale_after").unwrap().as_str(), Some("2026-12-31"));
 }
