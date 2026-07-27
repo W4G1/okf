@@ -101,13 +101,14 @@ pub mod bundle;
 pub mod computation;
 pub mod concept_id;
 pub mod date;
+pub mod diff;
 pub mod document;
 pub mod error;
 pub mod footnotes;
 pub mod frontmatter;
 pub mod index;
-pub mod lint;
 pub mod links;
+pub mod lint;
 pub mod log;
 pub mod provenance;
 pub mod trust;
@@ -137,6 +138,8 @@ pub use computation::{
 pub use concept_id::{ConceptId, ConceptIdError};
 #[doc(inline)]
 pub use date::{Date, DateField, DateTime, DateTimeField};
+#[doc(inline)]
+pub use diff::{bundle_diff, BundleDiff, FrontmatterChange, Rename, TrustChange};
 #[doc(inline)]
 pub use document::Document;
 #[doc(inline)]

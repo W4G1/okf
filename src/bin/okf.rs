@@ -13,7 +13,10 @@
 //!
 //! Argument parsing is hand-rolled to keep the crate dependency-free.
 
-use okf::{lint_bundle_at, validate_bundle_at, Bundle, Date, Document, Severity, TrustTier, Value};
+use okf::{
+    bundle_diff, lint_bundle_at, validate_bundle_at, Bundle, Date, Document, Severity, TrustTier,
+    Value,
+};
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::process::ExitCode;
@@ -37,6 +40,7 @@ fn main() -> ExitCode {
         "parse" => cmd_parse(rest),
         "fmt" => cmd_fmt(rest),
         "lint" => cmd_lint(rest),
+        "diff" => cmd_diff(rest),
         "-h" | "--help" | "help" => {
             println!("{USAGE}");
             return ExitCode::SUCCESS;
@@ -80,6 +84,7 @@ COMMANDS:
     parse        <file>      Parse one concept document and print its structure
     fmt          <file>      Normalize a document by parse + re-serialize (-w writes)
     lint         <bundle>    Opinionated bundle health checks (L1..L16)
+    diff         <a> <b>     OKF-semantics diff between two bundles
 
 OPTIONS:
     -h, --help               Show this help
@@ -110,6 +115,27 @@ fn positional<'a>(args: &'a [String], what: &str) -> Result<&'a str, String> {
         }
     }
     Err(format!("missing {what}"))
+}
+
+/// All positional arguments, in order. Flags and their values are skipped, and
+/// everything after a `--` separator is treated as positional.
+fn positionals(args: &[String]) -> Vec<&str> {
+    if let Some(pos) = args.iter().position(|a| a == "--") {
+        return args[pos + 1..].iter().map(String::as_str).collect();
+    }
+    let mut out = Vec::new();
+    let mut skip = false;
+    for arg in args {
+        if std::mem::replace(&mut skip, false) {
+            continue;
+        }
+        if VALUED_FLAGS.contains(&arg.as_str()) {
+            skip = true;
+        } else if !arg.starts_with('-') {
+            out.push(arg.as_str());
+        }
+    }
+    out
 }
 
 fn has_flag(args: &[String], flag: &str) -> bool {
@@ -614,5 +640,28 @@ fn cmd_fmt(args: &[String]) -> Result<ExitCode, String> {
     } else {
         print!("{out}");
     }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn cmd_diff(args: &[String]) -> Result<ExitCode, String> {
+    let paths = positionals(args);
+    if paths.len() < 2 {
+        return Err("usage: okf diff <a> <b>".into());
+    }
+    let a = load(paths[0])?;
+    let b = load(paths[1])?;
+    let diff = bundle_diff(&a, &b);
+
+    println!("{} -> {}", a.root().display(), b.root().display());
+    println!("{diff}");
+
+    let changes = diff.added.len()
+        + diff.removed.len()
+        + diff.renamed.len()
+        + diff.frontmatter.len()
+        + diff.trust.len()
+        + diff.mended_links.len()
+        + diff.broken_links.len();
+    println!("\n{changes} change(s).");
     Ok(ExitCode::SUCCESS)
 }

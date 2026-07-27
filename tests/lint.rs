@@ -45,10 +45,7 @@ fn minimal_bundle() -> (TempDir, Bundle) {
     tmp.write("metric.md", MIN_CONCEPT);
     // A root index.md keeps the concept from being flagged as an orphan
     // (L15), so the rule under test is the only finding.
-    tmp.write(
-        "index.md",
-        "# Metric\n\n* [Revenue](metric.md)\n",
-    );
+    tmp.write("index.md", "# Metric\n\n* [Revenue](metric.md)\n");
     let bundle = Bundle::load(tmp.path()).unwrap();
     (tmp, bundle)
 }
@@ -264,14 +261,14 @@ fn l10_links_to_deprecated() {
          verified: { by: human:a, at: 2026-06-25T09:00:00Z }\n\
          ---\n\n# Definition\n\nSee [the old one](old.md).\n",
     );
-    tmp.write(
-        "index.md",
-        "# Metric\n\n* [New](new.md)\n* [Old](old.md)\n",
-    );
+    tmp.write("index.md", "# Metric\n\n* [New](new.md)\n* [Old](old.md)\n");
     let bundle = Bundle::load(tmp.path()).unwrap();
     let report = lint_bundle(&bundle);
     let l10 = messages_for(&report, "L10");
-    assert!(l10.iter().any(|m| m.contains("deprecated concept `old`")), "{l10:?}");
+    assert!(
+        l10.iter().any(|m| m.contains("deprecated concept `old`")),
+        "{l10:?}"
+    );
 }
 
 #[test]
@@ -295,7 +292,10 @@ fn l11_stale_with_today() {
     // With --today past stale_after, L11 fires.
     let with_today = lint_bundle_at(&bundle, Date::new(2026, 7, 1));
     let l11 = messages_for(&with_today, "L11");
-    assert!(l11.iter().any(|m| m.contains("stale since 2026-06-15")), "{l11:?}");
+    assert!(
+        l11.iter().any(|m| m.contains("stale since 2026-06-15")),
+        "{l11:?}"
+    );
 }
 
 #[test]
@@ -450,7 +450,8 @@ fn l16_index_missing_a_concept_on_disk() {
     let report = lint_bundle(&bundle);
     let l16 = messages_for(&report, "L16");
     assert!(
-        l16.iter().any(|m| m.contains("missing from index") && m.contains("b")),
+        l16.iter()
+            .any(|m| m.contains("missing from index") && m.contains("b")),
         "L16 should flag `b` as missing from the index: {l16:?}"
     );
 }
@@ -471,8 +472,7 @@ fn l16_index_lists_a_concept_not_on_disk() {
     let report = lint_bundle(&bundle);
     let l16 = messages_for(&report, "L16");
     assert!(
-        l16
-            .iter()
+        l16.iter()
             .any(|m| m.contains("listed but not on disk") && m.contains("b")),
         "L16 should flag `b` as listed but not on disk: {l16:?}"
     );

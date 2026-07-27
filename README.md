@@ -58,7 +58,7 @@ cargo add okf
 
 ```text
 okf validate     <bundle>    Check a bundle against OKF v0.2 conformance
-okf lint         <bundle>    Opinionated bundle health checks
+okf lint         <bundle>    Opinionated bundle health and hygiene checks
 okf info         <bundle>    Summarize a bundle (concepts, types, trust, links)
 okf trust        <bundle>    Report trust tier, status, and staleness per concept
 okf computations <bundle>    List Attested Computation contracts

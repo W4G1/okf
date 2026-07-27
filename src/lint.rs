@@ -242,10 +242,7 @@ fn check_missing_generated(cx: &mut Cx, fm: &Frontmatter) {
 
 fn check_unverified(cx: &mut Cx, fm: &Frontmatter) {
     if fm.get("verified").is_none() {
-        cx.info(
-            "L4",
-            "no `verified` events; trust tier is `unverified`",
-        );
+        cx.info("L4", "no `verified` events; trust tier is `unverified`");
     }
 }
 
@@ -277,10 +274,7 @@ fn check_top_heading(cx: &mut Cx, doc: &Document) {
     if doc.body.trim().is_empty() {
         return; // L7 already covers this
     }
-    let has_top_heading = doc
-        .body
-        .lines()
-        .any(|l| l.trim_start().starts_with("# "));
+    let has_top_heading = doc.body.lines().any(|l| l.trim_start().starts_with("# "));
     if !has_top_heading {
         cx.warn(
             "L8",
@@ -324,10 +318,7 @@ fn check_links_to_deprecated(cx: &mut Cx, bundle: &Bundle) {
             if target.status().is_deprecated() {
                 cx.warn(
                     "L10",
-                    format!(
-                        "links to deprecated concept `{}`",
-                        link.target
-                    ),
+                    format!("links to deprecated concept `{}`", link.target),
                 );
             }
         }
@@ -370,20 +361,14 @@ fn check_self_link(cx: &mut Cx, bundle: &Bundle) {
     }
 }
 
-fn check_duplicate_title(
-    cx: &mut Cx,
-    fm: &Frontmatter,
-    counts: &HashMap<String, usize>,
-) {
+fn check_duplicate_title(cx: &mut Cx, fm: &Frontmatter, counts: &HashMap<String, usize>) {
     let Some(title) = fm.title() else {
         return;
     };
     if counts.get(&title).copied().unwrap_or(0) > 1 {
         cx.warn(
             "L14",
-            format!(
-                "`title` {title:?} is shared with another concept; titles should disambiguate"
-            ),
+            format!("`title` {title:?} is shared with another concept; titles should disambiguate"),
         );
     }
 }
@@ -454,10 +439,16 @@ fn check_stale_indexes(bundle: &Bundle, report: &mut Report) {
 
         let mut parts = Vec::new();
         if !missing_from_index.is_empty() {
-            parts.push(format!("missing from index: {}", missing_from_index.join(", ")));
+            parts.push(format!(
+                "missing from index: {}",
+                missing_from_index.join(", ")
+            ));
         }
         if !listed_but_not_on_disk.is_empty() {
-            parts.push(format!("listed but not on disk: {}", listed_but_not_on_disk.join(", ")));
+            parts.push(format!(
+                "listed but not on disk: {}",
+                listed_but_not_on_disk.join(", ")
+            ));
         }
 
         report.diagnostics.push(Diagnostic {
