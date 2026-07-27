@@ -27,10 +27,7 @@ fn code(status: ExitStatus) -> i32 {
 /// concept, so `validate` and `lint` both succeed.
 fn good_bundle() -> TempDir {
     let tmp = TempDir::new();
-    tmp.write(
-        "index.md",
-        "---\nokf_version: \"0.2\"\n---\n\n# Mini\n",
-    );
+    tmp.write("index.md", "---\nokf_version: \"0.2\"\n---\n\n# Mini\n");
     tmp.write(
         "metrics/revenue.md",
         "---\ntype: Metric\ntitle: Revenue\ngenerated:\n  at: 2026-01-01T00:00:00Z\n---\n\nRevenue is money.\n",
@@ -97,7 +94,12 @@ fn validate_nonconformant_bundle_is_data_error() {
 fn validate_bad_today_is_usage_error() {
     let tmp = good_bundle();
     let status = okf()
-        .args(["validate", tmp.path().to_str().unwrap(), "--today", "not-a-date"])
+        .args([
+            "validate",
+            tmp.path().to_str().unwrap(),
+            "--today",
+            "not-a-date",
+        ])
         .status()
         .unwrap();
     assert_eq!(code(status), EX_USAGE);
@@ -130,10 +132,7 @@ fn lint_with_warnings_is_data_error() {
 
 #[test]
 fn parse_missing_file_is_no_input() {
-    let status = okf()
-        .args(["parse", "/no/such/file.md"])
-        .status()
-        .unwrap();
+    let status = okf().args(["parse", "/no/such/file.md"]).status().unwrap();
     assert_eq!(code(status), EX_NOINPUT);
 }
 
@@ -150,10 +149,7 @@ fn parse_malformed_file_is_data_error() {
 
 #[test]
 fn fmt_missing_file_is_no_input() {
-    let status = okf()
-        .args(["fmt", "/no/such/file.md"])
-        .status()
-        .unwrap();
+    let status = okf().args(["fmt", "/no/such/file.md"]).status().unwrap();
     assert_eq!(code(status), EX_NOINPUT);
 }
 
@@ -180,11 +176,7 @@ fn diff_missing_second_bundle_is_usage_error() {
 fn diff_missing_bundle_is_no_input() {
     let tmp = good_bundle();
     let status = okf()
-        .args([
-            "diff",
-            "/no/such/bundle/here",
-            tmp.path().to_str().unwrap(),
-        ])
+        .args(["diff", "/no/such/bundle/here", tmp.path().to_str().unwrap()])
         .status()
         .unwrap();
     assert_eq!(code(status), EX_NOINPUT);

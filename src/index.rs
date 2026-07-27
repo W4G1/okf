@@ -39,6 +39,7 @@ pub struct IndexEntry {
 /// Builds the markdown text of an `index.md` from a set of entries: entries are
 /// grouped by type under `#`-headings (types sorted ascending), and within each
 /// group sorted by title (case-insensitive).
+#[must_use]
 pub fn build_index_text(entries: &[IndexEntry]) -> String {
     let mut grouped: BTreeMap<String, Vec<(&str, &str, &str)>> = BTreeMap::new();
     for e in entries {
@@ -81,6 +82,7 @@ pub type Synthesize<'a> = dyn Fn(&str, &[(String, String)]) -> String + 'a;
 /// wording is the reference `synthesize_description`'s own `_fallback`, which is
 /// what it writes when its model call fails, so an index generated here reads
 /// the same as one generated there without a model.
+#[must_use]
 pub fn default_synthesize(_rel: &str, children: &[(String, String)]) -> String {
     if children.is_empty() {
         return String::new();
@@ -99,6 +101,10 @@ pub fn default_synthesize(_rel: &str, children: &[(String, String)]) -> String {
 }
 
 /// Regenerates every `index.md` in the bundle using [`default_synthesize`].
+///
+/// # Errors
+///
+/// Returns the underlying [`io::Error`] from any directory walk or file write.
 pub fn regenerate_indexes(bundle_root: impl AsRef<Path>) -> io::Result<Vec<PathBuf>> {
     regenerate_indexes_with(bundle_root, &default_synthesize)
 }
@@ -109,6 +115,10 @@ pub fn regenerate_indexes(bundle_root: impl AsRef<Path>) -> io::Result<Vec<PathB
 /// Directories are processed deepest-first so a parent index can reuse the
 /// descriptions computed for its children. Empty directories are skipped.
 /// Returns the paths of the index files written.
+///
+/// # Errors
+///
+/// Returns the underlying [`io::Error`] from any directory walk or file write.
 pub fn regenerate_indexes_with(
     bundle_root: impl AsRef<Path>,
     synthesize: &Synthesize,
@@ -146,7 +156,7 @@ pub fn regenerate_indexes_with(
             if name == INDEX_FILE {
                 continue;
             }
-            if child.is_file() && child.extension().map(|e| e == "md").unwrap_or(false) {
+            if child.is_file() && child.extension().is_some_and(|e| e == "md") {
                 let Some(doc) = load_doc(&child) else {
                     continue;
                 };
@@ -273,7 +283,7 @@ fn collect_markdown(dir: &Path, out: &mut Vec<PathBuf>) -> io::Result<()> {
         let path = entry.path();
         if entry.file_type()?.is_dir() {
             collect_markdown(&path, out)?;
-        } else if path.extension().map(|e| e == "md").unwrap_or(false) {
+        } else if path.extension().is_some_and(|e| e == "md") {
             out.push(path);
         }
     }

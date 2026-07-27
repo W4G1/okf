@@ -112,19 +112,22 @@ pub struct Frontmatter {
 
 impl Frontmatter {
     /// Creates an empty frontmatter block.
-    pub fn new() -> Self {
-        Frontmatter {
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
             map: Mapping::new(),
         }
     }
 
     /// Wraps an existing mapping.
-    pub fn from_mapping(map: Mapping) -> Self {
-        Frontmatter { map }
+    #[must_use]
+    pub const fn from_mapping(map: Mapping) -> Self {
+        Self { map }
     }
 
     /// Borrows the underlying ordered mapping.
-    pub fn as_mapping(&self) -> &Mapping {
+    #[must_use]
+    pub const fn as_mapping(&self) -> &Mapping {
         &self.map
     }
 
@@ -134,16 +137,19 @@ impl Frontmatter {
     }
 
     /// Consumes the wrapper, returning the underlying mapping.
+    #[must_use]
     pub fn into_mapping(self) -> Mapping {
         self.map
     }
 
     /// `true` if there are no keys.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.map.is_empty()
     }
 
     /// Raw value for an arbitrary key (including producer extensions).
+    #[must_use]
     pub fn get(&self, key: &str) -> Option<&Value> {
         self.map.get(key)
     }
@@ -180,21 +186,25 @@ impl Frontmatter {
     }
 
     /// The **required** `type` field (§4.1). `None` if absent or not a scalar.
+    #[must_use]
     pub fn type_(&self) -> Option<String> {
         self.string("type")
     }
 
     /// The optional `title` field.
+    #[must_use]
     pub fn title(&self) -> Option<String> {
         self.string("title")
     }
 
     /// The optional one-line `description`.
+    #[must_use]
     pub fn description(&self) -> Option<String> {
         self.string("description")
     }
 
     /// The optional `resource` URI for the underlying asset.
+    #[must_use]
     pub fn resource(&self) -> Option<String> {
         self.string("resource")
     }
@@ -242,12 +252,14 @@ impl Frontmatter {
     }
 
     /// The verification with the latest parseable `at` (§5.2).
+    #[must_use]
     pub fn latest_verification(&self) -> Option<Verification> {
         let events = self.verified();
         trust::latest_verification(&events).cloned()
     }
 
     /// The trust tier derived from `verified` (§5.3).
+    #[must_use]
     pub fn trust_tier(&self) -> TrustTier {
         TrustTier::derive(&self.verified())
     }
@@ -255,6 +267,7 @@ impl Frontmatter {
     /// When the content last meaningfully changed: `generated.at` (§5.2),
     /// falling back to a legacy v0.1 `timestamp` when `generated` is absent, as
     /// §13.1 permits.
+    #[must_use]
     pub fn content_changed_at(&self) -> Option<DateTimeField> {
         self.generated()
             .and_then(|g| g.at)
@@ -265,11 +278,13 @@ impl Frontmatter {
     ///
     /// Prefer [`Frontmatter::content_changed_at`], which reads `generated.at`
     /// first and falls back to this.
+    #[must_use]
     pub fn timestamp(&self) -> Option<String> {
         self.string("timestamp")
     }
 
     /// The lifecycle `status`. An absent key is [`Status::Stable`] (§5.4).
+    #[must_use]
     pub fn status(&self) -> Status {
         Status::parse(self.string("status").as_deref())
     }
@@ -284,18 +299,21 @@ impl Frontmatter {
     ///
     /// A datetime-valued `stale_after` is compared on its date part, as
     /// [`DateField::effective_date`] explains.
+    #[must_use]
     pub fn is_stale_on(&self, today: Date) -> bool {
         let stale_after = self.stale_after().and_then(|d| d.effective_date());
         trust::is_stale_on(stale_after, today)
     }
 
     /// `true` when `type` is `Attested Computation` (§10.1).
+    #[must_use]
     pub fn is_attested_computation(&self) -> bool {
         self.type_().as_deref() == Some(ATTESTED_COMPUTATION_TYPE)
     }
 
     /// The `runtime`: how to run the computation, and so what `parameters`
     /// mean. REQUIRED on an Attested Computation concept.
+    #[must_use]
     pub fn runtime(&self) -> Option<String> {
         self.string("runtime")
     }
@@ -310,6 +328,7 @@ impl Frontmatter {
 
     /// The `computation` path, when the computation lives in a file rather than
     /// a body block (§10.3).
+    #[must_use]
     pub fn computation(&self) -> Option<String> {
         self.string("computation")
     }
@@ -331,6 +350,7 @@ impl Frontmatter {
     /// descriptor rather than a path (§5.1). Use
     /// [`Source::resource_kind`](crate::provenance::Source::resource_kind) to
     /// filter those yourself.
+    #[must_use]
     pub fn path_fields(&self) -> Vec<(&'static str, String)> {
         let mut out = Vec::new();
         let mut push = |name: &'static str, value: Option<String>| {
@@ -353,6 +373,7 @@ impl Frontmatter {
 
     /// Returns the keys present that are not well-known OKF fields, i.e. the
     /// producer-defined extension keys consumers must preserve (§4.1).
+    #[must_use]
     pub fn extension_keys(&self) -> Vec<&str> {
         self.map
             .keys()
@@ -361,6 +382,7 @@ impl Frontmatter {
     }
 
     /// Returns the legacy v0.1 keys present that v0.2 supersedes (§13.1).
+    #[must_use]
     pub fn legacy_keys(&self) -> Vec<&str> {
         self.map
             .keys()
@@ -375,6 +397,6 @@ impl Frontmatter {
 
 impl From<Mapping> for Frontmatter {
     fn from(map: Mapping) -> Self {
-        Frontmatter { map }
+        Self { map }
     }
 }

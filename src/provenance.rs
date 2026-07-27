@@ -50,9 +50,9 @@ pub struct UsageWindow {
 impl UsageWindow {
     /// Reads a `{ from, to }` mapping. Returns `None` when the value is not a
     /// mapping.
-    pub fn from_value(value: &Value) -> Option<UsageWindow> {
+    pub fn from_value(value: &Value) -> Option<Self> {
         let map = value.as_mapping()?;
-        Some(UsageWindow {
+        Some(Self {
             from: map
                 .get("from")
                 .and_then(Value::as_display_string)
@@ -69,8 +69,7 @@ impl fmt::Display for UsageWindow {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let dash = |d: &Option<DateField>| {
             d.as_ref()
-                .map(|d| d.raw.clone())
-                .unwrap_or_else(|| "?".to_string())
+                .map_or_else(|| "?".to_string(), |d| d.raw.clone())
         };
         write!(f, "{} to {}", dash(&self.from), dash(&self.to))
     }
@@ -117,10 +116,10 @@ pub struct Source {
 impl Source {
     /// Reads one `sources` entry. Returns `None` when the value is not a
     /// mapping.
-    pub fn from_value(value: &Value) -> Option<Source> {
+    pub fn from_value(value: &Value) -> Option<Self> {
         let map = value.as_mapping()?;
         let string = |k: &str| map.get(k).and_then(Value::as_display_string);
-        Some(Source {
+        Some(Self {
             id: string("id"),
             resource: string("resource"),
             title: string("title"),
@@ -135,10 +134,10 @@ impl Source {
     ///
     /// A bare mapping is accepted as a one-element list, mirroring the rule
     /// §5.2 states for `verified`; any other shape yields an empty list.
-    pub fn list_from_value(value: &Value) -> Vec<Source> {
+    pub fn list_from_value(value: &Value) -> Vec<Self> {
         match value {
-            Value::Sequence(items) => items.iter().filter_map(Source::from_value).collect(),
-            Value::Mapping(_) => Source::from_value(value).into_iter().collect(),
+            Value::Sequence(items) => items.iter().filter_map(Self::from_value).collect(),
+            Value::Mapping(_) => Self::from_value(value).into_iter().collect(),
             _ => Vec::new(),
         }
     }
@@ -161,6 +160,7 @@ impl Source {
 
     /// The usage window that frames this entry's `usage_count`: its own if it
     /// has one, otherwise the shared sibling of `sources`.
+    #[must_use]
     pub fn effective_usage_window<'a>(
         &'a self,
         shared: Option<&'a UsageWindow>,
@@ -169,6 +169,7 @@ impl Source {
     }
 
     /// A short display label: the title, else the resource, else the id.
+    #[must_use]
     pub fn label(&self) -> &str {
         self.title
             .as_deref()
@@ -203,7 +204,8 @@ pub struct Attribution {
 
 impl Attribution {
     /// `true` when the label resolves to a `sources` entry.
-    pub fn is_resolved(&self) -> bool {
+    #[must_use]
+    pub const fn is_resolved(&self) -> bool {
         self.source.is_some()
     }
 }
@@ -215,6 +217,7 @@ impl Attribution {
 /// appears, with [`Attribution::source`] set to `None`: an unresolvable
 /// attribution is a producer mistake to report, not grounds for rejecting the
 /// document (§11).
+#[must_use]
 pub fn attributions(sources: &[Source], body: &str) -> Vec<Attribution> {
     let refs = footnotes::extract_refs(body);
     let defs = footnotes::extract_definitions(body);

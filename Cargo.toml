@@ -8,7 +8,8 @@ description = "A pure-Rust, zero-dependency implementation of the Open Knowledge
 license = "Apache-2.0"
 repository = "https://github.com/W4G1/okf"
 # Informational link to the format this crate implements (the upstream OKF spec).
-homepage = "https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf"
+homepage = "https://github.com/W4G1/okf"
+documentation = "https://docs.rs/okf"
 keywords = ["okf", "knowledge", "markdown", "frontmatter", "metadata"]
 categories = ["parser-implementations", "data-structures"]
 readme = "README.md"

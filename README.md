@@ -5,7 +5,7 @@
 A **pure-Rust, zero-dependency** implementation of the [Open Knowledge Format
 (OKF) v0.2](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md),
 Google's open, human- and agent-friendly format for representing *knowledge* as
-a directory of markdown files with YAML frontmatter.
+a directory of markdown files with YAML metadata.
 
 [![crates.io](https://img.shields.io/crates/v/okf.svg)](https://crates.io/crates/okf)
 [![docs.rs](https://img.shields.io/docsrs/okf)](https://docs.rs/okf)

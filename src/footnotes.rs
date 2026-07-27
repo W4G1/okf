@@ -44,6 +44,7 @@ pub struct FootnoteDef {
 /// Definition lines are not counted as references to themselves, and footnotes
 /// inside fenced code blocks or inline code spans are ignored, since those
 /// are content, not attribution.
+#[must_use]
 pub fn extract_refs(body: &str) -> Vec<FootnoteRef> {
     let mut out = Vec::new();
     for (line_no, line) in code_free_lines(body) {
@@ -64,6 +65,7 @@ pub fn extract_refs(body: &str) -> Vec<FootnoteRef> {
 }
 
 /// Extracts every `[^label]: text` definition from the body.
+#[must_use]
 pub fn extract_definitions(body: &str) -> Vec<FootnoteDef> {
     let mut out = Vec::new();
     for (line_no, line) in code_free_lines(body) {

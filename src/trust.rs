@@ -35,9 +35,9 @@ pub struct Generated {
 impl Generated {
     /// Reads a `generated` value. Returns `None` when the value is not a
     /// mapping.
-    pub fn from_value(value: &Value) -> Option<Generated> {
+    pub fn from_value(value: &Value) -> Option<Self> {
         let map = value.as_mapping()?;
-        Some(Generated {
+        Some(Self {
             by: map
                 .get("by")
                 .and_then(Value::as_display_string)
@@ -76,9 +76,9 @@ pub struct Verification {
 impl Verification {
     /// Reads one `{ by, at }` mapping. Returns `None` when the value is not a
     /// mapping.
-    pub fn from_value(value: &Value) -> Option<Verification> {
+    pub fn from_value(value: &Value) -> Option<Self> {
         let map = value.as_mapping()?;
-        Some(Verification {
+        Some(Self {
             by: map
                 .get("by")
                 .and_then(Value::as_display_string)
@@ -96,10 +96,10 @@ impl Verification {
     /// list (§5.2, restated as a conformance rule in §11), so that shape is
     /// accepted here alongside the list form. Any other shape yields an empty
     /// list.
-    pub fn list_from_value(value: &Value) -> Vec<Verification> {
+    pub fn list_from_value(value: &Value) -> Vec<Self> {
         match value {
-            Value::Sequence(items) => items.iter().filter_map(Verification::from_value).collect(),
-            Value::Mapping(_) => Verification::from_value(value).into_iter().collect(),
+            Value::Sequence(items) => items.iter().filter_map(Self::from_value).collect(),
+            Value::Mapping(_) => Self::from_value(value).into_iter().collect(),
             _ => Vec::new(),
         }
     }
@@ -120,11 +120,13 @@ impl fmt::Display for Verification {
 ///
 /// Events whose `at` is missing or unparseable cannot be ordered and are
 /// skipped; `None` means no event carries a usable timestamp.
+#[must_use]
 pub fn latest_verification(events: &[Verification]) -> Option<&Verification> {
     events
         .iter()
-        .filter(|v| v.at.as_ref().and_then(|a| a.datetime).is_some())
-        .max_by_key(|v| v.at.as_ref().and_then(|a| a.datetime).unwrap())
+        .filter_map(|v| v.at.as_ref().and_then(|a| a.datetime).map(|dt| (v, dt)))
+        .max_by_key(|(_, dt)| *dt)
+        .map(|(v, _)| v)
 }
 
 /// A concept's trust tier, derived from `verified` (§5.3).
@@ -144,16 +146,17 @@ pub enum TrustTier {
 
 impl TrustTier {
     /// Derives the tier from a concept's verification events (§5.3).
-    pub fn derive(events: &[Verification]) -> TrustTier {
+    #[must_use]
+    pub fn derive(events: &[Verification]) -> Self {
         if events.is_empty() {
-            TrustTier::Unverified
+            Self::Unverified
         } else if events
             .iter()
             .any(|v| v.by.as_ref().is_some_and(Actor::is_human))
         {
-            TrustTier::HumanReviewed
+            Self::HumanReviewed
         } else {
-            TrustTier::MachineConfirmed
+            Self::MachineConfirmed
         }
     }
 }
@@ -161,9 +164,9 @@ impl TrustTier {
 impl fmt::Display for TrustTier {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
-            TrustTier::Unverified => "unverified",
-            TrustTier::MachineConfirmed => "machine-confirmed",
-            TrustTier::HumanReviewed => "human-reviewed",
+            Self::Unverified => "unverified",
+            Self::MachineConfirmed => "machine-confirmed",
+            Self::HumanReviewed => "human-reviewed",
         })
     }
 }
@@ -188,37 +191,37 @@ pub const STATUS_VALUES: [&str; 3] = ["draft", "stable", "deprecated"];
 
 impl Status {
     /// Parses a `status` scalar. `None` (an absent key) is [`Status::Stable`].
-    pub fn parse(value: Option<&str>) -> Status {
-        match value {
-            None => Status::Stable,
-            Some(s) => match s.trim() {
-                "draft" => Status::Draft,
-                "stable" | "" => Status::Stable,
-                "deprecated" => Status::Deprecated,
-                other => Status::Other(other.to_string()),
-            },
-        }
+    #[must_use]
+    pub fn parse(value: Option<&str>) -> Self {
+        value.map_or(Self::Stable, |s| match s.trim() {
+            "draft" => Self::Draft,
+            "stable" | "" => Self::Stable,
+            "deprecated" => Self::Deprecated,
+            other => Self::Other(other.to_string()),
+        })
     }
 
     /// `true` for one of the three values §5.4 defines.
-    pub fn is_known(&self) -> bool {
-        !matches!(self, Status::Other(_))
+    #[must_use]
+    pub const fn is_known(&self) -> bool {
+        !matches!(self, Self::Other(_))
     }
 
     /// `true` for [`Status::Deprecated`], kept for links and history, but no
     /// longer current.
+    #[must_use]
     pub fn is_deprecated(&self) -> bool {
-        *self == Status::Deprecated
+        *self == Self::Deprecated
     }
 }
 
 impl fmt::Display for Status {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Status::Draft => f.write_str("draft"),
-            Status::Stable => f.write_str("stable"),
-            Status::Deprecated => f.write_str("deprecated"),
-            Status::Other(s) => f.write_str(s),
+            Self::Draft => f.write_str("draft"),
+            Self::Stable => f.write_str("stable"),
+            Self::Deprecated => f.write_str("deprecated"),
+            Self::Other(s) => f.write_str(s),
         }
     }
 }
@@ -227,6 +230,7 @@ impl fmt::Display for Status {
 ///
 /// §5.5: "A concept is stale when `today >= stale_after`." An absent or
 /// unparseable `stale_after` is never stale.
+#[must_use]
 pub fn is_stale_on(stale_after: Option<Date>, today: Date) -> bool {
     stale_after.is_some_and(|d| today >= d)
 }

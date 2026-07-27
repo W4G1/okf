@@ -62,9 +62,9 @@ pub struct Parameter {
 
 impl Parameter {
     /// Reads one `parameters` entry. Returns `None` when it is not a mapping.
-    pub fn from_value(value: &Value) -> Option<Parameter> {
+    pub fn from_value(value: &Value) -> Option<Self> {
         let map = value.as_mapping()?;
-        Some(Parameter {
+        Some(Self {
             name: map.get("name").and_then(Value::as_display_string),
             type_: map.get("type").and_then(Value::as_display_string),
             required: map.get("required").and_then(Value::as_bool),
@@ -72,15 +72,16 @@ impl Parameter {
     }
 
     /// Reads the whole `parameters` list.
-    pub fn list_from_value(value: &Value) -> Vec<Parameter> {
+    pub fn list_from_value(value: &Value) -> Vec<Self> {
         match value {
-            Value::Sequence(items) => items.iter().filter_map(Parameter::from_value).collect(),
-            Value::Mapping(_) => Parameter::from_value(value).into_iter().collect(),
+            Value::Sequence(items) => items.iter().filter_map(Self::from_value).collect(),
+            Value::Mapping(_) => Self::from_value(value).into_iter().collect(),
             _ => Vec::new(),
         }
     }
 
     /// `true` when the parameter is explicitly marked required.
+    #[must_use]
     pub fn is_required(&self) -> bool {
         self.required.unwrap_or(false)
     }
@@ -103,7 +104,7 @@ impl fmt::Display for Parameter {
 ///
 /// `resource` names run instructions or code that a runner (an agent, or
 /// deterministic consumer code) follows. `receipt` declares the fields a run
-/// must return: the evidence the attester inspects, for example a BigQuery
+/// must return: the evidence the attester inspects, for example a `BigQuery`
 /// `job_id` and the SQL the job actually executed.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Executor {
@@ -115,9 +116,9 @@ pub struct Executor {
 
 impl Executor {
     /// Reads an `executor` mapping. Returns `None` when it is not a mapping.
-    pub fn from_value(value: &Value) -> Option<Executor> {
+    pub fn from_value(value: &Value) -> Option<Self> {
         let map = value.as_mapping()?;
-        Some(Executor {
+        Some(Self {
             resource: map.get("resource").and_then(Value::as_display_string),
             receipt: match map.get("receipt") {
                 Some(Value::Sequence(items)) => {
@@ -142,9 +143,9 @@ pub struct Attester {
 
 impl Attester {
     /// Reads an `attester` mapping. Returns `None` when it is not a mapping.
-    pub fn from_value(value: &Value) -> Option<Attester> {
+    pub fn from_value(value: &Value) -> Option<Self> {
         let map = value.as_mapping()?;
-        Some(Attester {
+        Some(Self {
             resource: map.get("resource").and_then(Value::as_display_string),
         })
     }
@@ -177,35 +178,38 @@ pub enum ComputationSource {
 
 impl ComputationSource {
     /// The inline code, if the computation is inline.
+    #[must_use]
     pub fn code(&self) -> Option<&str> {
         match self {
-            ComputationSource::Inline(c) => Some(&c.code),
+            Self::Inline(c) => Some(&c.code),
             _ => None,
         }
     }
 
     /// The path, if the computation is held in a file.
+    #[must_use]
     pub fn path(&self) -> Option<&str> {
         match self {
-            ComputationSource::File(p) => Some(p),
+            Self::File(p) => Some(p),
             _ => None,
         }
     }
 
     /// `true` when neither an inline block nor a `computation` path is present.
+    #[must_use]
     pub fn is_missing(&self) -> bool {
-        *self == ComputationSource::Missing
+        *self == Self::Missing
     }
 }
 
 impl fmt::Display for ComputationSource {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ComputationSource::Inline(c) => {
+            Self::Inline(c) => {
                 write!(f, "inline ({} line(s))", c.code.lines().count())
             }
-            ComputationSource::File(p) => write!(f, "file {p}"),
-            ComputationSource::Missing => f.write_str("(missing)"),
+            Self::File(p) => write!(f, "file {p}"),
+            Self::Missing => f.write_str("(missing)"),
         }
     }
 }
@@ -239,7 +243,7 @@ impl AttestedComputation {
     /// frontmatter and a producer may use them on another type. Use
     /// [`Frontmatter::is_attested_computation`](crate::Frontmatter::is_attested_computation)
     /// to test the type.
-    pub fn from_parts(frontmatter: &crate::Frontmatter, body: &str) -> AttestedComputation {
+    pub fn from_parts(frontmatter: &crate::Frontmatter, body: &str) -> Self {
         let inline = extract_inline_computation(body);
         let path = frontmatter
             .get("computation")
@@ -253,7 +257,7 @@ impl AttestedComputation {
             (None, None) => (ComputationSource::Missing, false),
         };
 
-        AttestedComputation {
+        Self {
             runtime: frontmatter
                 .get("runtime")
                 .and_then(Value::as_display_string)
@@ -277,6 +281,7 @@ impl AttestedComputation {
     /// The path-valued fields of this contract, as `(field name, raw path)`
     /// pairs, the inputs to [`links::field_path_candidates`] when checking
     /// that a contract points at something real.
+    #[must_use]
     pub fn path_fields(&self) -> Vec<(&'static str, &str)> {
         let mut out = Vec::new();
         if let Some(p) = self.computation.path() {
@@ -299,6 +304,7 @@ impl AttestedComputation {
 /// first indented block does, because the spec's own examples are written that
 /// way. Returns `None` when there is no `# Computation` section or it holds no
 /// code.
+#[must_use]
 pub fn extract_inline_computation(body: &str) -> Option<InlineComputation> {
     let section = computation_section(body)?;
     fenced_block(&section).or_else(|| indented_block(&section))
@@ -428,6 +434,7 @@ fn trim_blank_edges(mut lines: Vec<String>) -> Vec<String> {
 
 /// Resolves a contract's path-valued fields to bundle-relative candidates
 /// (§6.2), as `(field, raw, candidates)`.
+#[must_use]
 pub fn contract_path_candidates(
     contract: &AttestedComputation,
     from: &crate::ConceptId,

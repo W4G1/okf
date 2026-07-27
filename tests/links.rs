@@ -172,12 +172,11 @@ fn document_links_and_citations_integration() {
     .unwrap();
     // links() returns every body link, including the one in the citation list.
     assert_eq!(doc.links().len(), 2);
-    let internal: Vec<_> = doc
+    let internal = doc
         .links()
         .into_iter()
-        .filter(|l| l.kind == LinkKind::Absolute)
-        .collect();
-    assert_eq!(internal.len(), 1);
+        .filter(|l| l.kind == LinkKind::Absolute);
+    assert_eq!(internal.count(), 1);
     assert_eq!(doc.citations().len(), 1);
 }
 

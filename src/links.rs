@@ -45,6 +45,7 @@ pub struct Link {
 
 impl Link {
     /// Classifies a raw target string per §6.
+    #[must_use]
     pub fn classify(target: &str) -> LinkKind {
         let t = target.trim();
         if t.is_empty() {
@@ -70,6 +71,7 @@ impl Link {
     ///
     /// Where a target is percent-encoded this returns the literal reading; use
     /// [`Link::resolve_all`] to also consider the decoded one.
+    #[must_use]
     pub fn resolve(&self, source: &ConceptId) -> Option<ConceptId> {
         self.resolve_all(source).into_iter().next()
     }
@@ -81,6 +83,7 @@ impl Link {
     /// as a second candidate rather than applied outright, so that a file
     /// genuinely named `my%20notes.md` still resolves by its literal spelling.
     /// Callers should prefer the first candidate that exists in the bundle.
+    #[must_use]
     pub fn resolve_all(&self, source: &ConceptId) -> Vec<ConceptId> {
         let mut out = Vec::new();
         let mut push = |target: &str| {
@@ -117,17 +120,14 @@ fn percent_decode(s: &str) -> Option<String> {
         let escape = (bytes[i] == b'%' && i + 3 <= bytes.len())
             .then(|| &bytes[i + 1..i + 3])
             .filter(|hex| hex.iter().all(u8::is_ascii_hexdigit));
-        match escape {
-            Some(hex) => {
-                let hex = std::str::from_utf8(hex).ok()?;
-                out.push(u8::from_str_radix(hex, 16).ok()?);
-                decoded_any = true;
-                i += 3;
-            }
-            None => {
-                out.push(bytes[i]);
-                i += 1;
-            }
+        if let Some(hex) = escape {
+            let hex = std::str::from_utf8(hex).ok()?;
+            out.push(u8::from_str_radix(hex, 16).ok()?);
+            decoded_any = true;
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
         }
     }
     if !decoded_any {
@@ -175,10 +175,7 @@ fn has_uri_scheme(t: &str) -> bool {
 }
 
 fn strip_anchor(target: &str) -> &str {
-    match target.find('#') {
-        Some(i) => &target[..i],
-        None => target,
-    }
+    target.find('#').map_or(target, |i| &target[..i])
 }
 
 fn resolve_absolute(target: &str) -> Option<ConceptId> {
@@ -209,7 +206,7 @@ fn normalize_segments(path: &str, base: &[String]) -> Vec<String> {
     let mut segs = base.to_vec();
     for comp in path.split('/') {
         match comp {
-            "" | "." => continue,
+            "" | "." => {}
             ".." => {
                 segs.pop();
             }
@@ -245,6 +242,7 @@ fn strip_md(mut segs: Vec<String>) -> Option<Vec<String>> {
 /// Unlike [`Link::resolve`], the returned paths keep their file extension:
 /// these fields routinely name non-markdown files such as
 /// `references/attesters/revenue.py`.
+#[must_use]
 pub fn field_path_candidates(raw: &str, from: &ConceptId) -> Vec<String> {
     let target = raw.trim();
     match Link::classify(target) {
@@ -271,6 +269,7 @@ pub fn field_path_candidates(raw: &str, from: &ConceptId) -> Vec<String> {
 
 /// The concept id a bundle-relative markdown path denotes, or `None` if the
 /// path is not a `.md` file or is not a valid id (§2).
+#[must_use]
 pub fn concept_id_for_path(path: &str) -> Option<ConceptId> {
     let stem = path.strip_suffix(".md")?;
     ConceptId::parse(stem).ok()
@@ -278,6 +277,7 @@ pub fn concept_id_for_path(path: &str) -> Option<ConceptId> {
 
 /// Extracts all inline markdown links from a body, skipping fenced code blocks
 /// and inline code spans.
+#[must_use]
 pub fn extract_links(body: &str) -> Vec<Link> {
     let mut links = Vec::new();
     for (_, line) in code_free_lines(body) {
@@ -411,7 +411,7 @@ fn parse_inline_link(chars: &[char], start: usize) -> Option<(String, String, us
 
 /// Normalizes a raw link destination.
 ///
-/// Unwraps the CommonMark `<...>` form, which is how a destination is allowed
+/// Unwraps the `CommonMark` `<...>` form, which is how a destination is allowed
 /// to contain spaces, and otherwise removes an optional title suffix. A
 /// bracketed destination is taken literally, since a space inside it is part of
 /// the path rather than a separator before a title.
@@ -439,6 +439,7 @@ fn strip_title(dest: &str) -> String {
 }
 
 /// Extracts numbered citation entries from the `# Citations` section (§8).
+#[must_use]
 pub fn extract_citations(body: &str) -> Vec<Citation> {
     let mut out = Vec::new();
     let mut in_section = false;

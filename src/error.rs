@@ -19,14 +19,14 @@ pub enum DocumentError {
 impl fmt::Display for DocumentError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            DocumentError::UnterminatedFrontmatter => {
+            Self::UnterminatedFrontmatter => {
                 write!(f, "Unterminated YAML frontmatter block")
             }
-            DocumentError::FrontmatterNotMapping => {
+            Self::FrontmatterNotMapping => {
                 write!(f, "Frontmatter must be a YAML mapping")
             }
-            DocumentError::InvalidYaml(e) => write!(f, "Invalid YAML in frontmatter: {e}"),
-            DocumentError::MissingKeys(keys) => {
+            Self::InvalidYaml(e) => write!(f, "Invalid YAML in frontmatter: {e}"),
+            Self::MissingKeys(keys) => {
                 write!(f, "Missing required frontmatter keys: {}", keys.join(", "))
             }
         }
@@ -37,7 +37,7 @@ impl std::error::Error for DocumentError {}
 
 impl From<YamlError> for DocumentError {
     fn from(e: YamlError) -> Self {
-        DocumentError::InvalidYaml(e)
+        Self::InvalidYaml(e)
     }
 }
 
@@ -67,14 +67,14 @@ pub enum BundleError {
 impl fmt::Display for BundleError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            BundleError::Io(e) => write!(f, "I/O error: {e}"),
-            BundleError::NotADirectory(p) => {
+            Self::Io(e) => write!(f, "I/O error: {e}"),
+            Self::NotADirectory(p) => {
                 write!(f, "bundle root is not a directory: {}", p.display())
             }
-            BundleError::Document { path, error } => {
+            Self::Document { path, error } => {
                 write!(f, "{}: {error}", path.display())
             }
-            BundleError::InvalidConceptId { path, reason } => {
+            Self::InvalidConceptId { path, reason } => {
                 write!(f, "{}: invalid concept id ({reason})", path.display())
             }
         }
@@ -84,8 +84,8 @@ impl fmt::Display for BundleError {
 impl std::error::Error for BundleError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            BundleError::Io(e) => Some(e),
-            BundleError::Document { error, .. } => Some(error),
+            Self::Io(e) => Some(e),
+            Self::Document { error, .. } => Some(error),
             _ => None,
         }
     }
@@ -93,6 +93,6 @@ impl std::error::Error for BundleError {
 
 impl From<std::io::Error> for BundleError {
     fn from(e: std::io::Error) -> Self {
-        BundleError::Io(e)
+        Self::Io(e)
     }
 }

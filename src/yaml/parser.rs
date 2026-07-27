@@ -28,9 +28,9 @@ impl std::error::Error for YamlError {}
 /// Parses a YAML document (the OKF subset) into a [`Value`].
 ///
 /// Empty or comment/whitespace-only input parses to [`Value::Null`], mirroring
-/// PyYAML's `safe_load("") is None`.
+/// `PyYAML`'s `safe_load("") is None`.
 pub fn parse(text: &str) -> Result<Value, YamlError> {
-    let lines: Vec<String> = text.lines().map(|l| l.to_string()).collect();
+    let lines: Vec<String> = text.lines().map(std::string::ToString::to_string).collect();
     let mut p = Parser { lines, pos: 0 };
     p.skip_blank_and_comments();
     if p.pos >= p.lines.len() {
@@ -192,7 +192,7 @@ impl Parser {
     /// lines, folding each line break into a single space.
     ///
     /// YAML lets both plain and quoted scalars span lines (§6.5 line folding),
-    /// and PyYAML's `safe_dump` leans on it: any value longer than its 80-column
+    /// and `PyYAML`'s `safe_dump` leans on it: any value longer than its 80-column
     /// line width comes out wrapped. The reference implementation dumps with
     /// `safe_dump`, so its own published bundles carry wrapped `description` and
     /// `title` values, and a parser that rejects them cannot read
@@ -247,7 +247,7 @@ impl Parser {
     /// A nested *mapping* must be indented deeper than `parent_indent`. A nested
     /// block *sequence*, however, is also permitted at exactly `parent_indent`
     /// which is YAML's standard "indentation-relaxed" block sequence, and it is
-    /// what PyYAML's `safe_dump` (used by the reference implementation) emits for
+    /// what `PyYAML`'s `safe_dump` (used by the reference implementation) emits for
     /// list values such as `tags`. Returns [`Value::Null`] when no block
     /// follows.
     fn parse_nested(&mut self, parent_indent: usize) -> Result<Value, YamlError> {
@@ -312,7 +312,7 @@ impl Parser {
 
         // Drop trailing blank lines for accounting, remember how many there were.
         let mut trailing_blanks = 0;
-        while body.last().map(|l| l.is_empty()).unwrap_or(false) {
+        while body.last().is_some_and(std::string::String::is_empty) {
             body.pop();
             trailing_blanks += 1;
         }
@@ -375,11 +375,10 @@ fn starts_a_new_node(content: &str) -> bool {
 /// The quote character of a quoted scalar that `s` opens but does not close, or
 /// `None` when `s` is plain or self-contained.
 fn unclosed_quote(s: &str) -> Option<char> {
-    let quote = match s.chars().next() {
-        Some(c @ ('\'' | '"')) => c,
-        _ => return None,
-    };
-    (!closes_quote(s, quote, 1)).then_some(quote)
+    match s.chars().next()? {
+        q @ ('\'' | '"') if !closes_quote(s, q, 1) => Some(q),
+        _ => None,
+    }
 }
 
 /// Whether the closing `quote` of an already-open quoted scalar appears in `s`
@@ -535,7 +534,7 @@ fn strip_trailing_comment(s: &str) -> &str {
 /// identifier-like values: integers must have no redundant leading zero (so a
 /// zero-padded code such as `007` stays a string), and floats must contain a
 /// decimal point (so `1e3` stays a string). This matches the safe, predictable
-/// end of YAML scalar resolution rather than PyYAML's legacy octal/sexagesimal
+/// end of YAML scalar resolution rather than `PyYAML`'s legacy octal/sexagesimal
 /// quirks. The special float tokens `.inf`, `-.inf`, and `.nan` are recognized
 /// so non-finite floats produced by the emitter round-trip.
 fn interpret_plain(s: &str) -> Value {
@@ -806,8 +805,7 @@ impl FlowParser {
 /// of two entries, not a parse error: the colons in `human:ahormati` and
 /// `09:00:00` are content (§5.2, §7).
 fn is_separator_colon(chars: &[char], i: usize) -> bool {
-    match chars.get(i + 1) {
-        None => true,
-        Some(c) => c.is_whitespace() || matches!(c, ',' | '[' | ']' | '{' | '}'),
-    }
+    chars.get(i + 1).map_or(true, |c| {
+        c.is_whitespace() || matches!(c, ',' | '[' | ']' | '{' | '}')
+    })
 }

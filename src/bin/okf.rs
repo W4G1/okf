@@ -14,11 +14,14 @@
 //!
 //! Argument parsing is hand-rolled to keep the crate dependency-free.
 
+#![warn(clippy::pedantic, clippy::nursery)]
+
 use okf::{
     bundle_diff, lint_bundle_at, validate_bundle_at, Bundle, Date, Document, Severity, TrustTier,
     Value,
 };
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::path::Path;
 use std::process::ExitCode;
 
@@ -203,7 +206,8 @@ fn today(args: &[String]) -> Result<Option<Date>, CliError> {
     if !uses_flag {
         return Ok(Date::today_utc());
     }
-    let raw = flag_value(args, "--today").ok_or_else(|| CliError::usage("--today needs a YYYY-MM-DD date"))?;
+    let raw = flag_value(args, "--today")
+        .ok_or_else(|| CliError::usage("--today needs a YYYY-MM-DD date"))?;
     Date::parse(raw)
         .map(Some)
         .ok_or_else(|| CliError::usage(format!("--today is not a YYYY-MM-DD date: {raw}")))
@@ -375,10 +379,10 @@ fn cmd_trust(args: &[String]) -> Result<ExitCode, CliError> {
             println!("  stale_after: {stale_after}");
         }
         for resolved in bundle.sources_of(&c.id) {
-            let target = match &resolved.concept {
-                Some(id) => format!(" -> {id}"),
-                None => String::new(),
-            };
+            let target = resolved
+                .concept
+                .as_ref()
+                .map_or_else(String::new, |id| format!(" -> {id}"));
             println!("  source:    {}{target}", resolved.source);
         }
     }
@@ -460,7 +464,8 @@ fn cmd_index(args: &[String]) -> Result<ExitCode, CliError> {
             "bundle root is not a directory: {path}"
         )));
     }
-    let written = okf::index::regenerate_indexes(path).map_err(|e| CliError::no_input(e.to_string()))?;
+    let written =
+        okf::index::regenerate_indexes(path).map_err(|e| CliError::no_input(e.to_string()))?;
     if written.is_empty() {
         println!("no index files written (empty bundle?)");
     } else {
@@ -495,8 +500,7 @@ enum GraphFormat {
 
 fn graph_format(args: &[String]) -> Result<GraphFormat, CliError> {
     match flag_value(args, "--format") {
-        None => Ok(GraphFormat::Text),
-        Some("text") => Ok(GraphFormat::Text),
+        None | Some("text") => Ok(GraphFormat::Text),
         Some("mermaid") => Ok(GraphFormat::Mermaid),
         Some("json") => Ok(GraphFormat::Json),
         Some(other) => Err(CliError::usage(format!(
@@ -537,7 +541,12 @@ fn print_graph_mermaid(bundle: &Bundle, sources: bool) {
     for c in bundle.concepts() {
         intern(&c.id.to_string(), &mut node_id, &mut order, &mut next);
         for link in bundle.links_from(&c.id) {
-            intern(&link.target.to_string(), &mut node_id, &mut order, &mut next);
+            intern(
+                &link.target.to_string(),
+                &mut node_id,
+                &mut order,
+                &mut next,
+            );
         }
     }
 
@@ -596,8 +605,8 @@ fn print_graph_json(bundle: &Bundle, sources: bool) {
 
     let concepts = bundle.concepts();
     for (i, c) in concepts.iter().enumerate() {
-        out.push_str("    {\n");
-        out.push_str(&format!("      \"id\": {},\n", json_str(&c.id.to_string())));
+        let _ = writeln!(out, "    {{");
+        let _ = writeln!(out, "      \"id\": {}", json_str(&c.id.to_string()));
 
         let links = bundle.links_from(&c.id);
         out.push_str("      \"links\": [");
@@ -606,14 +615,15 @@ fn print_graph_json(bundle: &Bundle, sources: bool) {
         } else {
             out.push('\n');
             for (j, link) in links.iter().enumerate() {
-                out.push_str("        {\n");
-                out.push_str(&format!(
-                    "          \"target\": {},\n",
+                let _ = writeln!(out, "        {{");
+                let _ = writeln!(
+                    out,
+                    "          \"target\": {}",
                     json_str(&link.target.to_string())
-                ));
-                out.push_str(&format!("          \"exists\": {},\n", link.exists));
-                out.push_str(&format!("          \"text\": {},\n", json_str(&link.text)));
-                out.push_str(&format!("          \"raw\": {}\n", json_str(&link.raw)));
+                );
+                let _ = writeln!(out, "          \"exists\": {}", link.exists);
+                let _ = writeln!(out, "          \"text\": {}", json_str(&link.text));
+                let _ = writeln!(out, "          \"raw\": {}", json_str(&link.raw));
                 out.push_str(if j + 1 == links.len() {
                     "        }\n"
                 } else {
@@ -661,7 +671,9 @@ fn json_str(s: &str) -> String {
             '\t' => out.push_str("\\t"),
             '\u{08}' => out.push_str("\\b"),
             '\u{0c}' => out.push_str("\\f"),
-            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c if (c as u32) < 0x20 => {
+                let _ = write!(out, "\\u{:04x}", c as u32);
+            }
             c => out.push(c),
         }
     }
@@ -685,6 +697,21 @@ fn cmd_parse(args: &[String]) -> Result<ExitCode, CliError> {
         println!("missing recommended: {}", missing.join(", "));
     }
 
+    print_parse_trust(fm);
+    print_parse_sources(fm);
+    print_parse_attributions(&doc);
+    print_parse_computation(&doc);
+    print_parse_links(&doc);
+
+    if conformant {
+        Ok(ExitCode::SUCCESS)
+    } else {
+        Ok(ExitCode::from(EX_DATAERR))
+    }
+}
+
+/// The trust block: tier, status, `generated`, `verified`, and `stale_after`.
+fn print_parse_trust(fm: &okf::Frontmatter) {
     println!("\ntrust (§5):");
     println!("  tier:      {}", fm.trust_tier());
     println!("  status:    {}", fm.status());
@@ -701,65 +728,80 @@ fn cmd_parse(args: &[String]) -> Result<ExitCode, CliError> {
         };
         println!("  stale_after: {stale_after}{note}");
     }
+}
 
+/// The `sources` block with its credibility signals (§5.1).
+fn print_parse_sources(fm: &okf::Frontmatter) {
     let sources = fm.sources();
-    if !sources.is_empty() {
-        println!("\nsources ({}) (§5.1):", sources.len());
-        for source in &sources {
-            println!("  {source} [{:?}]", source.resource_kind());
-            if let Some(author) = &source.author {
-                println!("    author: {author} ({})", author.kind());
-            }
-            if let Some(count) = source.usage_count {
-                let window = source
-                    .effective_usage_window(fm.usage_window().as_ref())
-                    .map(|w| format!(" over {w}"))
-                    .unwrap_or_default();
-                println!("    usage_count: {count}{window}");
-            }
-            if let Some(last_modified) = &source.last_modified {
-                println!("    last_modified: {last_modified}");
-            }
+    if sources.is_empty() {
+        return;
+    }
+    println!("\nsources ({}) (§5.1):", sources.len());
+    for source in &sources {
+        println!("  {source} [{:?}]", source.resource_kind());
+        if let Some(author) = &source.author {
+            println!("    author: {author} ({})", author.kind());
+        }
+        if let Some(count) = source.usage_count {
+            let window = source
+                .effective_usage_window(fm.usage_window().as_ref())
+                .map(|w| format!(" over {w}"))
+                .unwrap_or_default();
+            println!("    usage_count: {count}{window}");
+        }
+        if let Some(last_modified) = &source.last_modified {
+            println!("    last_modified: {last_modified}");
         }
     }
+}
 
+/// Footnote attribution keyed to `sources[].id` (§5.1).
+fn print_parse_attributions(doc: &Document) {
     let attributions = doc.attributions();
-    if !attributions.is_empty() {
-        println!("\nattribution ({}) (§5.1):", attributions.len());
-        for a in &attributions {
-            let target = match &a.source {
-                Some(source) => source.label().to_string(),
-                None => "(no matching sources[].id)".to_string(),
-            };
-            println!("  [^{}] x{} -> {target}", a.label, a.references);
-        }
+    if attributions.is_empty() {
+        return;
     }
-
-    if let Some(contract) = doc.attested_computation() {
-        println!("\nattested computation (§10):");
-        println!(
-            "  runtime:     {}",
-            contract.runtime.as_deref().unwrap_or("(missing)")
+    println!("\nattribution ({}) (§5.1):", attributions.len());
+    for a in &attributions {
+        let target = a.source.as_ref().map_or_else(
+            || "(no matching sources[].id)".to_string(),
+            |source| source.label().to_string(),
         );
-        println!("  computation: {}", contract.computation);
-        for parameter in &contract.parameters {
-            println!("  parameter:   {parameter}");
-        }
-        if let Some(executor) = &contract.executor {
-            println!(
-                "  executor:    {}",
-                executor.resource.as_deref().unwrap_or("(missing)")
-            );
-            println!("  receipt:     {}", executor.receipt.join(", "));
-        }
-        if let Some(attester) = &contract.attester {
-            println!(
-                "  attester:    {}",
-                attester.resource.as_deref().unwrap_or("(missing)")
-            );
-        }
+        println!("  [^{}] x{} -> {target}", a.label, a.references);
     }
+}
 
+/// The Attested Computation contract (§10), when the document carries one.
+fn print_parse_computation(doc: &Document) {
+    let Some(contract) = doc.attested_computation() else {
+        return;
+    };
+    println!("\nattested computation (§10):");
+    println!(
+        "  runtime:     {}",
+        contract.runtime.as_deref().unwrap_or("(missing)")
+    );
+    println!("  computation: {}", contract.computation);
+    for parameter in &contract.parameters {
+        println!("  parameter:   {parameter}");
+    }
+    if let Some(executor) = &contract.executor {
+        println!(
+            "  executor:    {}",
+            executor.resource.as_deref().unwrap_or("(missing)")
+        );
+        println!("  receipt:     {}", executor.receipt.join(", "));
+    }
+    if let Some(attester) = &contract.attester {
+        println!(
+            "  attester:    {}",
+            attester.resource.as_deref().unwrap_or("(missing)")
+        );
+    }
+}
+
+/// Markdown links and any legacy `# Citations` list (§13.1).
+fn print_parse_links(doc: &Document) {
     let links = doc.links();
     if !links.is_empty() {
         println!("\nlinks ({}):", links.len());
@@ -776,11 +818,6 @@ fn cmd_parse(args: &[String]) -> Result<ExitCode, CliError> {
         for cit in &citations {
             println!("  [{}] {}", cit.number, cit.raw);
         }
-    }
-    if conformant {
-        Ok(ExitCode::SUCCESS)
-    } else {
-        Ok(ExitCode::from(EX_DATAERR))
     }
 }
 

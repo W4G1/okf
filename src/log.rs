@@ -13,6 +13,8 @@
 //! Date headings use ISO-8601 `YYYY-MM-DD`. The leading bold word
 //! (`**Update**`, `**Creation**`, …) is a convention, not a requirement.
 
+use std::fmt::Write as _;
+
 /// A parsed `log.md`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Log {
@@ -42,8 +44,9 @@ pub struct LogEntry {
 
 impl Log {
     /// Parses `log.md` text.
-    pub fn parse(text: &str) -> Log {
-        let mut log = Log::default();
+    #[must_use]
+    pub fn parse(text: &str) -> Self {
+        let mut log = Self::default();
         let mut current: Option<LogDay> = None;
 
         for line in text.lines() {
@@ -74,20 +77,26 @@ impl Log {
     }
 
     /// Renders the log back to markdown.
+    #[must_use]
     pub fn to_markdown(&self) -> String {
         let mut out = String::new();
         if let Some(title) = &self.title {
-            out.push_str(&format!("# {title}\n\n"));
+            let _ = writeln!(out, "# {title}");
+            out.push('\n');
         }
         for (i, day) in self.days.iter().enumerate() {
             if i > 0 {
                 out.push('\n');
             }
-            out.push_str(&format!("## {}\n", day.date));
+            let _ = writeln!(out, "## {}", day.date);
             for entry in &day.entries {
                 match &entry.kind {
-                    Some(kind) => out.push_str(&format!("* **{kind}**: {}\n", entry.text)),
-                    None => out.push_str(&format!("* {}\n", entry.text)),
+                    Some(kind) => {
+                        let _ = writeln!(out, "* **{kind}**: {}", entry.text);
+                    }
+                    None => {
+                        let _ = writeln!(out, "* {}", entry.text);
+                    }
                 }
             }
         }
@@ -96,6 +105,7 @@ impl Log {
 
     /// Returns the date headings that are not valid ISO-8601 `YYYY-MM-DD`
     /// (§9 requires this form).
+    #[must_use]
     pub fn invalid_dates(&self) -> Vec<&str> {
         self.days
             .iter()
@@ -131,6 +141,7 @@ fn parse_entry(body: &str) -> LogEntry {
 }
 
 /// Checks that a string is a valid ISO-8601 calendar date (`YYYY-MM-DD`).
+#[must_use]
 pub fn is_iso_date(s: &str) -> bool {
     crate::date::Date::parse(s).is_some()
 }

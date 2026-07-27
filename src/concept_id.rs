@@ -31,6 +31,11 @@ pub struct ConceptId {
 
 impl ConceptId {
     /// Builds a concept id from segments, validating each.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConceptIdError`] if `segments` is empty or any segment fails
+    /// [`validate_segment`].
     pub fn new(segments: Vec<String>) -> Result<Self, ConceptIdError> {
         if segments.is_empty() {
             return Err(ConceptIdError(
@@ -40,12 +45,17 @@ impl ConceptId {
         for seg in &segments {
             validate_segment(seg)?;
         }
-        Ok(ConceptId { segments })
+        Ok(Self { segments })
     }
 
     /// Parses a concept id from a `/`-separated string. Empty segments are
     /// dropped (so leading/trailing/duplicate slashes are tolerated), matching
     /// the reference `parse_concept_id`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConceptIdError`] if `s` resolves to no segments or any segment
+    /// fails [`validate_segment`].
     pub fn parse(s: &str) -> Result<Self, ConceptIdError> {
         let segments: Vec<String> = s
             .split('/')
@@ -58,34 +68,45 @@ impl ConceptId {
         for seg in &segments {
             validate_segment(seg)?;
         }
-        Ok(ConceptId { segments })
+        Ok(Self { segments })
     }
 
     /// The id's segments.
+    #[must_use]
     pub fn segments(&self) -> &[String] {
         &self.segments
     }
 
     /// The final segment (the concept's own name, without directories).
     pub fn name(&self) -> &str {
-        self.segments.last().map(String::as_str).unwrap_or("")
+        self.segments.last().map_or("", String::as_str)
     }
 
     /// The id of the directory that contains this concept, if any.
-    pub fn parent(&self) -> Option<ConceptId> {
+    #[must_use]
+    pub fn parent(&self) -> Option<Self> {
         if self.segments.len() <= 1 {
             None
         } else {
-            Some(ConceptId {
+            Some(Self {
                 segments: self.segments[..self.segments.len() - 1].to_vec(),
             })
         }
     }
 
     /// Resolves this id to a file path under `bundle_root` (appending `.md`).
+    ///
+    /// # Panics
+    ///
+    /// Never panics in practice: the constructor rejects empty segment lists,
+    /// so [`ConceptId::segments`] always has at least one element.
+    #[must_use]
     pub fn to_path(&self, bundle_root: &Path) -> PathBuf {
         let mut path = bundle_root.to_path_buf();
-        let (name, dirs) = self.segments.split_last().expect("non-empty");
+        let (name, dirs) = self
+            .segments
+            .split_last()
+            .expect("ConceptId is constructed non-empty");
         for d in dirs {
             path.push(d);
         }
@@ -105,6 +126,11 @@ impl ConceptId {
     /// [`ConceptId::parse`] accepts everything this can return, with one
     /// exception: a Unix filename containing a literal `\`, which
     /// [`validate_segment`] rejects because it is a separator elsewhere.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConceptIdError`] if `path` is not under `bundle_root` or
+    /// resolves to no segments.
     pub fn from_path(bundle_root: &Path, path: &Path) -> Result<Self, ConceptIdError> {
         let rel = path
             .strip_prefix(bundle_root)
@@ -123,7 +149,7 @@ impl ConceptId {
                 "concept_id must have at least one segment".into(),
             ));
         }
-        Ok(ConceptId { segments })
+        Ok(Self { segments })
     }
 }
 
@@ -136,7 +162,7 @@ impl fmt::Display for ConceptId {
 impl std::str::FromStr for ConceptId {
     type Err = ConceptIdError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        ConceptId::parse(s)
+        Self::parse(s)
     }
 }
 
@@ -158,6 +184,12 @@ impl std::str::FromStr for ConceptId {
 ///
 /// The ASCII convention is still worth following, so `validate_bundle` reports
 /// segments outside it as a warning instead of refusing to parse them.
+///
+/// # Errors
+///
+/// Returns [`ConceptIdError`] for the small set of segments that cannot
+/// round-trip through the `/`-joined string form or [`ConceptId::to_path`]:
+/// empty, `.` and `..`, path separators, and control characters.
 pub fn validate_segment(seg: &str) -> Result<(), ConceptIdError> {
     let reject = |reason: &str| {
         Err(ConceptIdError(format!(
@@ -190,6 +222,7 @@ pub fn validate_segment(seg: &str) -> Result<(), ConceptIdError> {
 /// a name outside it needs `<...>` or percent-encoding to be linked from
 /// markdown and is not guaranteed to survive every filesystem unchanged. It is
 /// reported as guidance, never as an error.
+#[must_use]
 pub fn is_portable_segment(seg: &str) -> bool {
     let mut chars = seg.chars();
     match chars.next() {

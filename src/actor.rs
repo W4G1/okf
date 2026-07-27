@@ -34,10 +34,10 @@ pub enum ActorKind {
 impl fmt::Display for ActorKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
-            ActorKind::Human => "human",
-            ActorKind::Process => "process",
-            ActorKind::Agent => "agent",
-            ActorKind::Other => "other",
+            Self::Human => "human",
+            Self::Process => "process",
+            Self::Agent => "agent",
+            Self::Other => "other",
         })
     }
 }
@@ -52,7 +52,7 @@ pub struct Actor {
 impl Actor {
     /// Classifies an actor string. Never fails: an unrecognized form becomes
     /// [`ActorKind::Other`] with the raw text preserved.
-    pub fn parse(s: impl Into<String>) -> Actor {
+    pub fn parse(s: impl Into<String>) -> Self {
         let raw = s.into();
         let t = raw.trim();
         let kind = if t.strip_prefix("human:").is_some_and(|id| !id.is_empty()) {
@@ -64,26 +64,30 @@ impl Actor {
         } else {
             ActorKind::Other
         };
-        Actor { raw, kind }
+        Self { raw, kind }
     }
 
     /// The actor string exactly as written.
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.raw
     }
 
     /// Which of the §7 forms this actor uses.
-    pub fn kind(&self) -> ActorKind {
+    #[must_use]
+    pub const fn kind(&self) -> ActorKind {
         self.kind
     }
 
     /// `true` for a `human:<id>` actor, the signal trust tiers key off (§5.3).
+    #[must_use]
     pub fn is_human(&self) -> bool {
         self.kind == ActorKind::Human
     }
 
     /// The identifying part: the text after `human:` / `process:`, the producer
     /// of an agent, or the whole string otherwise.
+    #[must_use]
     pub fn id(&self) -> &str {
         let t = self.raw.trim();
         match self.kind {
@@ -95,11 +99,13 @@ impl Actor {
     }
 
     /// The `<producer>` half of an agent actor.
+    #[must_use]
     pub fn producer(&self) -> Option<&str> {
         self.agent_halves().map(|(p, _)| p)
     }
 
     /// The `<version>` half of an agent actor.
+    #[must_use]
     pub fn version(&self) -> Option<&str> {
         self.agent_halves().map(|(_, v)| v)
     }
@@ -120,7 +126,7 @@ impl fmt::Display for Actor {
 
 impl From<&str> for Actor {
     fn from(s: &str) -> Self {
-        Actor::parse(s)
+        Self::parse(s)
     }
 }
 

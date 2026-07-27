@@ -17,7 +17,7 @@ use okf::{
     Document, ResourceKind, Severity, Status, TrustTier,
 };
 
-const INCOME_STATEMENT: &str = r#"---
+const INCOME_STATEMENT: &str = r"---
 type: Metric
 title: Income statement (fiscal year)
 description: Headline income-statement figures for a fiscal year.
@@ -39,9 +39,9 @@ reporting handbook.[^fpa-handbook] Each figure is produced by a sanctioned,
 attestable computation; this concept only narrates them.
 
 [^fpa-handbook]: FP&A reporting handbook
-"#;
+";
 
-const REVENUE: &str = r#"---
+const REVENUE: &str = r"---
 type: Attested Computation
 title: Revenue for fiscal year
 description: Recognized revenue for a fiscal year, per Finance's definition.
@@ -84,9 +84,9 @@ the executive revenue dashboard.[^exec-rev-dash]
 
 [^rev-policy]: Revenue recognition policy
 [^exec-rev-dash]: Executive revenue dashboard
-"#;
+";
 
-const PROFIT: &str = r#"---
+const PROFIT: &str = r"---
 type: Attested Computation
 title: Gross profit for fiscal year
 description: Gross profit by segment for a fiscal year, per the cost-allocation standard.
@@ -120,7 +120,7 @@ sources:
 Gross profit by segment per the cost-allocation standard.[^cost-alloc]
 
 [^cost-alloc]: Cost allocation standard
-"#;
+";
 
 /// The Appendix A bundle, `bundles/finance/`.
 fn finance_bundle() -> TempDir {
@@ -260,7 +260,7 @@ fn footnote_labels_resolve_to_source_ids() {
 
     let attributions = revenue.document.attributions();
     assert_eq!(attributions.len(), 2);
-    assert!(attributions.iter().all(|a| a.is_resolved()));
+    assert!(attributions.iter().all(okf::Attribution::is_resolved));
     assert_eq!(attributions[0].label, "rev-policy");
     assert_eq!(attributions[0].references, 1);
     assert_eq!(attributions[0].definitions, 1);

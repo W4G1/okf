@@ -14,7 +14,7 @@
 //! - the core scalar types: null, bool, int, float, string.
 //!
 //! Plain and quoted scalars may span lines, folding each break into a single
-//! space, because PyYAML's `safe_dump` wraps any value past its 80-column line
+//! space, because `PyYAML`'s `safe_dump` wraps any value past its 80-column line
 //! width and the reference implementation publishes bundles that way.
 //!
 //! It deliberately does **not** support anchors/aliases, explicit tags
@@ -29,7 +29,7 @@
 //!
 //! ## Timestamps are strings
 //!
-//! One deliberate divergence from PyYAML: YAML's implicit resolver types a bare
+//! One deliberate divergence from `PyYAML`: YAML's implicit resolver types a bare
 //! `2026-12-31` as a date and a bare `2026-06-30T14:00:00Z` as a datetime, while
 //! this module keeps every scalar of either shape as a string. The OKF layer
 //! loses nothing, since [`DateField`](crate::DateField) and
@@ -38,7 +38,7 @@
 //! dropped (§11).
 //!
 //! The consequence shows up on the way out. A bare ISO datetime is not stable
-//! even under the reference's own round-trip: PyYAML loads it into a `datetime`
+//! even under the reference's own round-trip: `PyYAML` loads it into a `datetime`
 //! and dumps it back as `2026-06-30 14:00:00+00:00`, losing the `T` and `Z`
 //! separators §5.2 asks for. A quoted one survives byte-identical. So the
 //! emitter quotes a datetime-valued string and leaves a bare `YYYY-MM-DD` plain,
@@ -67,23 +67,27 @@ pub struct Mapping {
 
 impl Mapping {
     /// Creates an empty mapping.
-    pub fn new() -> Self {
-        Mapping {
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
             entries: Vec::new(),
         }
     }
 
     /// Number of key/value pairs.
+    #[must_use]
     pub fn len(&self) -> usize {
         self.entries.len()
     }
 
     /// Returns `true` if the mapping has no entries.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
 
     /// Looks up a value by string key.
+    #[must_use]
     pub fn get(&self, key: &str) -> Option<&Value> {
         self.entries
             .iter()
@@ -92,6 +96,7 @@ impl Mapping {
     }
 
     /// Returns `true` if the mapping contains the given string key.
+    #[must_use]
     pub fn contains_key(&self, key: &str) -> bool {
         self.get(key).is_some()
     }
@@ -150,58 +155,69 @@ pub enum Value {
     /// A string scalar.
     String(String),
     /// A sequence (`[...]` or block `- ...`).
-    Sequence(Vec<Value>),
+    Sequence(Vec<Self>),
     /// A mapping (`{...}` or block `key: value`).
     Mapping(Mapping),
 }
 
 impl Value {
     /// Parses a single YAML value from text (the OKF frontmatter subset).
-    pub fn parse(text: &str) -> Result<Value, YamlError> {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`YamlError`] for any input outside the supported subset
+    /// (anchors, tags, multiple documents, or syntactically malformed YAML).
+    pub fn parse(text: &str) -> Result<Self, YamlError> {
         parser::parse(text)
     }
 
     /// Emits this value as YAML text using block style, preserving key order.
+    #[must_use]
     pub fn to_yaml_string(&self) -> String {
         emitter::emit(self)
     }
 
     /// Returns the string contents if this is a [`Value::String`].
+    #[must_use]
     pub fn as_str(&self) -> Option<&str> {
         match self {
-            Value::String(s) => Some(s),
+            Self::String(s) => Some(s),
             _ => None,
         }
     }
 
     /// Returns the boolean if this is a [`Value::Bool`].
-    pub fn as_bool(&self) -> Option<bool> {
+    #[must_use]
+    pub const fn as_bool(&self) -> Option<bool> {
         match self {
-            Value::Bool(b) => Some(*b),
+            Self::Bool(b) => Some(*b),
             _ => None,
         }
     }
 
     /// Returns the integer if this is a [`Value::Int`].
-    pub fn as_int(&self) -> Option<i64> {
+    #[must_use]
+    pub const fn as_int(&self) -> Option<i64> {
         match self {
-            Value::Int(i) => Some(*i),
+            Self::Int(i) => Some(*i),
             _ => None,
         }
     }
 
     /// Returns the sequence elements if this is a [`Value::Sequence`].
-    pub fn as_sequence(&self) -> Option<&[Value]> {
+    #[must_use]
+    pub fn as_sequence(&self) -> Option<&[Self]> {
         match self {
-            Value::Sequence(s) => Some(s),
+            Self::Sequence(s) => Some(s),
             _ => None,
         }
     }
 
     /// Returns the mapping if this is a [`Value::Mapping`].
-    pub fn as_mapping(&self) -> Option<&Mapping> {
+    #[must_use]
+    pub const fn as_mapping(&self) -> Option<&Mapping> {
         match self {
-            Value::Mapping(m) => Some(m),
+            Self::Mapping(m) => Some(m),
             _ => None,
         }
     }
@@ -209,14 +225,13 @@ impl Value {
     /// True for `Null`, an empty string, an empty sequence, or an empty
     /// mapping. Mirrors Python's "falsy" check used by the reference
     /// implementation's `validate()` (`not frontmatter.get(k)`).
+    #[must_use]
     pub fn is_empty_value(&self) -> bool {
         match self {
-            Value::Null => true,
-            Value::String(s) => s.is_empty(),
-            Value::Sequence(s) => s.is_empty(),
-            Value::Mapping(m) => m.is_empty(),
-            Value::Bool(false) => true,
-            Value::Int(0) => true,
+            Self::Null | Self::Bool(false) | Self::Int(0) => true,
+            Self::String(s) => s.is_empty(),
+            Self::Sequence(s) => s.is_empty(),
+            Self::Mapping(m) => m.is_empty(),
             _ => false,
         }
     }
@@ -224,12 +239,13 @@ impl Value {
     /// Renders a scalar as a plain display string (used for typed frontmatter
     /// accessors that coerce scalars to text, matching the reference's
     /// `str(fm.get(...))`).
+    #[must_use]
     pub fn as_display_string(&self) -> Option<String> {
         match self {
-            Value::String(s) => Some(s.clone()),
-            Value::Bool(b) => Some(b.to_string()),
-            Value::Int(i) => Some(i.to_string()),
-            Value::Float(f) => Some(format!("{f}")),
+            Self::String(s) => Some(s.clone()),
+            Self::Bool(b) => Some(b.to_string()),
+            Self::Int(i) => Some(i.to_string()),
+            Self::Float(f) => Some(format!("{f}")),
             _ => None,
         }
     }
@@ -243,36 +259,36 @@ impl fmt::Display for Value {
 
 impl From<&str> for Value {
     fn from(s: &str) -> Self {
-        Value::String(s.to_string())
+        Self::String(s.to_string())
     }
 }
 
 impl From<String> for Value {
     fn from(s: String) -> Self {
-        Value::String(s)
+        Self::String(s)
     }
 }
 
 impl From<bool> for Value {
     fn from(b: bool) -> Self {
-        Value::Bool(b)
+        Self::Bool(b)
     }
 }
 
 impl From<i64> for Value {
     fn from(i: i64) -> Self {
-        Value::Int(i)
+        Self::Int(i)
     }
 }
 
-impl<T: Into<Value>> From<Vec<T>> for Value {
+impl<T: Into<Self>> From<Vec<T>> for Value {
     fn from(v: Vec<T>) -> Self {
-        Value::Sequence(v.into_iter().map(Into::into).collect())
+        Self::Sequence(v.into_iter().map(Into::into).collect())
     }
 }
 
 impl From<Mapping> for Value {
     fn from(m: Mapping) -> Self {
-        Value::Mapping(m)
+        Self::Mapping(m)
     }
 }

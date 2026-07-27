@@ -451,7 +451,7 @@ fn l16_index_missing_a_concept_on_disk() {
     let l16 = messages_for(&report, "L16");
     assert!(
         l16.iter()
-            .any(|m| m.contains("missing from index") && m.contains("b")),
+            .any(|m| m.contains("missing from index") && m.contains('b')),
         "L16 should flag `b` as missing from the index: {l16:?}"
     );
 }
@@ -473,7 +473,7 @@ fn l16_index_lists_a_concept_not_on_disk() {
     let l16 = messages_for(&report, "L16");
     assert!(
         l16.iter()
-            .any(|m| m.contains("listed but not on disk") && m.contains("b")),
+            .any(|m| m.contains("listed but not on disk") && m.contains('b')),
         "L16 should flag `b` as listed but not on disk: {l16:?}"
     );
 }

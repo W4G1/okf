@@ -44,12 +44,14 @@ pub struct Concept {
 
 impl Concept {
     /// The concept's `type` (§4.1).
+    #[must_use]
     pub fn type_(&self) -> Option<String> {
         self.document.frontmatter.type_()
     }
 
     /// The concept's `title`, falling back to the final segment of its id when
     /// none is given, as §4.1 permits.
+    #[must_use]
     pub fn display_title(&self) -> String {
         self.document
             .frontmatter
@@ -58,26 +60,31 @@ impl Concept {
     }
 
     /// The trust tier derived from `verified` (§5.3).
+    #[must_use]
     pub fn trust_tier(&self) -> TrustTier {
         self.document.frontmatter.trust_tier()
     }
 
     /// The lifecycle `status`; absent means stable (§5.4).
+    #[must_use]
     pub fn status(&self) -> Status {
         self.document.frontmatter.status()
     }
 
     /// Whether `today >= stale_after` (§5.5).
+    #[must_use]
     pub fn is_stale_on(&self, today: Date) -> bool {
         self.document.frontmatter.is_stale_on(today)
     }
 
     /// The `sources` this concept derives from (§5.1).
+    #[must_use]
     pub fn sources(&self) -> Vec<Source> {
         self.document.frontmatter.sources()
     }
 
     /// The Attested Computation contract, when this concept is one (§10).
+    #[must_use]
     pub fn attested_computation(&self) -> Option<AttestedComputation> {
         self.document.attested_computation()
     }
@@ -127,7 +134,13 @@ impl Bundle {
     ///
     /// Returns an error only for I/O failures or a non-directory root. Per-file
     /// parse failures are recorded in [`Bundle::parse_errors`].
-    pub fn load(root: impl AsRef<Path>) -> Result<Bundle, BundleError> {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BundleError::NotADirectory`] if `root` does not exist or is
+    /// not a directory, and [`BundleError::Io`] for any underlying I/O failure
+    /// while walking the tree.
+    pub fn load(root: impl AsRef<Path>) -> Result<Self, BundleError> {
         let root = root.as_ref().to_path_buf();
         if !root.is_dir() {
             return Err(BundleError::NotADirectory(root));
@@ -172,7 +185,7 @@ impl Bundle {
         let (outbound, backlinks) = build_graph(&concepts, &index);
         let (sources, derived_by) = build_derivation_graph(&concepts, &index);
 
-        Ok(Bundle {
+        Ok(Self {
             root,
             concepts,
             index,
@@ -187,64 +200,76 @@ impl Bundle {
     }
 
     /// The bundle's root directory.
+    #[must_use]
     pub fn root(&self) -> &Path {
         &self.root
     }
 
     /// All successfully parsed concepts, in path order.
+    #[must_use]
     pub fn concepts(&self) -> &[Concept] {
         &self.concepts
     }
 
     /// Number of concepts.
+    #[must_use]
     pub fn len(&self) -> usize {
         self.concepts.len()
     }
 
     /// `true` if the bundle has no concepts.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.concepts.is_empty()
     }
 
     /// Looks up a concept by id.
+    #[must_use]
     pub fn get(&self, id: &ConceptId) -> Option<&Concept> {
         self.index.get(id).map(|&i| &self.concepts[i])
     }
 
     /// `true` if a concept with this id exists.
+    #[must_use]
     pub fn contains(&self, id: &ConceptId) -> bool {
         self.index.contains_key(id)
     }
 
     /// Paths of all `index.md` files found (§6).
+    #[must_use]
     pub fn index_files(&self) -> &[PathBuf] {
         &self.index_files
     }
 
     /// Paths of all `log.md` files found (§7).
+    #[must_use]
     pub fn log_files(&self) -> &[PathBuf] {
         &self.log_files
     }
 
     /// Files whose frontmatter could not be parsed during loading.
+    #[must_use]
     pub fn parse_errors(&self) -> &[(PathBuf, DocumentError)] {
         &self.parse_errors
     }
 
     /// The resolved outbound cross-links from a concept.
+    #[must_use]
     pub fn links_from(&self, id: &ConceptId) -> &[ResolvedLink] {
-        self.outbound.get(id).map(|v| v.as_slice()).unwrap_or(&[])
+        self.outbound.get(id).map_or(&[], std::vec::Vec::as_slice)
     }
 
     /// The ids of concepts that link to the given concept ("cited by" / §
     /// backlinks).
+    #[must_use]
     pub fn backlinks(&self, id: &ConceptId) -> &[ConceptId] {
-        self.backlinks.get(id).map(|v| v.as_slice()).unwrap_or(&[])
+        self.backlinks.get(id).map_or(&[], std::vec::Vec::as_slice)
     }
 
     /// All broken internal links in the bundle, as `(source, raw_target)`
     /// pairs. Broken links are permitted by the spec (§6.1), so this is
     /// informational.
+    #[must_use]
     pub fn broken_links(&self) -> Vec<(ConceptId, String)> {
         let mut out = Vec::new();
         for c in &self.concepts {
@@ -274,8 +299,9 @@ impl Bundle {
     }
 
     /// The concept's `sources` entries, each resolved against the bundle.
+    #[must_use]
     pub fn sources_of(&self, id: &ConceptId) -> &[ResolvedSource] {
-        self.sources.get(id).map(|v| v.as_slice()).unwrap_or(&[])
+        self.sources.get(id).map_or(&[], std::vec::Vec::as_slice)
     }
 
     /// The concepts this one derives from: the `sources[].resource` entries
@@ -283,6 +309,7 @@ impl Bundle {
     ///
     /// Following these recursively is how a consumer lets credibility
     /// propagate; external leaf sources carry only their intrinsic signals.
+    #[must_use]
     pub fn derived_from(&self, id: &ConceptId) -> Vec<&ConceptId> {
         self.sources_of(id)
             .iter()
@@ -292,8 +319,9 @@ impl Bundle {
 
     /// The reverse of [`Bundle::derived_from`]: concepts that cite this one as
     /// a source.
+    #[must_use]
     pub fn derives(&self, id: &ConceptId) -> &[ConceptId] {
-        self.derived_by.get(id).map(|v| v.as_slice()).unwrap_or(&[])
+        self.derived_by.get(id).map_or(&[], std::vec::Vec::as_slice)
     }
 
     /// Every concept whose `type` matches exactly.
@@ -316,6 +344,7 @@ impl Bundle {
     /// §3.1: OKF does not specify a file format for aggregating documents by
     /// tag, so "a consumer that wants a tag-browsing view can synthesize one at
     /// consumption time." This is that view.
+    #[must_use]
     pub fn tags(&self) -> BTreeMap<String, Vec<ConceptId>> {
         let mut out: BTreeMap<String, Vec<ConceptId>> = BTreeMap::new();
         for c in &self.concepts {
@@ -327,6 +356,7 @@ impl Bundle {
     }
 
     /// Every concept that is stale on `today`: `today >= stale_after` (§5.5).
+    #[must_use]
     pub fn stale_on(&self, today: Date) -> Vec<&Concept> {
         self.concepts
             .iter()
@@ -340,6 +370,7 @@ impl Bundle {
     /// actually exists on disk, or `None` for a URL, a scope descriptor, or a
     /// path that names nothing. Unlike concept links, these fields routinely
     /// point at non-markdown files such as `references/attesters/revenue.py`.
+    #[must_use]
     pub fn resolve_path_field(&self, from: &ConceptId, raw: &str) -> Option<PathBuf> {
         links::field_path_candidates(raw, from)
             .into_iter()
@@ -351,13 +382,13 @@ impl Bundle {
 /// Recursively collects `*.md` file paths under `dir`.
 fn collect_markdown(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), BundleError> {
     let mut entries: Vec<_> = fs::read_dir(dir)?.collect::<Result<_, _>>()?;
-    entries.sort_by_key(|e| e.file_name());
+    entries.sort_by_key(std::fs::DirEntry::file_name);
     for entry in entries {
         let path = entry.path();
         let file_type = entry.file_type()?;
         if file_type.is_dir() {
             collect_markdown(&path, out)?;
-        } else if file_type.is_file() && path.extension().map(|e| e == "md").unwrap_or(false) {
+        } else if file_type.is_file() && path.extension().is_some_and(|e| e == "md") {
             out.push(path);
         }
     }

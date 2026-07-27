@@ -44,9 +44,9 @@ pub enum Severity {
 impl std::fmt::Display for Severity {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
-            Severity::Error => "error",
-            Severity::Warning => "warning",
-            Severity::Info => "info",
+            Self::Error => "error",
+            Self::Warning => "warning",
+            Self::Info => "info",
         })
     }
 }
@@ -86,6 +86,7 @@ pub struct Report {
 impl Report {
     /// `true` if there are no [`Severity::Error`] diagnostics, i.e. the bundle
     /// conforms to §11.
+    #[must_use]
     pub fn is_conformant(&self) -> bool {
         !self
             .diagnostics
@@ -101,11 +102,13 @@ impl Report {
     }
 
     /// Count of error-level diagnostics.
+    #[must_use]
     pub fn error_count(&self) -> usize {
         self.of(Severity::Error).count()
     }
 
     /// Count of warning-level diagnostics.
+    #[must_use]
     pub fn warning_count(&self) -> usize {
         self.of(Severity::Warning).count()
     }
@@ -115,12 +118,14 @@ impl Report {
 ///
 /// Deterministic: `stale_after` dates are checked for *syntax* but not against
 /// the clock. Use [`validate_bundle_at`] to also flag stale concepts.
+#[must_use]
 pub fn validate_bundle(bundle: &Bundle) -> Report {
     validate_bundle_at(bundle, None)
 }
 
 /// Validates a bundle, additionally reporting concepts that are stale on
 /// `today` (§5.5).
+#[must_use]
 pub fn validate_bundle_at(bundle: &Bundle, today: Option<Date>) -> Report {
     let mut report = Report::default();
 
@@ -543,7 +548,7 @@ fn check_computation(cx: &mut Context, doc: &Document) {
     match &contract.attester {
         None => cx.warn("missing `attester`: nothing can check a run's receipt (§10.2)"),
         Some(attester) if attester.resource.is_none() => {
-            cx.warn("`attester.resource` is missing; it names the deterministic check (§10.2)")
+            cx.warn("`attester.resource` is missing; it names the deterministic check (§10.2)");
         }
         Some(_) => {}
     }
@@ -626,13 +631,7 @@ fn validate_reserved(bundle: &Bundle, report: &mut Report) {
         // Frontmatter is only permitted in the bundle-root index.md, and only
         // to declare `okf_version` (§12).
         let is_root = path == &root_index;
-        if !is_root {
-            report.warn(
-                Some(path.clone()),
-                None,
-                "index.md should not contain frontmatter (§8)".to_string(),
-            );
-        } else {
+        if is_root {
             let only_version = doc
                 .frontmatter
                 .as_mapping()
@@ -645,6 +644,12 @@ fn validate_reserved(bundle: &Bundle, report: &mut Report) {
                     "root index.md frontmatter should declare only `okf_version` (§12)".to_string(),
                 );
             }
+        } else {
+            report.warn(
+                Some(path.clone()),
+                None,
+                "index.md should not contain frontmatter (§8)".to_string(),
+            );
         }
     }
 
@@ -692,11 +697,11 @@ fn check_declared_version(bundle: &Bundle, report: &mut Report) {
 }
 
 fn is_blank(fm: &Frontmatter, key: &str) -> bool {
-    fm.get(key).map(Value::is_empty_value).unwrap_or(true)
+    fm.get(key).map_or(true, Value::is_empty_value)
 }
 
 /// A short YAML type name, for diagnostics about a mis-shaped value.
-fn type_name(value: &Value) -> &'static str {
+const fn type_name(value: &Value) -> &'static str {
     match value {
         Value::Null => "null",
         Value::Bool(_) => "a boolean",
@@ -712,6 +717,7 @@ fn type_name(value: &Value) -> &'static str {
 ///
 /// Accepts a `YYYY-MM-DD` date with an optional time and zone, which is what
 /// `generated.at` and `verified[].at` carry (§5.2).
+#[must_use]
 pub fn is_iso8601_datetime(s: &str) -> bool {
     DateTime::parse(s).is_some()
 }

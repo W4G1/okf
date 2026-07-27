@@ -167,6 +167,7 @@ fn sequences_of_mappings_emit_idiomatic_bullets() {
 }
 
 #[test]
+#[allow(clippy::literal_string_with_formatting_args)] // YAML test data, not a format string
 fn flow_key_without_a_value_is_null() {
     // YAML reads `{a:1}` as one key with no value, since the colon is not
     // followed by whitespace.
@@ -288,9 +289,9 @@ fn tab_indentation_is_error() {
     assert!(Value::parse("a:\n\tb: 1").is_err());
 }
 
-/// Frontmatter exactly as PyYAML's `safe_dump` writes it, which is what the
+/// Frontmatter exactly as `PyYAML`'s `safe_dump` writes it, which is what the
 /// reference implementation publishes. Every wrapping and quoting decision here
-/// is PyYAML's, not ours.
+/// is `PyYAML`'s, not ours.
 const PYYAML_DUMPED: &str = "\
 type: BigQuery Table
 title: GA4 Events Export

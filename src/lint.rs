@@ -47,11 +47,13 @@ use std::path::{Path, PathBuf};
 ///
 /// Deterministic: staleness is checked for *syntax* but not against the clock.
 /// Use [`lint_bundle_at`] to also flag concepts past their `stale_after`.
+#[must_use]
 pub fn lint_bundle(bundle: &Bundle) -> Report {
     lint_bundle_at(bundle, None)
 }
 
 /// Lints a bundle, additionally flagging concepts that are stale on `today`.
+#[must_use]
 pub fn lint_bundle_at(bundle: &Bundle, today: Option<Date>) -> Report {
     let mut report = Report::default();
 
@@ -141,7 +143,12 @@ fn is_concept_link(raw: &str) -> bool {
     }
     let before_anchor = t.split('#').next().unwrap_or(t);
     let basename = before_anchor.rsplit('/').next().unwrap_or(before_anchor);
-    basename.ends_with(".md") || !basename.contains('.')
+    // OKF reserves the lowercase `index.md` and `log.md` filenames (§3.1), so a
+    // case-sensitive comparison is correct here, not a missing-extension bug.
+    #[allow(clippy::case_sensitive_file_extension_comparisons)]
+    {
+        basename.ends_with(".md") || !basename.contains('.')
+    }
 }
 
 /// Synthesizes the concept id an `index.md` would have if it were itself a
@@ -453,7 +460,7 @@ fn check_stale_indexes(bundle: &Bundle, report: &mut Report) {
 
         report.diagnostics.push(Diagnostic {
             severity: Severity::Warning,
-            path: Some(index_path.to_path_buf()),
+            path: Some(index_path.clone()),
             concept: None,
             message: format!(
                 "[L16] index.md is out of sync with its directory ({})",

@@ -86,6 +86,10 @@
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
+// Pedantic and nursery lints keep the published crate tidy; the few cases
+// where a lint is genuinely wrong for this codebase are silenced inline with a
+// justification.
+#![warn(clippy::pedantic, clippy::nursery)]
 
 /// Compiles and runs the `README.md` examples as doctests.
 ///

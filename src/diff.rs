@@ -85,6 +85,7 @@ pub struct BundleDiff {
 
 impl BundleDiff {
     /// `true` when the two bundles are semantically identical.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.added.is_empty()
             && self.removed.is_empty()
@@ -100,6 +101,7 @@ impl BundleDiff {
 ///
 /// Both bundles are loaded fully before this call; the diff itself does no
 /// filesystem access.
+#[must_use]
 pub fn bundle_diff(a: &Bundle, b: &Bundle) -> BundleDiff {
     let a_ids: BTreeSet<ConceptId> = a.concepts().iter().map(|c| c.id.clone()).collect();
     let b_ids: BTreeSet<ConceptId> = b.concepts().iter().map(|c| c.id.clone()).collect();

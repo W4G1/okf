@@ -35,16 +35,18 @@ pub struct Date {
 impl Date {
     /// Builds a date, returning `None` for a day that does not exist in that
     /// month (`2026-02-30`, `2026-13-01`, …).
-    pub fn new(year: i32, month: u32, day: u32) -> Option<Date> {
+    #[must_use]
+    pub fn new(year: i32, month: u32, day: u32) -> Option<Self> {
         if !(1..=12).contains(&month) || day < 1 || day > days_in_month(year, month) {
             return None;
         }
-        Some(Date { year, month, day })
+        Some(Self { year, month, day })
     }
 
     /// Parses a strict `YYYY-MM-DD` date. Returns `None` for any other shape,
     /// including datetimes; use [`DateTime::parse`] for those.
-    pub fn parse(s: &str) -> Option<Date> {
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Self> {
         let b = s.as_bytes();
         if b.len() != 10 || b[4] != b'-' || b[7] != b'-' {
             return None;
@@ -56,7 +58,7 @@ impl Date {
         {
             return None;
         }
-        Date::new(
+        Self::new(
             s[0..4].parse().ok()?,
             s[5..7].parse().ok()?,
             s[8..10].parse().ok()?,
@@ -66,20 +68,26 @@ impl Date {
     /// Today's date in UTC, from the system clock.
     ///
     /// Returns `None` only if the clock reports a time before the Unix epoch.
-    pub fn today_utc() -> Option<Date> {
-        let secs = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs() as i64;
-        Some(Date::from_days_since_epoch(secs.div_euclid(86_400)))
+    #[must_use]
+    pub fn today_utc() -> Option<Self> {
+        let secs = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs();
+        // `secs` is `u64`; saturate at `i64::MAX` (far past any representable
+        // date) rather than `as i64`, which would silently wrap near the limit.
+        let secs = i64::try_from(secs).unwrap_or(i64::MAX);
+        Some(Self::from_days_since_epoch(secs.div_euclid(86_400)))
     }
 
     /// Days since 1970-01-01 (negative before it).
+    #[must_use]
     pub fn days_since_epoch(&self) -> i64 {
         days_from_civil(self.year, self.month, self.day)
     }
 
     /// The date `days` after 1970-01-01.
-    pub fn from_days_since_epoch(days: i64) -> Date {
+    #[must_use]
+    pub fn from_days_since_epoch(days: i64) -> Self {
         let (year, month, day) = civil_from_days(days);
-        Date { year, month, day }
+        Self { year, month, day }
     }
 }
 
@@ -92,7 +100,7 @@ impl fmt::Display for Date {
 impl std::str::FromStr for Date {
     type Err = ParseDateError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Date::parse(s).ok_or_else(|| ParseDateError(s.to_string()))
+        Self::parse(s).ok_or_else(|| ParseDateError(s.to_string()))
     }
 }
 
@@ -138,7 +146,7 @@ impl DateTime {
     /// Accepts `YYYY-MM-DD`, `YYYY-MM-DDTHH:MM[:SS[.fraction]]` (with `T`, `t`,
     /// or a space as the separator), and an optional `Z` / `±HH:MM` / `±HHMM` /
     /// `±HH` zone.
-    pub fn parse(s: &str) -> Option<DateTime> {
+    pub fn parse(s: &str) -> Option<Self> {
         let s = s.trim();
         if !s.is_ascii() || s.len() < 10 {
             return None;
@@ -146,7 +154,7 @@ impl DateTime {
         let date = Date::parse(&s[..10])?;
         let rest = &s[10..];
         if rest.is_empty() {
-            return Some(DateTime {
+            return Some(Self {
                 date,
                 hour: 0,
                 minute: 0,
@@ -179,7 +187,7 @@ impl DateTime {
                 }
                 rest = &rest[digits.len()..];
                 // Left-align to nanosecond precision, truncating beyond 9 digits.
-                let mut nanos = digits.clone();
+                let mut nanos = digits;
                 nanos.truncate(9);
                 while nanos.len() < 9 {
                     nanos.push('0');
@@ -192,7 +200,7 @@ impl DateTime {
         }
 
         let offset_minutes = parse_offset(rest)?;
-        Some(DateTime {
+        Some(Self {
             date,
             hour,
             minute,
@@ -205,6 +213,7 @@ impl DateTime {
 
     /// Seconds since the Unix epoch, normalizing the zone (a missing offset is
     /// read as UTC).
+    #[must_use]
     pub fn to_utc_seconds(&self) -> i64 {
         self.date.days_since_epoch() * 86_400
             + i64::from(self.hour) * 3600
@@ -215,6 +224,7 @@ impl DateTime {
 
     /// The calendar date in UTC, which differs from [`DateTime::date`] when the
     /// value carries an offset that crosses midnight.
+    #[must_use]
     pub fn utc_date(&self) -> Date {
         Date::from_days_since_epoch(self.to_utc_seconds().div_euclid(86_400))
     }
@@ -259,7 +269,7 @@ impl fmt::Display for DateTime {
 impl std::str::FromStr for DateTime {
     type Err = ParseDateError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        DateTime::parse(s).ok_or_else(|| ParseDateError(s.to_string()))
+        Self::parse(s).ok_or_else(|| ParseDateError(s.to_string()))
     }
 }
 
@@ -279,14 +289,15 @@ pub struct DateField {
 
 impl DateField {
     /// Wraps a raw scalar, parsing it if possible.
-    pub fn new(raw: impl Into<String>) -> DateField {
+    pub fn new(raw: impl Into<String>) -> Self {
         let raw = raw.into();
         let date = Date::parse(raw.trim());
-        DateField { raw, date }
+        Self { raw, date }
     }
 
     /// `true` if the raw scalar parsed as a date.
-    pub fn is_valid(&self) -> bool {
+    #[must_use]
+    pub const fn is_valid(&self) -> bool {
         self.date.is_some()
     }
 
@@ -302,6 +313,7 @@ impl DateField {
     /// reference implementation's `is_stale` (it truncates with
     /// `date.fromisoformat(str(raw)[:10])`). The written date is used as-is,
     /// without shifting by any UTC offset, exactly as that truncation does.
+    #[must_use]
     pub fn effective_date(&self) -> Option<Date> {
         self.date
             .or_else(|| DateTime::parse(self.raw.trim()).map(|parsed| parsed.date))
@@ -327,14 +339,15 @@ pub struct DateTimeField {
 
 impl DateTimeField {
     /// Wraps a raw scalar, parsing it if possible.
-    pub fn new(raw: impl Into<String>) -> DateTimeField {
+    pub fn new(raw: impl Into<String>) -> Self {
         let raw = raw.into();
         let datetime = DateTime::parse(&raw);
-        DateTimeField { raw, datetime }
+        Self { raw, datetime }
     }
 
     /// `true` if the raw scalar parsed as a datetime.
-    pub fn is_valid(&self) -> bool {
+    #[must_use]
+    pub const fn is_valid(&self) -> bool {
         self.datetime.is_some()
     }
 }
@@ -363,6 +376,12 @@ fn take_u32<'a>(s: &mut &'a str, n: usize) -> Option<u32> {
 }
 
 /// Parses a trailing zone designator: empty (`None`), `Z`, or `±HH[[:]MM]`.
+///
+/// The outer `Option` distinguishes "no zone designator at all" (a bare
+/// `YYYY-MM-DD` date, returned as `Some(None)`) from "a syntactically invalid
+/// zone" (returned as `None`). The inner `Option<i32>` is the parsed offset in
+/// minutes, with `Some(0)` for an explicit `Z` and `None` for an absent zone.
+#[allow(clippy::option_option)]
 fn parse_offset(s: &str) -> Option<Option<i32>> {
     if s.is_empty() {
         return Some(None);
@@ -386,14 +405,18 @@ fn parse_offset(s: &str) -> Option<Option<i32>> {
     if !rest.is_empty() || hours > 23 || minutes > 59 {
         return None;
     }
-    Some(Some(sign * (hours as i32 * 60 + minutes as i32)))
+    // `hours` (≤ 23) and `minutes` (≤ 59) fit in `i32` by construction; the
+    // `try_from` keeps the cast explicit instead of relying on `as`.
+    let h = i32::try_from(hours).expect("hours bounded to 23");
+    let m = i32::try_from(minutes).expect("minutes bounded to 59");
+    Some(Some(sign * (h * 60 + m)))
 }
 
-fn is_leap_year(year: i32) -> bool {
+const fn is_leap_year(year: i32) -> bool {
     (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
 }
 
-fn days_in_month(year: i32, month: u32) -> u32 {
+const fn days_in_month(year: i32, month: u32) -> u32 {
     match month {
         1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
         4 | 6 | 9 | 11 => 30,
@@ -415,6 +438,15 @@ fn days_from_civil(y: i32, m: u32, d: u32) -> i64 {
 }
 
 /// The inverse of [`days_from_civil`] (Hinnant's `civil_from_days`).
+///
+/// The algorithm bounds `y` to a signed 32-bit range and `m`, `d` to `[1, 12]`
+/// and `[1, 31]` respectively, so the narrowing casts below cannot truncate or
+/// wrap for any date representable under the algorithm.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap
+)]
 fn civil_from_days(z: i64) -> (i32, u32, u32) {
     let z = z + 719_468;
     let era = if z >= 0 { z } else { z - 146_096 } / 146_097;

@@ -17,7 +17,7 @@ pub struct TempDir {
 
 impl TempDir {
     /// Creates a fresh unique temporary directory.
-    pub fn new() -> TempDir {
+    pub fn new() -> Self {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -26,7 +26,7 @@ impl TempDir {
         let path =
             std::env::temp_dir().join(format!("okf-test-{}-{nanos}-{n}", std::process::id()));
         std::fs::create_dir_all(&path).unwrap();
-        TempDir { path }
+        Self { path }
     }
 
     /// The directory path.

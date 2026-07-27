@@ -32,7 +32,7 @@ pub struct Document {
 impl Document {
     /// Creates a document from frontmatter and a body.
     pub fn new(frontmatter: Frontmatter, body: impl Into<String>) -> Self {
-        Document {
+        Self {
             frontmatter,
             body: body.into(),
         }
@@ -44,10 +44,17 @@ impl Document {
     /// entire text is treated as the body and the frontmatter is empty
     /// (matching the reference parser). An opened-but-unclosed frontmatter
     /// block is an error.
-    pub fn parse(text: &str) -> Result<Document, DocumentError> {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DocumentError::UnterminatedFrontmatter`] if the opening `---`
+    /// has no matching close, [`DocumentError::InvalidYaml`] if the frontmatter
+    /// is not valid YAML, and [`DocumentError::FrontmatterNotMapping`] if it
+    /// parses to a scalar or sequence rather than a mapping.
+    pub fn parse(text: &str) -> Result<Self, DocumentError> {
         let lines: Vec<&str> = text.lines().collect();
         if lines.is_empty() || lines[0].trim() != FRONTMATTER_DELIM {
-            return Ok(Document {
+            return Ok(Self {
                 frontmatter: Frontmatter::new(),
                 body: text.to_string(),
             });
@@ -75,7 +82,7 @@ impl Document {
             body = stripped.to_string();
         }
 
-        Ok(Document { frontmatter, body })
+        Ok(Self { frontmatter, body })
     }
 
     /// Serializes the document back to text: frontmatter delimited by `---`,
@@ -85,6 +92,7 @@ impl Document {
     /// body (modulo trailing-newline normalization), matching the reference.
     /// Flow collections are re-emitted in block style, which is the same value
     /// written differently.
+    #[must_use]
     pub fn serialize(&self) -> String {
         let fm_text = Value::Mapping(self.frontmatter.as_mapping().clone())
             .to_yaml_string()
@@ -107,11 +115,16 @@ impl Document {
     /// `type` passes here; see [`Document::missing_recommended`] for the
     /// producer-side checklist and
     /// [`validate_bundle`](crate::validate_bundle) for the full diagnostics.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DocumentError::MissingKeys`] listing every required key that
+    /// is absent or empty.
     pub fn validate(&self) -> Result<(), DocumentError> {
         let missing: Vec<String> = REQUIRED_FRONTMATTER_KEYS
             .iter()
             .filter(|key| !self.has(key))
-            .map(|key| key.to_string())
+            .map(|key| (*key).to_string())
             .collect();
 
         if missing.is_empty() {
@@ -133,6 +146,7 @@ impl Document {
     ///
     /// `generated` counts as set when a legacy v0.1 `timestamp` stands in for
     /// it, since §13.1 lets consumers read one for the other.
+    #[must_use]
     pub fn missing_recommended(&self) -> Vec<&'static str> {
         let mut missing: Vec<&'static str> = RECOMMENDED_FRONTMATTER_KEYS
             .iter()
@@ -158,6 +172,7 @@ impl Document {
     }
 
     /// Extracts all markdown links found in the body (§6.1).
+    #[must_use]
     pub fn links(&self) -> Vec<Link> {
         links::extract_links(&self.body)
     }
@@ -175,6 +190,7 @@ impl Document {
     ///
     /// Returns an empty vector when no such section exists. A repeated heading
     /// contributes its lines to the same result.
+    #[must_use]
     pub fn section(&self, heading: &str) -> Vec<&str> {
         let mut in_section = false;
         let mut lines = Vec::new();
@@ -192,11 +208,13 @@ impl Document {
     }
 
     /// Extracts the body's `[^label]` attribution markers (§5.1).
+    #[must_use]
     pub fn footnote_refs(&self) -> Vec<FootnoteRef> {
         footnotes::extract_refs(&self.body)
     }
 
     /// Extracts the body's `[^label]: text` footnote definitions (§5.1).
+    #[must_use]
     pub fn footnote_definitions(&self) -> Vec<FootnoteDef> {
         footnotes::extract_definitions(&self.body)
     }
@@ -206,11 +224,13 @@ impl Document {
     ///
     /// Labels that match no source are still returned, with
     /// [`Attribution::source`] set to `None`.
+    #[must_use]
     pub fn attributions(&self) -> Vec<Attribution> {
         provenance::attributions(&self.frontmatter.sources(), &self.body)
     }
 
     /// The `# Computation` code block from the body, if there is one (§10.3).
+    #[must_use]
     pub fn inline_computation(&self) -> Option<InlineComputation> {
         crate::computation::extract_inline_computation(&self.body)
     }
@@ -221,6 +241,7 @@ impl Document {
     /// Returns `None` unless `type` is `Attested Computation`; call
     /// [`AttestedComputation::from_parts`] directly to read the same keys off a
     /// concept of another type.
+    #[must_use]
     pub fn attested_computation(&self) -> Option<AttestedComputation> {
         self.frontmatter
             .is_attested_computation()
@@ -232,12 +253,14 @@ impl Document {
     /// v0.2 supersedes this with `sources` and footnote attribution (§5.1);
     /// [`Document::attributions`] is the v0.2 equivalent. Consumers MAY keep
     /// reading `# Citations` for v0.1 documents (§13.1).
+    #[must_use]
     pub fn citations(&self) -> Vec<Citation> {
         links::extract_citations(&self.body)
     }
 
     /// `true` when the body carries a legacy `# Citations` section, which a
     /// v0.2 producer should have migrated to `sources` (§13.1).
+    #[must_use]
     pub fn has_legacy_citations(&self) -> bool {
         !self.citations().is_empty()
     }
