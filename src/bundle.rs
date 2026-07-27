@@ -417,8 +417,7 @@ fn parse_files_parallel(
     }
 
     let n_threads = std::thread::available_parallelism()
-        .map(usize::from)
-        .unwrap_or(1)
+        .map_or(1, usize::from)
         .min(md_files.len());
     // Each thread owns a contiguous slice so the merged output preserves the
     // sorted input order without a re-sort.

@@ -297,7 +297,7 @@ impl Frontmatter {
     }
 
     /// The `stale_after` date, on and after which the content is stale (§5.5).
-    #[must_use] 
+    #[must_use]
     pub fn stale_after(&self) -> Option<DateField> {
         self.display_str("stale_after")
             .map(|s| DateField::new(s.into_owned()))
@@ -367,8 +367,14 @@ impl Frontmatter {
                 out.push((name, v));
             }
         };
-        push("resource", self.resource().map(std::borrow::Cow::into_owned));
-        push("computation", self.computation().map(std::borrow::Cow::into_owned));
+        push(
+            "resource",
+            self.resource().map(std::borrow::Cow::into_owned),
+        );
+        push(
+            "computation",
+            self.computation().map(std::borrow::Cow::into_owned),
+        );
         push(
             "executor.resource",
             self.executor().and_then(|e| e.resource),
