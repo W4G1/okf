@@ -9,7 +9,8 @@
 //!   graph        <bundle>   Print the cross-link graph (text, mermaid, or json).
 //!   parse        <file>     Parse one concept document and print its structure.
 //!   fmt          <file>     Normalize a document by parse + re-serialize.
-//!   lint         <bundle>   Opinionated bundle health checks (L1..L16).
+//!   lint         <bundle>   Opinionated bundle health checks.
+//!   diff         <a> <b>    OKF-semantics diff between two bundles.
 //!
 //! Argument parsing is hand-rolled to keep the crate dependency-free.
 
@@ -120,7 +121,7 @@ COMMANDS:
     graph        <bundle>    Print the cross-link graph (--format text|mermaid|json)
     parse        <file>      Parse one concept document and print its structure
     fmt          <file>      Normalize a document by parse + re-serialize (-w writes)
-    lint         <bundle>    Opinionated bundle health checks (L1..L16)
+    lint         <bundle>    Opinionated bundle health checks
     diff         <a> <b>     OKF-semantics diff between two bundles
 
 OPTIONS:

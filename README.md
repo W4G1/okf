@@ -225,7 +225,7 @@ concerns.
 | [`index`]       | Generate `index.md` directory listings (§8)                           |
 | [`log`]         | Parse / build `log.md` update histories (§9)                          |
 | [`validate`]    | §11 conformance checking with severity-tagged diagnostics             |
-| [`lint`]        | Opinionated bundle health checks beyond conformance (L1..L16)         |
+| [`lint`]        | Opinionated bundle health checks beyond conformance                   |
 
 The core split mirrors the reference Python implementation's `bundle/` package
 (`document.py`, `index.py`, `paths.py`, `synthesizer.py`) so behaviour stays

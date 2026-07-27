@@ -1,4 +1,4 @@
-//! Integration tests for `okf lint` (L1..L16).
+//! Integration tests for `okf lint`.
 //!
 //! Each test pins one rule against a minimal fixture, so a regression points
 //! at the rule that broke. The fixtures are deliberately tiny and independent
