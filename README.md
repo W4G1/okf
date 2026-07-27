@@ -34,21 +34,25 @@ cargo add okf
 
 ## What OKF is
 
-- A **bundle** is a directory tree of UTF-8 markdown files (the unit of
-  distribution).
-- A **concept** is one markdown document: a YAML **frontmatter** block delimited
-  by `---`, followed by a markdown **body**.
-- A **concept id** is the file's path within the bundle with `.md` removed
-  (`tables/users.md` becomes `tables/users`).
-- Concepts **cross-link** via ordinary markdown links, absolute
-  (`/tables/users.md`, bundle-relative) or relative (`./other.md`). A target
-  containing a space may also be written `<...>` or percent-encoded.
-- `index.md` files provide directory listings for *progressive disclosure*;
-  `log.md` files record date-grouped change history. Both are **reserved**
-  filenames.
-- The only hard requirement for **conformance** is a non-empty `type` field on
-  every concept; consumers must otherwise be permissive (unknown types, unknown
-  keys, broken links, and missing optional fields are all tolerated).
+OKF stands for **Open Knowledge Format**, an open, human- and agent-friendly format from Google for representing knowledge as a directory of markdown files.
+
+The format itself is plain markdown files with a YAML header, in a folder.
+Nothing to install, no schema registry, no database. If you can read a text file,
+you can read OKF.
+
+- **Concepts**: one piece of written knowledge about one thing in a markdown file.
+- **Bundles**: a folder of related concepts. `index.md` is its table of contents,
+  and `log.md` the changelog.
+- **Provenance**: `sources` lists where a concept came from, who wrote it, how often it is used, and when it last changed. OKF stores
+  those facts and leaves the conclusion to you, so there is no trust score.
+- **Trust**: `generated` indicates who wrote a concept and when. `verified` says who or what checked it afterwards and when. A concept nobody checked is unverified, one a machine
+  checked is machine-confirmed, and one a person checked is human-reviewed.
+- **Lifecycle**: `status` marks a concept draft, stable or deprecated, and
+  `stale_after` is the date it goes stale and has to be checked again.
+- **Attestation**: a concept can also define exactly *how* a value must be
+  calculated, so an agent cannot make up its own version. An `Attested Computation`
+  names the runtime and its parameters, what a successful run has to report,
+  and the code that checks that report.
 
 ## Usage
 
