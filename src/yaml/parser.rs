@@ -805,7 +805,7 @@ impl FlowParser {
 /// of two entries, not a parse error: the colons in `human:ahormati` and
 /// `09:00:00` are content (§5.2, §7).
 fn is_separator_colon(chars: &[char], i: usize) -> bool {
-    chars.get(i + 1).map_or(true, |c| {
-        c.is_whitespace() || matches!(c, ',' | '[' | ']' | '{' | '}')
-    })
+    chars
+        .get(i + 1)
+        .is_none_or(|c| c.is_whitespace() || matches!(c, ',' | '[' | ']' | '{' | '}'))
 }

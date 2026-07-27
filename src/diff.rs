@@ -86,7 +86,7 @@ pub struct BundleDiff {
 impl BundleDiff {
     /// `true` when the two bundles are semantically identical.
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.added.is_empty()
             && self.removed.is_empty()
             && self.renamed.is_empty()

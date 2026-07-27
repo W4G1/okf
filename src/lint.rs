@@ -9,7 +9,7 @@
 //!
 //! Every finding is tagged with a stable rule code so CI can pin or
 //! silence individual checks. None of them is a conformance failure: a bundle
-//! with lint findings is still conformant if [`validate_bundle`] says so, which
+//! with lint findings is still conformant if [`validate_bundle`](crate::validate_bundle) says so, which
 //! is why `okf lint` is a separate command rather than a stricter
 //! `okf validate`.
 //!

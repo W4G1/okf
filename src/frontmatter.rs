@@ -132,7 +132,7 @@ impl Frontmatter {
     }
 
     /// Mutably borrows the underlying ordered mapping.
-    pub fn as_mapping_mut(&mut self) -> &mut Mapping {
+    pub const fn as_mapping_mut(&mut self) -> &mut Mapping {
         &mut self.map
     }
 
@@ -144,7 +144,7 @@ impl Frontmatter {
 
     /// `true` if there are no keys.
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.map.is_empty()
     }
 

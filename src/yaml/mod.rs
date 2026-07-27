@@ -76,13 +76,13 @@ impl Mapping {
 
     /// Number of key/value pairs.
     #[must_use]
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.entries.len()
     }
 
     /// Returns `true` if the mapping has no entries.
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
 
@@ -226,7 +226,7 @@ impl Value {
     /// mapping. Mirrors Python's "falsy" check used by the reference
     /// implementation's `validate()` (`not frontmatter.get(k)`).
     #[must_use]
-    pub fn is_empty_value(&self) -> bool {
+    pub const fn is_empty_value(&self) -> bool {
         match self {
             Self::Null | Self::Bool(false) | Self::Int(0) => true,
             Self::String(s) => s.is_empty(),

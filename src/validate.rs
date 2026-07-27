@@ -697,7 +697,7 @@ fn check_declared_version(bundle: &Bundle, report: &mut Report) {
 }
 
 fn is_blank(fm: &Frontmatter, key: &str) -> bool {
-    fm.get(key).map_or(true, Value::is_empty_value)
+    fm.get(key).is_none_or(Value::is_empty_value)
 }
 
 /// A short YAML type name, for diagnostics about a mis-shaped value.

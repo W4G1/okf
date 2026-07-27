@@ -56,7 +56,7 @@ pub fn build_index_text(entries: &[IndexEntry]) -> String {
 
     let mut sections: Vec<String> = Vec::new();
     for (typ, mut items) in grouped {
-        items.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
+        items.sort_by_key(|a| a.0.to_lowercase());
         let mut lines = vec![format!("# {typ}"), String::new()];
         for (title, link, desc) in items {
             let suffix = if desc.is_empty() {
@@ -248,9 +248,7 @@ fn preserved_frontmatter(index_path: &Path) -> Option<String> {
 }
 
 fn depth(root: &Path, dir: &Path) -> usize {
-    dir.strip_prefix(root)
-        .map(|r| r.components().count())
-        .unwrap_or(0)
+    dir.strip_prefix(root).map_or(0, |r| r.components().count())
 }
 
 /// All directories that contain at least one `.md` file at any depth, including

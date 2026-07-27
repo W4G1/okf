@@ -140,10 +140,7 @@ fn is_safe_plain(s: &str) -> bool {
         return false;
     }
     // Must not be reinterpreted as null/bool/number.
-    if super::Value::parse(s)
-        .map(|v| v != Value::String(s.to_string()))
-        .unwrap_or(true)
-    {
+    if super::Value::parse(s).map_or(true, |v| v != Value::String(s.to_string())) {
         // parse() of a multiline/odd string may error; fall through to quoting.
         return false;
     }
@@ -161,7 +158,7 @@ fn is_safe_plain(s: &str) -> bool {
     for (i, &c) in bytes.iter().enumerate() {
         match c {
             '\n' | '\t' | '\r' => return false,
-            ':' if bytes.get(i + 1).map_or(true, |n| *n == ' ') => return false,
+            ':' if bytes.get(i + 1).is_none_or(|n| *n == ' ') => return false,
             '#' if i > 0 && bytes[i - 1] == ' ' => return false,
             _ => {}
         }

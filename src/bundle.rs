@@ -213,13 +213,13 @@ impl Bundle {
 
     /// Number of concepts.
     #[must_use]
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.concepts.len()
     }
 
     /// `true` if the bundle has no concepts.
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.concepts.is_empty()
     }
 
