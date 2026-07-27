@@ -275,9 +275,7 @@ fn cmd_info(args: &[String]) -> Result<ExitCode, CliError> {
     println!("bundle:      {}", bundle.root().display());
     println!(
         "okf_version: {}",
-        bundle
-            .okf_version()
-            .unwrap_or_else(|| "(undeclared)".to_string())
+        bundle.okf_version().unwrap_or("(undeclared)")
     );
     println!("concepts:    {}", bundle.len());
     println!("index.md:    {}", bundle.index_files().len());
@@ -285,7 +283,7 @@ fn cmd_info(args: &[String]) -> Result<ExitCode, CliError> {
 
     let mut by_type: BTreeMap<String, usize> = BTreeMap::new();
     for c in bundle.concepts() {
-        let t = c.type_().unwrap_or_else(|| "(none)".to_string());
+        let t = c.type_().as_deref().unwrap_or("(none)").to_string();
         *by_type.entry(t).or_default() += 1;
     }
     if !by_type.is_empty() {

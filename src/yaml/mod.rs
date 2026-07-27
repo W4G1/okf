@@ -249,6 +249,26 @@ impl Value {
             _ => None,
         }
     }
+
+    /// The borrowing form of [`as_display_string`](Self::as_display_string):
+    /// returns a [`Cow`] borrowing the [`String`](Self::String) case and
+    /// owning the coerced form for [`Bool`](Self::Bool)/[`Int`](Self::Int)/
+    /// [`Float`](Self::Float). `None` for non-scalar variants.
+    ///
+    /// Frontmatter accessors use this so the common case (a YAML string) is
+    /// allocation-free, while the deviation case (e.g. `type: 42`) still
+    /// coerces to text the way the reference's `str(fm.get(...))` does, rather
+    /// than silently reading as `None`.
+    #[must_use]
+    pub fn as_display_str(&self) -> Option<std::borrow::Cow<'_, str>> {
+        match self {
+            Self::String(s) => Some(std::borrow::Cow::Borrowed(s)),
+            Self::Bool(b) => Some(std::borrow::Cow::Owned(b.to_string())),
+            Self::Int(i) => Some(std::borrow::Cow::Owned(i.to_string())),
+            Self::Float(f) => Some(std::borrow::Cow::Owned(format!("{f}"))),
+            _ => None,
+        }
+    }
 }
 
 impl fmt::Display for Value {

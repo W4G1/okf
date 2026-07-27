@@ -45,6 +45,19 @@ impl Document {
     /// (matching the reference parser). An opened-but-unclosed frontmatter
     /// block is an error.
     ///
+    /// # Line endings
+    ///
+    /// The two paths handle line endings the same way the reference
+    /// implementation does, by deliberate parity:
+    /// - **No frontmatter**: the body is kept verbatim, so a file with CRLF
+    ///   line endings round-trips byte-identically. This mirrors the
+    ///   reference's `return cls(frontmatter={}, body=text)`.
+    /// - **With frontmatter**: the body is rebuilt via `lines().join("\n")`,
+    ///   which normalizes `\r\n` (and a trailing `\r`) to `\n`. This mirrors
+    ///   the reference's `text.splitlines()` + `"\n".join(...)`. Anything
+    ///   inside the frontmatter block is likewise normalized before YAML
+    ///   parsing.
+    ///
     /// # Errors
     ///
     /// Returns [`DocumentError::UnterminatedFrontmatter`] if the opening `---`

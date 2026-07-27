@@ -264,3 +264,76 @@ fn section_reads_the_lines_under_a_conventional_heading() {
     // The heading is matched in full, so the leading `# ` is required.
     assert!(doc.section("Schema").is_empty());
 }
+
+#[test]
+fn a_non_string_type_is_coerced_not_dropped() {
+    // §4.1 calls `type` "a short string", so `type: 42` is a producer
+    // deviation, but the typed accessors coerce non-string scalars to their
+    // display form the way the reference's `str(fm.get("type"))` does, rather
+    // than returning `None` and leaving a `validate()`-passing concept
+    // typeless. Locking this in so a "borrow-only" refactor does not silently
+    // reintroduce the regression.
+    let doc = with_frontmatter("type: 42\ntitle: hello");
+    assert_eq!(doc.frontmatter.type_().as_deref(), Some("42"));
+    // `validate()` only checks `type` is non-empty, so the deviation still
+    // conforms (§11). A future validator rule could reject it, but the
+    // accessor's contract is to surface what was written, not to legislate.
+    assert!(doc.validate().is_ok());
+
+    // Booleans and floats coerce the same way.
+    assert_eq!(
+        with_frontmatter("type: true")
+            .frontmatter
+            .type_()
+            .as_deref(),
+        Some("true")
+    );
+    assert_eq!(
+        with_frontmatter("type: 1.5").frontmatter.type_().as_deref(),
+        Some("1.5")
+    );
+    // A non-scalar (sequence) is not a plausible `type` and yields `None`.
+    assert!(with_frontmatter("type: [a, b]")
+        .frontmatter
+        .type_()
+        .is_none());
+}
+
+#[test]
+fn line_endings_match_the_reference_parser() {
+    // The reference implementation's two parse paths handle line endings
+    // differently, and this crate mirrors that by deliberate parity:
+    //
+    //  * no frontmatter -> `return cls(body=text)`: the body is kept verbatim,
+    //    so CRLF round-trips byte-identically;
+    //  * frontmatter    -> `splitlines()` + `"\n".join(...)`: the body (and
+    //    the frontmatter text) is normalized to `\n`.
+    //
+    // Locking the behaviour in so a "fix" that normalizes both paths does not
+    // silently break parity with the reference bundles.
+
+    // No frontmatter: CRLF is preserved verbatim.
+    let src = "# Hello\r\n\r\nNo frontmatter here.\r\n";
+    let doc = Document::parse(src).unwrap();
+    assert!(doc.frontmatter.is_empty());
+    assert_eq!(doc.body, src);
+
+    // With frontmatter: CRLF in the body is normalized to LF, and the `\r` on
+    // the closing `---` is stripped so the delimiter is still recognized.
+    let src = "---\r\ntype: X\r\n---\r\n\r\n# Hello\r\n\r\nBody.\r\n";
+    let doc = Document::parse(src).unwrap();
+    assert_eq!(doc.frontmatter.type_().as_deref(), Some("X"));
+    assert_eq!(doc.body, "# Hello\n\nBody.");
+
+    // Re-serializing always emits `\n`; a CRLF file that went through the
+    // frontmatter path therefore does not round-trip byte-identically,
+    // matching the reference's `serialize()` which joins on `"\n"`. Asserting
+    // both the absence of CR and that the bytes differ, so a future
+    // `serialize()` change that no-op'd the input still fails this test.
+    let serialized = doc.serialize();
+    assert!(
+        !serialized.contains('\r'),
+        "serialize must not emit CR: {serialized:?}"
+    );
+    assert_ne!(serialized, src, "serialize must not round-trip CRLF");
+}

@@ -170,9 +170,17 @@ pub fn regenerate_indexes_with(
                     .frontmatter
                     .title()
                     .filter(|t| !t.is_empty())
-                    .unwrap_or(stem);
-                let description = doc.frontmatter.description().unwrap_or_default();
-                let type_ = doc.frontmatter.type_().unwrap_or_default();
+                    .map_or(stem, std::borrow::Cow::into_owned);
+                let description = doc
+                    .frontmatter
+                    .description()
+                    .map(std::borrow::Cow::into_owned)
+                    .unwrap_or_default();
+                let type_ = doc
+                    .frontmatter
+                    .type_()
+                    .map(std::borrow::Cow::into_owned)
+                    .unwrap_or_default();
                 entries.push(IndexEntry {
                     type_,
                     title,

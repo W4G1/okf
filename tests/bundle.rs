@@ -4,7 +4,9 @@
 mod common;
 
 use common::TempDir;
-use okf::{validate_bundle, Bundle, ConceptId, Severity};
+use okf::{
+    validate_bundle, Bundle, BundleError, ConceptId, ConceptIdError, DocumentError, Severity,
+};
 
 /// Builds the Appendix A example bundle and returns its temp dir.
 fn appendix_a() -> TempDir {
@@ -146,7 +148,7 @@ fn okf_version_read_from_root_index() {
     tmp.write("a.md", "---\ntype: Note\n---\nbody\n");
     tmp.write("index.md", "---\nokf_version: \"0.1\"\n---\n\n# Listing\n");
     let bundle = Bundle::load(tmp.path()).unwrap();
-    assert_eq!(bundle.okf_version().as_deref(), Some("0.1"));
+    assert_eq!(bundle.okf_version(), Some("0.1"));
 }
 
 #[test]
@@ -260,4 +262,100 @@ fn an_awkward_segment_warns_once_not_once_per_file() {
         .filter(|d| d.message.contains("my dir"))
         .collect();
     assert_eq!(warnings.len(), 1, "{warnings:?}");
+}
+
+#[test]
+fn parallel_load_path_preserves_sorted_concept_order() {
+    // The parallel loader only kicks in past `PARALLEL_THRESHOLD` files, so
+    // build a bundle with enough concepts to exercise it and verify the
+    // merged result is still in deterministic sorted order with the same
+    // graph as a sequential load would produce.
+    let tmp = TempDir::new();
+    let names = [
+        "alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india",
+        "juliet", "kilo", "lima", "mike",
+    ];
+    for name in names {
+        tmp.write(
+            &format!("{name}.md"),
+            &format!("---\ntype: Reference\ntitle: {name}\ndescription: d\n---\n\nProse.\n"),
+        );
+    }
+    let bundle = Bundle::load(tmp.path()).unwrap();
+    assert_eq!(bundle.len(), names.len());
+    assert!(bundle.parse_errors().is_empty());
+
+    // `concepts` is documented to be in path order; the parallel merge keeps
+    // the input chunk order, so the ids come out sorted lexicographically.
+    let ids: Vec<String> = bundle.concepts().iter().map(|c| c.id.to_string()).collect();
+    let mut expected = names.to_vec();
+    expected.sort_unstable();
+    let expected: Vec<String> = expected.iter().map(|s| s.to_string()).collect();
+    assert_eq!(ids, expected);
+}
+
+#[test]
+fn parallel_load_surfaces_io_errors_in_file_order() {
+    // >PARALLEL_THRESHOLD files so the worker-thread path is taken. A
+    // mid-list file is non-UTF8, so `read_to_string` returns an `io::Error`,
+    // and the loader surfaces the first I/O failure in chunk order — which,
+    // because chunks are contiguous slices of the sorted file list, is the
+    // earliest failure in file order.
+    let tmp = TempDir::new();
+    let names = [
+        "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m",
+    ];
+    for name in names {
+        tmp.write(
+            &format!("{name}.md"),
+            &format!("---\ntype: Reference\ntitle: {name}\ndescription: d\n---\n\nProse.\n"),
+        );
+    }
+    // Overwrite `f.md` with invalid UTF-8 (`read_to_string` errors here).
+    std::fs::write(tmp.path().join("f.md"), b"\xff\xfe not utf-8").unwrap();
+
+    let err = Bundle::load(tmp.path()).expect_err("non-UTF8 file must error");
+    let BundleError::Io { kind, .. } = err else {
+        panic!("expected BundleError::Io, got {err:?}");
+    };
+    // `read_to_string` reports `InvalidData` for non-UTF8 input.
+    assert_eq!(kind, std::io::ErrorKind::InvalidData);
+}
+
+#[test]
+fn document_error_invalid_concept_id_carries_a_typed_source() {
+    // The loader stores concept-id failures as `DocumentError::InvalidConceptId`,
+    // preserving the typed `ConceptIdError` through both `From` and `source()`.
+    // A directory-as-file produces a path that `ConceptId::from_path` rejects
+    // (the path is still under root, but `from_path` strips `.md` from the
+    // stem only if present, leaving a directory name that fails segment
+    // validation when it contains a path separator).
+    let tmp = TempDir::new();
+    tmp.write(
+        "good.md",
+        "---\ntype: Reference\ntitle: Good\ndescription: d\n---\n\nProse.\n",
+    );
+    // A file whose name fails segment validation. `..` is rejected by
+    // `validate_segment`; placed at the bundle root, `from_path` yields a
+    // one-segment id of `..`, which `ConceptId::new` would reject — but
+    // `from_path` does not validate, so the rejection has to come from
+    // elsewhere. Use a path that is genuinely not under the bundle root by
+    // passing a root that does not contain it.
+    let outside = TempDir::new();
+    std::fs::write(outside.path().join("stray.md"), "no frontmatter").unwrap();
+    // `Bundle::load` is given `tmp` as root, but we point a real `from_path`
+    // call at the stray file to drive the typed-error path directly.
+    let stray = outside.path().join("stray.md");
+    let err = ConceptId::from_path(tmp.path(), &stray).expect_err("path outside root must error");
+    let doc_err: DocumentError = err.into();
+    assert!(
+        matches!(doc_err, DocumentError::InvalidConceptId(_)),
+        "got {doc_err:?}"
+    );
+    // `source()` returns the inner `ConceptIdError`, so the typed cause
+    // survives the conversion.
+    let src = std::error::Error::source(&doc_err)
+        .and_then(|s| s.downcast_ref::<ConceptIdError>())
+        .expect("source should be a ConceptIdError");
+    let _ = src; // presence is the assertion
 }

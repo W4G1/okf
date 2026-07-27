@@ -28,6 +28,7 @@ use crate::date::{Date, DateField, DateTimeField};
 use crate::provenance::{Source, UsageWindow};
 use crate::trust::{self, Generated, Status, TrustTier, Verification};
 use crate::yaml::{Mapping, Value};
+use std::borrow::Cow;
 
 /// The only frontmatter key OKF always requires (§4.1): a concept carrying
 /// nothing but `type` is fully conformant (§11).
@@ -186,27 +187,33 @@ impl Frontmatter {
     }
 
     /// The **required** `type` field (§4.1). `None` if absent or not a scalar.
+    ///
+    /// Non-string scalars (`type: 42`) are coerced to their display form, the
+    /// way the reference's `str(fm.get("type"))` does, rather than read as
+    /// `None`: the spec calls `type` "a short string", so a non-string value
+    /// is a producer deviation, but a consumer still gets *something* to
+    /// route on rather than treating the concept as typeless.
     #[must_use]
-    pub fn type_(&self) -> Option<String> {
-        self.string("type")
+    pub fn type_(&self) -> Option<Cow<'_, str>> {
+        self.display_str("type")
     }
 
     /// The optional `title` field.
     #[must_use]
-    pub fn title(&self) -> Option<String> {
-        self.string("title")
+    pub fn title(&self) -> Option<Cow<'_, str>> {
+        self.display_str("title")
     }
 
     /// The optional one-line `description`.
     #[must_use]
-    pub fn description(&self) -> Option<String> {
-        self.string("description")
+    pub fn description(&self) -> Option<Cow<'_, str>> {
+        self.display_str("description")
     }
 
     /// The optional `resource` URI for the underlying asset.
     #[must_use]
-    pub fn resource(&self) -> Option<String> {
-        self.string("resource")
+    pub fn resource(&self) -> Option<Cow<'_, str>> {
+        self.display_str("resource")
     }
 
     /// The optional `tags` list. Non-string elements are coerced to their
@@ -271,7 +278,7 @@ impl Frontmatter {
     pub fn content_changed_at(&self) -> Option<DateTimeField> {
         self.generated()
             .and_then(|g| g.at)
-            .or_else(|| self.timestamp().map(DateTimeField::new))
+            .or_else(|| self.timestamp().map(|s| DateTimeField::new(s.into_owned())))
     }
 
     /// The legacy v0.1 `timestamp` field, superseded by `generated.at` (§13.1).
@@ -279,19 +286,21 @@ impl Frontmatter {
     /// Prefer [`Frontmatter::content_changed_at`], which reads `generated.at`
     /// first and falls back to this.
     #[must_use]
-    pub fn timestamp(&self) -> Option<String> {
-        self.string("timestamp")
+    pub fn timestamp(&self) -> Option<Cow<'_, str>> {
+        self.display_str("timestamp")
     }
 
     /// The lifecycle `status`. An absent key is [`Status::Stable`] (§5.4).
     #[must_use]
     pub fn status(&self) -> Status {
-        Status::parse(self.string("status").as_deref())
+        Status::parse(self.display_str("status").as_deref())
     }
 
     /// The `stale_after` date, on and after which the content is stale (§5.5).
+    #[must_use] 
     pub fn stale_after(&self) -> Option<DateField> {
-        self.string("stale_after").map(DateField::new)
+        self.display_str("stale_after")
+            .map(|s| DateField::new(s.into_owned()))
     }
 
     /// Whether the concept is stale on `today`: `today >= stale_after` (§5.5).
@@ -314,8 +323,8 @@ impl Frontmatter {
     /// The `runtime`: how to run the computation, and so what `parameters`
     /// mean. REQUIRED on an Attested Computation concept.
     #[must_use]
-    pub fn runtime(&self) -> Option<String> {
-        self.string("runtime")
+    pub fn runtime(&self) -> Option<Cow<'_, str>> {
+        self.display_str("runtime")
     }
 
     /// The declared `parameters` an agent may fill.
@@ -329,8 +338,8 @@ impl Frontmatter {
     /// The `computation` path, when the computation lives in a file rather than
     /// a body block (§10.3).
     #[must_use]
-    pub fn computation(&self) -> Option<String> {
-        self.string("computation")
+    pub fn computation(&self) -> Option<Cow<'_, str>> {
+        self.display_str("computation")
     }
 
     /// The `executor`: how the computation is run, and what a receipt carries.
@@ -358,8 +367,8 @@ impl Frontmatter {
                 out.push((name, v));
             }
         };
-        push("resource", self.resource());
-        push("computation", self.computation());
+        push("resource", self.resource().map(std::borrow::Cow::into_owned));
+        push("computation", self.computation().map(std::borrow::Cow::into_owned));
         push(
             "executor.resource",
             self.executor().and_then(|e| e.resource),
@@ -390,8 +399,13 @@ impl Frontmatter {
             .collect()
     }
 
-    fn string(&self, key: &str) -> Option<String> {
-        self.map.get(key).and_then(Value::as_display_string)
+    /// Borrows the scalar at `key` as a display string, coercing non-string
+    /// scalars (a `type: 42` deviation yields `Some("42")`) the way the
+    /// reference's `str(fm.get(...))` does. Returns `None` for absent keys
+    /// and non-scalar values. The common YAML-string case borrows without
+    /// allocation; only the coerced case owns.
+    fn display_str(&self, key: &str) -> Option<Cow<'_, str>> {
+        self.map.get(key).and_then(Value::as_display_str)
     }
 }
 

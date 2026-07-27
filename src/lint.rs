@@ -181,7 +181,7 @@ fn count_titles(bundle: &Bundle) -> HashMap<String, usize> {
     let mut counts: HashMap<String, usize> = HashMap::new();
     for c in bundle.concepts() {
         if let Some(title) = c.document.frontmatter.title() {
-            *counts.entry(title).or_default() += 1;
+            *counts.entry(title.into_owned()).or_default() += 1;
         }
     }
     counts
@@ -372,7 +372,7 @@ fn check_duplicate_title(cx: &mut Cx, fm: &Frontmatter, counts: &HashMap<String,
     let Some(title) = fm.title() else {
         return;
     };
-    if counts.get(&title).copied().unwrap_or(0) > 1 {
+    if counts.get(title.as_ref()).copied().unwrap_or(0) > 1 {
         cx.warn(
             "L14",
             format!("`title` {title:?} is shared with another concept; titles should disambiguate"),

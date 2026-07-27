@@ -24,6 +24,8 @@ use crate::error::{BundleError, DocumentError};
 use crate::links;
 use crate::provenance::Source;
 use crate::trust::{Status, TrustTier};
+use crate::yaml::Value;
+use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -45,7 +47,7 @@ pub struct Concept {
 impl Concept {
     /// The concept's `type` (§4.1).
     #[must_use]
-    pub fn type_(&self) -> Option<String> {
+    pub fn type_(&self) -> Option<Cow<'_, str>> {
         self.document.frontmatter.type_()
     }
 
@@ -56,7 +58,7 @@ impl Concept {
         self.document
             .frontmatter
             .title()
-            .unwrap_or_else(|| self.id.name().to_string())
+            .map_or_else(|| self.id.name().to_string(), std::borrow::Cow::into_owned)
     }
 
     /// The trust tier derived from `verified` (§5.3).
@@ -127,6 +129,10 @@ pub struct Bundle {
     backlinks: HashMap<ConceptId, Vec<ConceptId>>,
     sources: HashMap<ConceptId, Vec<ResolvedSource>>,
     derived_by: HashMap<ConceptId, Vec<ConceptId>>,
+    /// The `okf_version` declared in the bundle-root `index.md` frontmatter
+    /// (§12), if any. Cached at load time so [`Bundle::okf_version`] can borrow
+    /// instead of re-reading the file on every call.
+    okf_version: Option<String>,
 }
 
 impl Bundle {
@@ -150,30 +156,24 @@ impl Bundle {
         collect_markdown(&root, &mut md_files)?;
         md_files.sort();
 
+        // Parse every non-reserved file in parallel. The work per file is
+        // I/O-bound (`fs::read_to_string`) followed by CPU-bound
+        // (`Document::parse`), so parallelizing across the file list scales
+        // with cores on large bundles while staying zero-dependency via
+        // `std::thread::scope`. Results are merged in chunk order so the
+        // vectors below retain the deterministic sorted order callers rely on.
+        let outcomes = parse_files_parallel(&root, &md_files)?;
+
         let mut concepts = Vec::new();
         let mut index_files = Vec::new();
         let mut log_files = Vec::new();
         let mut parse_errors = Vec::new();
-
-        for path in md_files {
-            let filename = path
-                .file_name()
-                .map(|f| f.to_string_lossy().to_string())
-                .unwrap_or_default();
-            match filename.as_str() {
-                "index.md" => index_files.push(path),
-                "log.md" => log_files.push(path),
-                _ => {
-                    let text = fs::read_to_string(&path)?;
-                    match Document::parse(&text) {
-                        Ok(document) => match ConceptId::from_path(&root, &path) {
-                            Ok(id) => concepts.push(Concept { id, path, document }),
-                            Err(e) => parse_errors
-                                .push((path, DocumentError::MissingKeys(vec![e.to_string()]))),
-                        },
-                        Err(e) => parse_errors.push((path, e)),
-                    }
-                }
+        for outcome in outcomes {
+            match outcome {
+                FileOutcome::Index(p) => index_files.push(p),
+                FileOutcome::Log(p) => log_files.push(p),
+                FileOutcome::Concept(c) => concepts.push(c),
+                FileOutcome::Error(p, e) => parse_errors.push((p, e)),
             }
         }
 
@@ -184,6 +184,11 @@ impl Bundle {
 
         let (outbound, backlinks) = build_graph(&concepts, &index);
         let (sources, derived_by) = build_derivation_graph(&concepts, &index);
+
+        // Cache the `okf_version` from the bundle-root `index.md` frontmatter
+        // (§12), if any, so `Bundle::okf_version` does not re-read the file on
+        // every call.
+        let okf_version = read_okf_version(&root);
 
         Ok(Self {
             root,
@@ -196,6 +201,7 @@ impl Bundle {
             backlinks,
             sources,
             derived_by,
+            okf_version,
         })
     }
 
@@ -286,16 +292,17 @@ impl Bundle {
     /// present (`okf_version`, §12). This is the only place frontmatter is
     /// permitted in an `index.md`.
     ///
-    /// A consumer that does not understand the declared version SHOULD attempt
-    /// best-effort consumption rather than refusing the bundle, so this is
-    /// reported, never enforced.
-    pub fn okf_version(&self) -> Option<String> {
-        let root_index = self.root.join("index.md");
-        let text = fs::read_to_string(&root_index).ok()?;
-        let doc = Document::parse(&text).ok()?;
-        doc.frontmatter
-            .get("okf_version")
-            .and_then(crate::yaml::Value::as_display_string)
+    /// Cached at load time, so this is cheap to call repeatedly. A consumer
+    /// that does not understand the declared version SHOULD attempt best-effort
+    /// consumption rather than refusing the bundle, so this is reported, never
+    /// enforced.
+    ///
+    /// Returns `None` whether the root `index.md` is absent, unreadable, or
+    /// lacks the key; a malformed root `index.md` is reported separately by
+    /// [`validate_bundle`](crate::validate_bundle).
+    #[must_use]
+    pub fn okf_version(&self) -> Option<&str> {
+        self.okf_version.as_deref()
     }
 
     /// The concept's `sources` entries, each resolved against the bundle.
@@ -377,6 +384,113 @@ impl Bundle {
             .map(|rel| self.root.join(rel))
             .find(|p| p.exists())
     }
+}
+
+/// The per-file result of loading a single markdown path.
+enum FileOutcome {
+    Index(PathBuf),
+    Log(PathBuf),
+    Concept(Concept),
+    Error(PathBuf, DocumentError),
+}
+
+/// Parses `md_files` in parallel, returning one [`FileOutcome`] per file in the
+/// input (sorted) order. I/O failures are fatal and surface as the first
+/// [`BundleError`] encountered, matching the sequential loader's `?` semantics.
+///
+/// Small bundles run inline to avoid thread-spawn overhead; larger ones split
+/// the list across one chunk per available core via [`std::thread::scope`].
+fn parse_files_parallel(
+    root: &Path,
+    md_files: &[PathBuf],
+) -> Result<Vec<FileOutcome>, BundleError> {
+    // Below this threshold, spawning threads costs more than it saves. The
+    // number is conservative: parsing a handful of small markdown files takes
+    // microseconds.
+    const PARALLEL_THRESHOLD: usize = 8;
+
+    if md_files.len() <= PARALLEL_THRESHOLD {
+        return md_files
+            .iter()
+            .map(|p| parse_one(root, p).map_err(BundleError::from))
+            .collect();
+    }
+
+    let n_threads = std::thread::available_parallelism()
+        .map(usize::from)
+        .unwrap_or(1)
+        .min(md_files.len());
+    // Each thread owns a contiguous slice so the merged output preserves the
+    // sorted input order without a re-sort.
+    let chunk_size = md_files.len().div_ceil(n_threads);
+    let chunks: Vec<&[PathBuf]> = md_files.chunks(chunk_size).collect();
+
+    let results = std::thread::scope(|scope| {
+        chunks
+            .iter()
+            .map(|chunk| scope.spawn(|| parse_chunk(root, chunk)))
+            .map(|h| h.join().expect("worker thread panicked"))
+            .collect::<Vec<Result<Vec<FileOutcome>, BundleError>>>()
+    });
+
+    // Surface the first I/O error in chunk order, matching the sequential
+    // loader's behavior of failing on the earliest error in sorted file order.
+    let mut merged = Vec::with_capacity(md_files.len());
+    for result in results {
+        for outcome in result? {
+            merged.push(outcome);
+        }
+    }
+    Ok(merged)
+}
+
+/// Parses one chunk of files on a single thread.
+fn parse_chunk(root: &Path, chunk: &[PathBuf]) -> Result<Vec<FileOutcome>, BundleError> {
+    chunk
+        .iter()
+        .map(|p| parse_one(root, p).map_err(BundleError::from))
+        .collect()
+}
+
+/// Loads and classifies a single markdown file. `fs::read_to_string` failures
+/// propagate as [`BundleError::Io`]; frontmatter and concept-id failures are
+/// collected as [`FileOutcome::Error`] for the permissive-load path (§11).
+fn parse_one(root: &Path, path: &Path) -> Result<FileOutcome, std::io::Error> {
+    let filename = path
+        .file_name()
+        .map(|f| f.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    match filename.as_str() {
+        "index.md" => Ok(FileOutcome::Index(path.to_path_buf())),
+        "log.md" => Ok(FileOutcome::Log(path.to_path_buf())),
+        _ => {
+            let text = fs::read_to_string(path)?;
+            let outcome = match Document::parse(&text) {
+                Ok(document) => match ConceptId::from_path(root, path) {
+                    Ok(id) => FileOutcome::Concept(Concept {
+                        id,
+                        path: path.to_path_buf(),
+                        document,
+                    }),
+                    Err(e) => FileOutcome::Error(path.to_path_buf(), e.into()),
+                },
+                Err(e) => FileOutcome::Error(path.to_path_buf(), e),
+            };
+            Ok(outcome)
+        }
+    }
+}
+
+/// Reads `okf_version` from the bundle-root `index.md` frontmatter (§12), if
+/// the file exists and the key is present as a string scalar. Returns `None`
+/// for a missing file, an unparseable `index.md`, or a non-string value.
+fn read_okf_version(root: &Path) -> Option<String> {
+    let text = fs::read_to_string(root.join("index.md")).ok()?;
+    let doc = Document::parse(&text).ok()?;
+    doc.frontmatter
+        .get("okf_version")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
 }
 
 /// Recursively collects `*.md` file paths under `dir`.

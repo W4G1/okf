@@ -160,7 +160,7 @@ fn appendix_a_bundle_loads_and_conforms() {
     // The two `.py` attesters are not markdown, so they are not concepts.
     assert_eq!(bundle.len(), 5);
     assert!(bundle.parse_errors().is_empty());
-    assert_eq!(bundle.okf_version().as_deref(), Some("0.2"));
+    assert_eq!(bundle.okf_version(), Some("0.2"));
 
     let report = validate_bundle(&bundle);
     assert!(report.is_conformant(), "{:#?}", report.diagnostics);
@@ -606,7 +606,7 @@ fn regenerating_indexes_keeps_the_declared_version() {
     assert!(root.contains("# Subdirectories"), "{root}");
 
     let bundle = Bundle::load(tmp.path()).unwrap();
-    assert_eq!(bundle.okf_version().as_deref(), Some("0.2"));
+    assert_eq!(bundle.okf_version(), Some("0.2"));
 
     // Attested Computations get their own index section, which is how §10.5's
     // discovery-by-type works from an index.
