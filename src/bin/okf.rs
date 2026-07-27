@@ -9,10 +9,11 @@
 //!   graph        <bundle>   Print the cross-link graph (text, or DOT with --dot).
 //!   parse        <file>     Parse one concept document and print its structure.
 //!   fmt          <file>     Normalize a document by parse + re-serialize.
+//!   lint         <bundle>   Opinionated bundle health checks (L1..L16).
 //!
 //! Argument parsing is hand-rolled to keep the crate dependency-free.
 
-use okf::{validate_bundle_at, Bundle, Date, Document, Severity, TrustTier, Value};
+use okf::{lint_bundle_at, validate_bundle_at, Bundle, Date, Document, Severity, TrustTier, Value};
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::process::ExitCode;
@@ -35,6 +36,7 @@ fn main() -> ExitCode {
         "graph" => cmd_graph(rest),
         "parse" => cmd_parse(rest),
         "fmt" => cmd_fmt(rest),
+        "lint" => cmd_lint(rest),
         "-h" | "--help" | "help" => {
             println!("{USAGE}");
             return ExitCode::SUCCESS;
@@ -77,6 +79,7 @@ COMMANDS:
     graph        <bundle>    Print the cross-link graph (--dot for Graphviz DOT)
     parse        <file>      Parse one concept document and print its structure
     fmt          <file>      Normalize a document by parse + re-serialize (-w writes)
+    lint         <bundle>    Opinionated bundle health checks (L1..L16)
 
 OPTIONS:
     -h, --help               Show this help
@@ -168,6 +171,31 @@ fn cmd_validate(args: &[String]) -> Result<ExitCode, String> {
         Ok(ExitCode::SUCCESS)
     } else {
         println!("✗ not conformant with OKF v{}", okf::OKF_VERSION);
+        Ok(ExitCode::FAILURE)
+    }
+}
+
+fn cmd_lint(args: &[String]) -> Result<ExitCode, String> {
+    let path = positional(args, "<bundle>")?;
+    let bundle = load(path)?;
+    let report = lint_bundle_at(&bundle, today(args)?);
+
+    for d in &report.diagnostics {
+        println!("{d}");
+    }
+
+    let warnings = report.warning_count();
+    let infos = report.of(Severity::Info).count();
+    println!(
+        "\n{} concept(s); {warnings} warning(s), {infos} info.",
+        bundle.len()
+    );
+
+    if warnings == 0 {
+        println!("✓ clean lint");
+        Ok(ExitCode::SUCCESS)
+    } else {
+        println!("✗ {warnings} lint warning(s)");
         Ok(ExitCode::FAILURE)
     }
 }

@@ -58,6 +58,7 @@ cargo add okf
 
 ```text
 okf validate     <bundle>    Check a bundle against OKF v0.2 conformance
+okf lint         <bundle>    Opinionated bundle health checks
 okf info         <bundle>    Summarize a bundle (concepts, types, trust, links)
 okf trust        <bundle>    Report trust tier, status, and staleness per concept
 okf computations <bundle>    List Attested Computation contracts
@@ -74,6 +75,16 @@ straight into CI:
 okf validate ./bundles/finance
 okf validate ./bundles/finance --today 2026-07-01   # pin staleness for reproducible runs
 okf graph ./bundles/finance --dot --sources | dot -Tsvg > graph.svg
+```
+
+`okf lint` is the opinionated companion: it goes beyond strict conformance and
+flags the hygiene issues a continuously-authored corpus drifts into. Every
+finding is tagged with a stable rule code (L1..L16) so CI can pin or silence
+individual checks. It exits non-zero on warnings, leaving infos advisory:
+
+```sh
+okf lint ./bundles/finance
+okf lint ./bundles/finance --today 2026-07-01
 ```
 
 `okf trust` gives the per-concept view the trust families exist for:
@@ -223,6 +234,7 @@ concerns.
 | [`index`]       | Generate `index.md` directory listings (§8)                           |
 | [`log`]         | Parse / build `log.md` update histories (§9)                          |
 | [`validate`]    | §11 conformance checking with severity-tagged diagnostics             |
+| [`lint`]        | Opinionated bundle health checks beyond conformance (L1..L16)         |
 
 The core split mirrors the reference Python implementation's `bundle/` package
 (`document.py`, `index.py`, `paths.py`, `synthesizer.py`) so behaviour stays
@@ -321,6 +333,7 @@ Google.
 [`bundle`]: https://docs.rs/okf/latest/okf/bundle/
 [`index`]: https://docs.rs/okf/latest/okf/index/
 [`log`]: https://docs.rs/okf/latest/okf/log/
+[`lint`]: https://docs.rs/okf/latest/okf/lint/
 [`validate`]: https://docs.rs/okf/latest/okf/validate/
 [`concept_id::ConceptId`]: https://docs.rs/okf/latest/okf/concept_id/struct.ConceptId.html
 [`bundle::Bundle`]: https://docs.rs/okf/latest/okf/bundle/struct.Bundle.html

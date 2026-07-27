@@ -106,6 +106,7 @@ pub mod error;
 pub mod footnotes;
 pub mod frontmatter;
 pub mod index;
+pub mod lint;
 pub mod links;
 pub mod log;
 pub mod provenance;
@@ -149,6 +150,8 @@ pub use frontmatter::{
 };
 #[doc(inline)]
 pub use links::{Citation, Link, LinkKind};
+#[doc(inline)]
+pub use lint::{lint_bundle, lint_bundle_at};
 #[doc(inline)]
 pub use log::Log;
 #[doc(inline)]
