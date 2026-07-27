@@ -66,6 +66,7 @@ okf index        <bundle>    (Re)generate every index.md in the bundle
 okf graph        <bundle>    Print the cross-link graph (--dot for Graphviz DOT)
 okf parse        <file>      Parse one concept document and print its structure
 okf fmt          <file>      Normalize a document by parse + re-serialize (-w writes)
+okf diff         <a> <b>     OKF-semantics diff between two bundles
 ```
 
 `okf validate` exits non-zero when a bundle is not conformant, so it drops
