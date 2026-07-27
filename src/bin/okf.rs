@@ -21,11 +21,48 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::process::ExitCode;
 
+// Exit codes follow the sysexits.h convention so CI can tell apart a missing
+// bundle from a malformed one. The numeric values are stable: EX_USAGE marks a
+// bad command line, EX_DATAERR marks incorrect input data, EX_NOINPUT marks an
+// input that could not be opened.
+const EX_USAGE: u8 = 2;
+const EX_DATAERR: u8 = 65;
+const EX_NOINPUT: u8 = 66;
+
+/// A command-line error paired with the exit code it should produce.
+struct CliError {
+    message: String,
+    code: u8,
+}
+
+impl CliError {
+    fn usage(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            code: EX_USAGE,
+        }
+    }
+
+    fn data(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            code: EX_DATAERR,
+        }
+    }
+
+    fn no_input(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            code: EX_NOINPUT,
+        }
+    }
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.is_empty() {
         eprintln!("{USAGE}");
-        return ExitCode::FAILURE;
+        return ExitCode::from(EX_USAGE);
     }
     let cmd = args[0].as_str();
     let rest = &args[1..];
@@ -55,15 +92,15 @@ fn main() -> ExitCode {
         }
         other => {
             eprintln!("unknown subcommand: {other}\n\n{USAGE}");
-            return ExitCode::FAILURE;
+            return ExitCode::from(EX_USAGE);
         }
     };
 
     match result {
         Ok(code) => code,
-        Err(msg) => {
-            eprintln!("error: {msg}");
-            ExitCode::FAILURE
+        Err(e) => {
+            eprintln!("error: {}", e.message);
+            ExitCode::from(e.code)
         }
     }
 }
@@ -97,7 +134,7 @@ const VALUED_FLAGS: [&str; 1] = ["--today"];
 
 /// Returns the first positional argument, or an error. Everything after a `--`
 /// separator is treated as positional (so paths beginning with `-` work).
-fn positional<'a>(args: &'a [String], what: &str) -> Result<&'a str, String> {
+fn positional<'a>(args: &'a [String], what: &str) -> Result<&'a str, CliError> {
     if let Some(pos) = args.iter().position(|a| a == "--") {
         if let Some(arg) = args.get(pos + 1) {
             return Ok(arg.as_str());
@@ -114,7 +151,7 @@ fn positional<'a>(args: &'a [String], what: &str) -> Result<&'a str, String> {
             return Ok(arg.as_str());
         }
     }
-    Err(format!("missing {what}"))
+    Err(CliError::usage(format!("missing {what}")))
 }
 
 /// All positional arguments, in order. Flags and their values are skipped, and
@@ -158,24 +195,24 @@ fn flag_value<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
 
 /// The date staleness is evaluated against: `--today YYYY-MM-DD`, else the
 /// system clock in UTC.
-fn today(args: &[String]) -> Result<Option<Date>, String> {
+fn today(args: &[String]) -> Result<Option<Date>, CliError> {
     let uses_flag = args
         .iter()
         .any(|a| a == "--today" || a.starts_with("--today="));
     if !uses_flag {
         return Ok(Date::today_utc());
     }
-    let raw = flag_value(args, "--today").ok_or("--today needs a YYYY-MM-DD date")?;
+    let raw = flag_value(args, "--today").ok_or_else(|| CliError::usage("--today needs a YYYY-MM-DD date"))?;
     Date::parse(raw)
         .map(Some)
-        .ok_or_else(|| format!("--today is not a YYYY-MM-DD date: {raw}"))
+        .ok_or_else(|| CliError::usage(format!("--today is not a YYYY-MM-DD date: {raw}")))
 }
 
-fn load(path: &str) -> Result<Bundle, String> {
-    Bundle::load(path).map_err(|e| e.to_string())
+fn load(path: &str) -> Result<Bundle, CliError> {
+    Bundle::load(path).map_err(|e| CliError::no_input(e.to_string()))
 }
 
-fn cmd_validate(args: &[String]) -> Result<ExitCode, String> {
+fn cmd_validate(args: &[String]) -> Result<ExitCode, CliError> {
     let path = positional(args, "<bundle>")?;
     let bundle = load(path)?;
     let report = validate_bundle_at(&bundle, today(args)?);
@@ -197,11 +234,11 @@ fn cmd_validate(args: &[String]) -> Result<ExitCode, String> {
         Ok(ExitCode::SUCCESS)
     } else {
         println!("✗ not conformant with OKF v{}", okf::OKF_VERSION);
-        Ok(ExitCode::FAILURE)
+        Ok(ExitCode::from(EX_DATAERR))
     }
 }
 
-fn cmd_lint(args: &[String]) -> Result<ExitCode, String> {
+fn cmd_lint(args: &[String]) -> Result<ExitCode, CliError> {
     let path = positional(args, "<bundle>")?;
     let bundle = load(path)?;
     let report = lint_bundle_at(&bundle, today(args)?);
@@ -222,11 +259,11 @@ fn cmd_lint(args: &[String]) -> Result<ExitCode, String> {
         Ok(ExitCode::SUCCESS)
     } else {
         println!("✗ {warnings} lint warning(s)");
-        Ok(ExitCode::FAILURE)
+        Ok(ExitCode::from(EX_DATAERR))
     }
 }
 
-fn cmd_info(args: &[String]) -> Result<ExitCode, String> {
+fn cmd_info(args: &[String]) -> Result<ExitCode, CliError> {
     let path = positional(args, "<bundle>")?;
     let bundle = load(path)?;
 
@@ -314,7 +351,7 @@ fn cmd_info(args: &[String]) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
-fn cmd_trust(args: &[String]) -> Result<ExitCode, String> {
+fn cmd_trust(args: &[String]) -> Result<ExitCode, CliError> {
     let path = positional(args, "<bundle>")?;
     let bundle = load(path)?;
     let today = today(args)?;
@@ -356,7 +393,7 @@ fn cmd_trust(args: &[String]) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
-fn cmd_computations(args: &[String]) -> Result<ExitCode, String> {
+fn cmd_computations(args: &[String]) -> Result<ExitCode, CliError> {
     let path = positional(args, "<bundle>")?;
     let bundle = load(path)?;
 
@@ -415,9 +452,14 @@ fn cmd_computations(args: &[String]) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
-fn cmd_index(args: &[String]) -> Result<ExitCode, String> {
+fn cmd_index(args: &[String]) -> Result<ExitCode, CliError> {
     let path = positional(args, "<bundle>")?;
-    let written = okf::index::regenerate_indexes(path).map_err(|e| e.to_string())?;
+    if !Path::new(path).is_dir() {
+        return Err(CliError::no_input(format!(
+            "bundle root is not a directory: {path}"
+        )));
+    }
+    let written = okf::index::regenerate_indexes(path).map_err(|e| CliError::no_input(e.to_string()))?;
     if written.is_empty() {
         println!("no index files written (empty bundle?)");
     } else {
@@ -429,7 +471,7 @@ fn cmd_index(args: &[String]) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
-fn cmd_graph(args: &[String]) -> Result<ExitCode, String> {
+fn cmd_graph(args: &[String]) -> Result<ExitCode, CliError> {
     let path = positional(args, "<bundle>")?;
     let dot = has_flag(args, "--dot");
     let sources = has_flag(args, "--sources");
@@ -486,10 +528,10 @@ fn cmd_graph(args: &[String]) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
-fn cmd_parse(args: &[String]) -> Result<ExitCode, String> {
+fn cmd_parse(args: &[String]) -> Result<ExitCode, CliError> {
     let path = positional(args, "<file>")?;
-    let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
-    let doc = Document::parse(&text).map_err(|e| e.to_string())?;
+    let text = std::fs::read_to_string(path).map_err(|e| CliError::no_input(e.to_string()))?;
+    let doc = Document::parse(&text).map_err(|e| CliError::data(e.to_string()))?;
     let fm = &doc.frontmatter;
 
     println!("frontmatter ({} key(s)):", fm.as_mapping().len());
@@ -597,7 +639,7 @@ fn cmd_parse(args: &[String]) -> Result<ExitCode, String> {
     if conformant {
         Ok(ExitCode::SUCCESS)
     } else {
-        Ok(ExitCode::FAILURE)
+        Ok(ExitCode::from(EX_DATAERR))
     }
 }
 
@@ -627,15 +669,15 @@ fn scalar(value: &Value) -> String {
     value.to_yaml_string().trim_end().to_string()
 }
 
-fn cmd_fmt(args: &[String]) -> Result<ExitCode, String> {
+fn cmd_fmt(args: &[String]) -> Result<ExitCode, CliError> {
     let path = positional(args, "<file>")?;
     let write = has_flag(args, "-w") || has_flag(args, "--write");
-    let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
-    let doc = Document::parse(&text).map_err(|e| e.to_string())?;
+    let text = std::fs::read_to_string(path).map_err(|e| CliError::no_input(e.to_string()))?;
+    let doc = Document::parse(&text).map_err(|e| CliError::data(e.to_string()))?;
     let out = doc.serialize();
 
     if write {
-        std::fs::write(Path::new(path), &out).map_err(|e| e.to_string())?;
+        std::fs::write(Path::new(path), &out).map_err(|e| CliError::no_input(e.to_string()))?;
         println!("formatted {path}");
     } else {
         print!("{out}");
@@ -643,10 +685,10 @@ fn cmd_fmt(args: &[String]) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
-fn cmd_diff(args: &[String]) -> Result<ExitCode, String> {
+fn cmd_diff(args: &[String]) -> Result<ExitCode, CliError> {
     let paths = positionals(args);
     if paths.len() < 2 {
-        return Err("usage: okf diff <a> <b>".into());
+        return Err(CliError::usage("usage: okf diff <a> <b>"));
     }
     let a = load(paths[0])?;
     let b = load(paths[1])?;

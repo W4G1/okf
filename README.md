@@ -11,6 +11,7 @@ a directory of markdown files with YAML frontmatter.
 [![docs.rs](https://img.shields.io/docsrs/okf)](https://docs.rs/okf)
 [![CI](https://github.com/W4G1/okf/actions/workflows/rust.yml/badge.svg)](https://github.com/W4G1/okf/actions/workflows/rust.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](#license)
+[![Deps.rs Crate Dependencies (latest)](https://img.shields.io/deps-rs/okf/latest)](https://crates.io/crates/okf/dependencies)
 
 </div>
 
@@ -38,10 +39,7 @@ cargo add okf
 - A **concept** is one markdown document: a YAML **frontmatter** block delimited
   by `---`, followed by a markdown **body**.
 - A **concept id** is the file's path within the bundle with `.md` removed
-  (`tables/users.md` becomes `tables/users`). The spec constrains no character
-  in a filename, so ids may contain spaces, emoji, and other Unicode; an id
-  outside the conventional `[A-Za-z0-9_][A-Za-z0-9_.-]*` set is reported as a
-  warning, never rejected.
+  (`tables/users.md` becomes `tables/users`).
 - Concepts **cross-link** via ordinary markdown links, absolute
   (`/tables/users.md`, bundle-relative) or relative (`./other.md`). A target
   containing a space may also be written `<...>` or percent-encoded.
@@ -80,7 +78,7 @@ okf graph ./bundles/finance --dot --sources | dot -Tsvg > graph.svg
 
 `okf lint` is the opinionated companion: it goes beyond strict conformance and
 flags the hygiene issues a continuously-authored corpus drifts into. Every
-finding is tagged with a stable rule code (L1..L16) so CI can pin or silence
+finding is tagged with a stable rule code so CI can pin or silence
 individual checks. It exits non-zero on warnings, leaving infos advisory:
 
 ```sh
