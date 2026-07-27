@@ -61,7 +61,7 @@ okf info         <bundle>    Summarize a bundle (concepts, types, trust, links)
 okf trust        <bundle>    Report trust tier, status, and staleness per concept
 okf computations <bundle>    List Attested Computation contracts
 okf index        <bundle>    (Re)generate every index.md in the bundle
-okf graph        <bundle>    Print the cross-link graph (--dot for Graphviz DOT)
+okf graph        <bundle>    Print the cross-link graph (--format text|mermaid|json)
 okf parse        <file>      Parse one concept document and print its structure
 okf fmt          <file>      Normalize a document by parse + re-serialize (-w writes)
 okf diff         <a> <b>     OKF-semantics diff between two bundles
@@ -73,7 +73,7 @@ straight into CI:
 ```sh
 okf validate ./bundles/finance
 okf validate ./bundles/finance --today 2026-07-01   # pin staleness for reproducible runs
-okf graph ./bundles/finance --dot --sources | dot -Tsvg > graph.svg
+okf graph ./bundles/finance --format mermaid --sources  # renders inline in GitHub
 ```
 
 `okf lint` is the opinionated companion: it goes beyond strict conformance and
@@ -163,15 +163,7 @@ assert!(contract.computation.code().unwrap().starts_with("SELECT SUM(amount)"));
 # Ok::<(), okf::DocumentError>(())
 ```
 
-## Building & testing
-
-```sh
-cargo build            # library + `okf` binary
-cargo test             # unit + integration tests
-cargo clippy --all-targets
-```
-
-## What v0.2 adds
+## Migrating from v0.1 to v0.2
 
 v0.2 assumes a corpus that is continuously written and maintained by agents, and
 makes the questions such a corpus raises answerable from frontmatter. Every new

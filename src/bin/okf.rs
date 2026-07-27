@@ -6,7 +6,7 @@
 //!   trust        <bundle>   Report trust tier, status, and staleness per concept.
 //!   computations <bundle>   List Attested Computation contracts.
 //!   index        <bundle>   (Re)generate every index.md in a bundle.
-//!   graph        <bundle>   Print the cross-link graph (text, or DOT with --dot).
+//!   graph        <bundle>   Print the cross-link graph (text, mermaid, or json).
 //!   parse        <file>     Parse one concept document and print its structure.
 //!   fmt          <file>     Normalize a document by parse + re-serialize.
 //!   lint         <bundle>   Opinionated bundle health checks (L1..L16).
@@ -117,7 +117,7 @@ COMMANDS:
     trust        <bundle>    Report trust tier, status, and staleness per concept
     computations <bundle>    List Attested Computation contracts (§10)
     index        <bundle>    (Re)generate every index.md in the bundle
-    graph        <bundle>    Print the cross-link graph (--dot for Graphviz DOT)
+    graph        <bundle>    Print the cross-link graph (--format text|mermaid|json)
     parse        <file>      Parse one concept document and print its structure
     fmt          <file>      Normalize a document by parse + re-serialize (-w writes)
     lint         <bundle>    Opinionated bundle health checks (L1..L16)
@@ -130,7 +130,7 @@ OPTIONS:
 
 /// Flags that consume the argument after them, so it is not mistaken for a
 /// positional path.
-const VALUED_FLAGS: [&str; 1] = ["--today"];
+const VALUED_FLAGS: [&str; 2] = ["--today", "--format"];
 
 /// Returns the first positional argument, or an error. Everything after a `--`
 /// separator is treated as positional (so paths beginning with `-` work).
@@ -473,59 +473,199 @@ fn cmd_index(args: &[String]) -> Result<ExitCode, CliError> {
 
 fn cmd_graph(args: &[String]) -> Result<ExitCode, CliError> {
     let path = positional(args, "<bundle>")?;
-    let dot = has_flag(args, "--dot");
+    let format = graph_format(args)?;
     let sources = has_flag(args, "--sources");
     let bundle = load(path)?;
 
-    if dot {
-        println!("digraph okf {{");
-        println!("  rankdir=LR; node [shape=box, fontsize=10];");
-        for c in bundle.concepts() {
-            for link in bundle.links_from(&c.id) {
-                let style = if link.exists {
-                    ""
-                } else {
-                    " [style=dashed, color=red]"
-                };
-                println!(
-                    "  {:?} -> {:?}{style};",
-                    c.id.to_string(),
-                    link.target.to_string()
-                );
-            }
-            if sources {
-                for target in bundle.derived_from(&c.id) {
-                    println!(
-                        "  {:?} -> {:?} [style=dotted, color=blue, label=\"source\"];",
-                        c.id.to_string(),
-                        target.to_string()
-                    );
-                }
+    match format {
+        GraphFormat::Text => print_graph_text(&bundle, sources),
+        GraphFormat::Mermaid => print_graph_mermaid(&bundle, sources),
+        GraphFormat::Json => print_graph_json(&bundle, sources),
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum GraphFormat {
+    Text,
+    Mermaid,
+    Json,
+}
+
+fn graph_format(args: &[String]) -> Result<GraphFormat, CliError> {
+    match flag_value(args, "--format") {
+        None => Ok(GraphFormat::Text),
+        Some("text") => Ok(GraphFormat::Text),
+        Some("mermaid") => Ok(GraphFormat::Mermaid),
+        Some("json") => Ok(GraphFormat::Json),
+        Some(other) => Err(CliError::usage(format!(
+            "unknown --format: {other} (expected text|mermaid|json)"
+        ))),
+    }
+}
+
+fn print_graph_text(bundle: &Bundle, sources: bool) {
+    for c in bundle.concepts() {
+        let links = bundle.links_from(&c.id);
+        let derived: Vec<&okf::ConceptId> = if sources {
+            bundle.derived_from(&c.id)
+        } else {
+            Vec::new()
+        };
+        if links.is_empty() && derived.is_empty() {
+            continue;
+        }
+        println!("{}", c.id);
+        for link in links {
+            let mark = if link.exists { "->" } else { "-x" };
+            println!("  {mark} {}", link.target);
+        }
+        for target in derived {
+            println!("  ~> {target} (source)");
+        }
+    }
+}
+
+fn print_graph_mermaid(bundle: &Bundle, sources: bool) {
+    println!("flowchart LR");
+
+    let mut node_id: BTreeMap<String, String> = BTreeMap::new();
+    let mut order: Vec<String> = Vec::new();
+    let mut next: usize = 0;
+
+    for c in bundle.concepts() {
+        intern(&c.id.to_string(), &mut node_id, &mut order, &mut next);
+        for link in bundle.links_from(&c.id) {
+            intern(&link.target.to_string(), &mut node_id, &mut order, &mut next);
+        }
+    }
+
+    for id in &order {
+        println!("  {}[\"{}\"]", node_id[id], mermaid_label(id));
+    }
+
+    for c in bundle.concepts() {
+        let from = c.id.to_string();
+        for link in bundle.links_from(&c.id) {
+            let target = link.target.to_string();
+            if link.exists {
+                println!("  {} --> {}", node_id[&from], node_id[&target]);
+            } else {
+                println!("  {} -.->|broken| {}", node_id[&from], node_id[&target]);
             }
         }
-        println!("}}");
-    } else {
-        for c in bundle.concepts() {
-            let links = bundle.links_from(&c.id);
-            let derived: Vec<&okf::ConceptId> = if sources {
-                bundle.derived_from(&c.id)
-            } else {
-                Vec::new()
-            };
-            if links.is_empty() && derived.is_empty() {
-                continue;
-            }
-            println!("{}", c.id);
-            for link in links {
-                let mark = if link.exists { "->" } else { "-x" };
-                println!("  {mark} {}", link.target);
-            }
-            for target in derived {
-                println!("  ~> {target} (source)");
+        if sources {
+            for target in bundle.derived_from(&c.id) {
+                let target = target.to_string();
+                println!("  {} -.->|source| {}", node_id[&from], node_id[&target]);
             }
         }
     }
-    Ok(ExitCode::SUCCESS)
+}
+
+/// Assigns `id` a stable Mermaid node name, remembering declaration order.
+fn intern(
+    id: &str,
+    node_id: &mut BTreeMap<String, String>,
+    order: &mut Vec<String>,
+    next: &mut usize,
+) -> String {
+    if let Some(name) = node_id.get(id) {
+        return name.clone();
+    }
+    let name = format!("n{next}");
+    *next += 1;
+    node_id.insert(id.to_string(), name.clone());
+    order.push(id.to_string());
+    name
+}
+
+/// A label safe inside a Mermaid `["..."]` node declaration.
+fn mermaid_label(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('"', "#quot;")
+        .replace('[', "&#91;")
+        .replace(']', "&#93;")
+}
+
+fn print_graph_json(bundle: &Bundle, sources: bool) {
+    let mut out = String::new();
+    out.push_str("{\n");
+    out.push_str("  \"concepts\": [\n");
+
+    let concepts = bundle.concepts();
+    for (i, c) in concepts.iter().enumerate() {
+        out.push_str("    {\n");
+        out.push_str(&format!("      \"id\": {},\n", json_str(&c.id.to_string())));
+
+        let links = bundle.links_from(&c.id);
+        out.push_str("      \"links\": [");
+        if links.is_empty() {
+            out.push_str("],\n");
+        } else {
+            out.push('\n');
+            for (j, link) in links.iter().enumerate() {
+                out.push_str("        {\n");
+                out.push_str(&format!(
+                    "          \"target\": {},\n",
+                    json_str(&link.target.to_string())
+                ));
+                out.push_str(&format!("          \"exists\": {},\n", link.exists));
+                out.push_str(&format!("          \"text\": {},\n", json_str(&link.text)));
+                out.push_str(&format!("          \"raw\": {}\n", json_str(&link.raw)));
+                out.push_str(if j + 1 == links.len() {
+                    "        }\n"
+                } else {
+                    "        },\n"
+                });
+            }
+            out.push_str("      ],\n");
+        }
+
+        if sources {
+            let derived: Vec<String> = bundle
+                .derived_from(&c.id)
+                .iter()
+                .map(|t| json_str(&t.to_string()))
+                .collect();
+            out.push_str("      \"sources\": [");
+            out.push_str(&derived.join(", "));
+            out.push_str("]\n");
+        } else {
+            out.push_str("      \"sources\": []\n");
+        }
+
+        out.push_str(if i + 1 == concepts.len() {
+            "    }\n"
+        } else {
+            "    },\n"
+        });
+    }
+    out.push_str("  ]\n");
+    out.push_str("}\n");
+    print!("{out}");
+}
+
+/// A minimal JSON string escaper (RFC 8259 §7). The crate is zero-dependency,
+/// so the escaping is hand-rolled rather than delegating to `serde_json`.
+fn json_str(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\u{08}' => out.push_str("\\b"),
+            '\u{0c}' => out.push_str("\\f"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }
 
 fn cmd_parse(args: &[String]) -> Result<ExitCode, CliError> {
