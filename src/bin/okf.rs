@@ -604,7 +604,7 @@ fn print_graph_json(bundle: &Bundle, sources: bool) {
     let concepts = bundle.concepts();
     for (i, c) in concepts.iter().enumerate() {
         let _ = writeln!(out, "    {{");
-        let _ = writeln!(out, "      \"id\": {}", json_str(&c.id.to_string()));
+        let _ = writeln!(out, "      \"id\": {},", json_str(&c.id.to_string()));
 
         let links = bundle.links_from(&c.id);
         out.push_str("      \"links\": [");
@@ -616,11 +616,11 @@ fn print_graph_json(bundle: &Bundle, sources: bool) {
                 let _ = writeln!(out, "        {{");
                 let _ = writeln!(
                     out,
-                    "          \"target\": {}",
+                    "          \"target\": {},",
                     json_str(&link.target.to_string())
                 );
-                let _ = writeln!(out, "          \"exists\": {}", link.exists);
-                let _ = writeln!(out, "          \"text\": {}", json_str(&link.text));
+                let _ = writeln!(out, "          \"exists\": {},", link.exists);
+                let _ = writeln!(out, "          \"text\": {},", json_str(&link.text));
                 let _ = writeln!(out, "          \"raw\": {}", json_str(&link.raw));
                 out.push_str(if j + 1 == links.len() {
                     "        }\n"
@@ -876,8 +876,11 @@ fn cmd_diff(args: &[String]) -> Result<ExitCode, CliError> {
     let changes = diff.added.len()
         + diff.removed.len()
         + diff.renamed.len()
+        + diff.content.len()
         + diff.frontmatter.len()
         + diff.trust.len()
+        + diff.added_links.len()
+        + diff.removed_links.len()
         + diff.mended_links.len()
         + diff.broken_links.len();
     println!("\n{changes} change(s).");

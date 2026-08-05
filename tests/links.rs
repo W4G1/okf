@@ -34,6 +34,11 @@ fn links_inside_code_are_ignored() {
 }
 
 #[test]
+fn escaped_opening_brackets_are_not_links() {
+    assert!(extract_links(r"\[not a link\](https://example.com)").is_empty());
+}
+
+#[test]
 fn resolve_absolute_link() {
     let source = ConceptId::parse("tables/orders").unwrap();
     let link = Link {
@@ -69,6 +74,33 @@ fn resolve_relative_link() {
         up.resolve(&source),
         Some(ConceptId::parse("datasets/sales").unwrap())
     );
+}
+
+#[test]
+fn traversal_above_bundle_root_does_not_clamp_inward() {
+    let root_source = ConceptId::parse("orders").unwrap();
+    for target in ["../customers.md", "../../customers.md"] {
+        let link = Link {
+            text: "outside".into(),
+            target: target.into(),
+            kind: LinkKind::Relative,
+        };
+        assert_eq!(link.resolve(&root_source), None, "target: {target}");
+    }
+
+    let absolute = Link {
+        text: "outside".into(),
+        target: "/../customers.md".into(),
+        kind: LinkKind::Absolute,
+    };
+    assert_eq!(absolute.resolve(&root_source), None);
+}
+
+#[test]
+fn field_paths_reject_traversal_above_bundle_root() {
+    let root_source = ConceptId::parse("orders").unwrap();
+    assert!(okf::links::field_path_candidates("../references/run.py", &root_source).is_empty());
+    assert!(okf::links::field_path_candidates("/../references/run.py", &root_source).is_empty());
 }
 
 #[test]
@@ -224,6 +256,18 @@ fn percent_encoded_targets_offer_both_readings() {
         .collect();
     // Literal first, so a file really named `my%20notes.md` still wins.
     assert_eq!(ids, vec!["tables/my%20notes", "tables/my notes"]);
+}
+
+#[test]
+fn an_encoded_hash_in_a_filename_is_not_treated_as_an_anchor() {
+    let source = ConceptId::parse("index").unwrap();
+    let link = extract_links("[x](tables/name%23part.md)").remove(0);
+    let ids: Vec<String> = link
+        .resolve_all(&source)
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+    assert_eq!(ids, vec!["tables/name%23part", "tables/name#part"]);
 }
 
 #[test]

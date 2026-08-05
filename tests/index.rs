@@ -3,7 +3,10 @@
 mod common;
 
 use common::TempDir;
-use okf::index::{default_synthesize, regenerate_indexes, regenerate_indexes_with};
+use okf::index::{
+    build_index_text, default_synthesize, regenerate_indexes, regenerate_indexes_with, IndexEntry,
+};
+use okf::links::extract_links;
 
 fn write_doc(tmp: &TempDir, rel: &str, type_: &str, title: &str, description: &str) {
     let contents = format!(
@@ -170,4 +173,77 @@ fn the_default_synthesizer_matches_the_reference_fallback() {
     );
 
     assert_eq!(default_synthesize("tables", &[]), "");
+}
+
+#[test]
+fn generated_markdown_escapes_text_and_encodes_destinations() {
+    let entries = [IndexEntry {
+        type_: "Metric".to_string(),
+        title: "Revenue ](https://evil.example)".to_string(),
+        link: "tables/my notes (v2) #1%.md".to_string(),
+        description: "Description\n* [injected](https://evil.example)".to_string(),
+    }];
+    let text = build_index_text(&entries);
+
+    assert!(text.contains("tables/my%20notes%20%28v2%29%20%231%25.md"));
+    assert!(text.contains(r"\](https://evil.example)"));
+    assert!(text.contains(r"\[injected\]"));
+    assert_eq!(extract_links(&text).len(), 1);
+    assert_eq!(
+        extract_links(&text)[0].target,
+        "tables/my%20notes%20%28v2%29%20%231%25.md"
+    );
+    assert_eq!(
+        extract_links(&text)[0]
+            .resolve_all(&okf::ConceptId::parse("index").unwrap())
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>(),
+        vec![
+            "tables/my%20notes%20%28v2%29%20%231%25".to_string(),
+            "tables/my notes (v2) #1%".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn regenerated_indexes_encode_filesystem_names_once() {
+    let tmp = TempDir::new();
+    write_doc(
+        &tmp,
+        "tables/my notes (v2) #1%.md",
+        "Metric",
+        "Weird filename",
+        "A description.",
+    );
+
+    regenerate_indexes(tmp.path()).unwrap();
+
+    let index = tmp.read("tables/index.md");
+    assert!(
+        index.contains("[Weird filename](my%20notes%20%28v2%29%20%231%25.md)"),
+        "{index}"
+    );
+    assert!(!index.contains("%2520"), "{index}");
+}
+
+#[test]
+fn nested_indexes_do_not_keep_root_version_frontmatter() {
+    let tmp = TempDir::new();
+    tmp.write("index.md", "---\nokf_version: '0.2'\n---\n\n# Bundle\n");
+    tmp.write(
+        "tables/index.md",
+        "---\nokf_version: '0.1'\ntitle: Wrong\n---\n\n# Old\n",
+    );
+    write_doc(&tmp, "tables/orders.md", "Metric", "Orders", "Order count.");
+
+    regenerate_indexes(tmp.path()).unwrap();
+
+    assert!(tmp
+        .read("index.md")
+        .starts_with("---\nokf_version: \"0.2\"\n---\n"));
+    let nested = tmp.read("tables/index.md");
+    assert!(!nested.starts_with("---"), "{nested}");
+    assert!(!nested.contains("okf_version"), "{nested}");
+    assert!(!nested.contains("title: Wrong"), "{nested}");
 }

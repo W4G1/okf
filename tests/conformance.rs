@@ -341,6 +341,12 @@ fn contract_paths_resolve_from_the_bundle_root() {
         .unwrap();
     assert!(attester.exists(), "non-markdown attester code resolves too");
 
+    // A path-valued field resolves only to a regular file, not merely an
+    // existing directory.
+    assert!(bundle
+        .resolve_path_field(&revenue_id, "references")
+        .is_none());
+
     assert!(bundle
         .resolve_path_field(&revenue_id, "references/nope.py")
         .is_none());
@@ -535,6 +541,188 @@ fn malformed_families_warn_without_breaking_conformance() {
     has("no computation");
     has("missing `executor`");
     has("missing `attester`");
+}
+
+#[test]
+fn malformed_sources_members_are_diagnosed_without_being_conformance_errors() {
+    let tmp = TempDir::new();
+    tmp.write(
+        "bad.md",
+        "---\n\
+         type: Note\n\
+         sources:\n\
+         \x20 - { id: good, resource: https://example.com }\n\
+         \x20 - not-a-source-entry\n\
+         \x20 - 42\n\
+         ---\n\nBody.\n",
+    );
+    let bundle = Bundle::load(tmp.path()).unwrap();
+    let report = validate_bundle(&bundle);
+
+    assert!(report.is_conformant(), "{:#?}", report.diagnostics);
+    assert!(report
+        .of(Severity::Warning)
+        .any(|d| { d.message.contains("`sources[1]`") && d.message.contains("mapping entry") }));
+    assert!(report
+        .of(Severity::Warning)
+        .any(|d| { d.message.contains("`sources[2]`") && d.message.contains("mapping entry") }));
+}
+
+#[test]
+fn non_scalar_type_is_a_conformance_error_and_not_a_type_match() {
+    let tmp = TempDir::new();
+    tmp.write("bad.md", "---\ntype: [Metric, Note]\n---\nBody.\n");
+    let bundle = Bundle::load(tmp.path()).unwrap();
+
+    assert!(bundle.concepts_of_type("Metric").next().is_none());
+    let report = validate_bundle(&bundle);
+    assert!(!report.is_conformant());
+    assert!(report
+        .of(Severity::Error)
+        .any(|d| d.message.contains("`type` must be a non-empty scalar")));
+}
+
+#[test]
+fn malformed_verification_events_do_not_elevate_trust_or_hide_diagnostics() {
+    let tmp = TempDir::new();
+    tmp.write(
+        "bad.md",
+        "---\n\
+         type: Note\n\
+         verified:\n\
+         \x20 - { by: human:invalid, at: 2026-06-26 }\n\
+         \x20 - { by: human:also-invalid, at: yesterday }\n\
+         \x20 - not-an-event\n\
+         ---\n\nBody.\n",
+    );
+    let bundle = Bundle::load(tmp.path()).unwrap();
+    let concept = bundle.concepts().first().unwrap();
+    assert_eq!(concept.trust_tier(), TrustTier::Unverified);
+
+    let report = validate_bundle(&bundle);
+    assert!(report.of(Severity::Warning).any(|d| d
+        .message
+        .contains("`verified[0].at` is not an ISO-8601 datetime")));
+    assert!(report.of(Severity::Warning).any(|d| d
+        .message
+        .contains("`verified[1].at` is not an ISO-8601 datetime")));
+    assert!(report
+        .of(Severity::Warning)
+        .any(|d| d.message.contains("`verified[2]` should be a mapping")));
+}
+
+#[test]
+fn trust_timestamps_require_time_but_generic_datetime_parsing_stays_permissive() {
+    let tmp = TempDir::new();
+    tmp.write(
+        "bad.md",
+        "---\n\
+         type: Note\n\
+         generated: { by: tool/v1, at: 2026-06-26 }\n\
+         verified: { by: human:reviewer, at: 2026-06-26 }\n\
+         ---\n\nBody.\n",
+    );
+    let bundle = Bundle::load(tmp.path()).unwrap();
+    let report = validate_bundle(&bundle);
+
+    assert!(report.is_conformant(), "{:#?}", report.diagnostics);
+    assert_eq!(bundle.concepts()[0].trust_tier(), TrustTier::Unverified);
+    assert!(report.of(Severity::Warning).any(|d| d
+        .message
+        .contains("`generated.at` is not an ISO-8601 datetime")));
+    assert!(report.of(Severity::Warning).any(|d| d
+        .message
+        .contains("`verified[0].at` is not an ISO-8601 datetime")));
+    assert!(okf::DateTime::parse("2026-06-26").is_some());
+    assert!(!okf::validate::is_iso8601_datetime("2026-06-26"));
+    assert!(okf::validate::is_iso8601_datetime("2026-06-26T00:00:00Z"));
+}
+
+#[test]
+fn malformed_and_unreadable_reserved_files_are_conformance_errors() {
+    let tmp = TempDir::new();
+    tmp.write("a.md", "---\ntype: Note\n---\nBody.\n");
+    tmp.write("index.md", "---\nokf_version: 0.2\n");
+    tmp.write("nested/index.md", "---\ntype: Not allowed\n---\n");
+    tmp.write(
+        "log.md",
+        "# Log\n\n## someday\n* **Update**: broken date.\n",
+    );
+
+    let bundle = Bundle::load(tmp.path()).unwrap();
+    let report = validate_bundle(&bundle);
+    assert!(!report.is_conformant());
+    assert!(report
+        .of(Severity::Error)
+        .any(|d| { d.message.contains("unparseable reserved index.md") }));
+    assert!(report
+        .of(Severity::Error)
+        .any(|d| { d.message.contains("should not contain frontmatter") }));
+    assert!(report
+        .of(Severity::Error)
+        .any(|d| { d.message.contains("log date heading is not ISO-8601") }));
+
+    let unreadable = TempDir::new();
+    unreadable.write("a.md", "---\ntype: Note\n---\nBody.\n");
+    std::fs::write(unreadable.path().join("index.md"), [0xff, 0xfe]).unwrap();
+    std::fs::write(unreadable.path().join("log.md"), [0xff, 0xfe]).unwrap();
+    let bundle = Bundle::load(unreadable.path()).unwrap();
+    let report = validate_bundle(&bundle);
+    assert!(!report.is_conformant());
+    assert!(report
+        .of(Severity::Error)
+        .any(|d| d.message.contains("unreadable reserved index.md")));
+    assert!(report
+        .of(Severity::Error)
+        .any(|d| d.message.contains("unreadable reserved log.md")));
+}
+
+#[test]
+fn log_structure_requires_nonempty_newest_first_date_groups() {
+    for (contents, expected) in [
+        (
+            "# My Update History\n\nThis is not a log.\n",
+            "no date groups",
+        ),
+        ("# My Update History\n\n## 2026-06-26\n", "has no entries"),
+        (
+            "# My Update History\n\n## 2026-06-26\n* ordinary prose entry\n\n## 2026-06-27\n* another ordinary entry\n",
+            "not newest first",
+        ),
+        (
+            "# My Update History\n\n## 2026-06-27\n* ordinary prose entry\nUnexpected prose.\n",
+            "non-log content",
+        ),
+    ] {
+        let tmp = TempDir::new();
+        tmp.write("a.md", "---\ntype: Note\n---\nBody.\n");
+        tmp.write("log.md", contents);
+        let report = validate_bundle(&Bundle::load(tmp.path()).unwrap());
+
+        assert!(!report.is_conformant(), "accepted log: {contents:?}");
+        assert!(report.of(Severity::Error).any(|diagnostic| {
+            diagnostic.message.contains(expected)
+        }), "{expected:?}: {:#?}", report.diagnostics);
+    }
+}
+
+#[test]
+fn valid_log_structure_allows_custom_titles_and_unmarked_prose_entries() {
+    let tmp = TempDir::new();
+    tmp.write("a.md", "---\ntype: Note\n---\nBody.\n");
+    tmp.write(
+        "log.md",
+        "# Whatever the producer calls this\n\n\
+         ## 2026-06-27\n\
+         * A plain prose entry with no bold kind marker.\n\
+         * - Another ordinary entry.\n\
+         \x20 Continued prose is still part of the preceding entry.\n\
+         ## 2026-06-26\n\
+         - **Update**: An older marked entry.\n",
+    );
+    let report = validate_bundle(&Bundle::load(tmp.path()).unwrap());
+
+    assert!(report.is_conformant(), "{:#?}", report.diagnostics);
 }
 
 #[test]

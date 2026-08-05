@@ -181,3 +181,37 @@ fn diff_missing_bundle_is_no_input() {
         .unwrap();
     assert_eq!(code(status), EX_NOINPUT);
 }
+
+#[test]
+fn diff_change_count_includes_body_and_valid_link_changes() {
+    let a = TempDir::new();
+    a.write(
+        "source.md",
+        "---\ntype: Metric\n---\n\nSee [old](old.md).\n",
+    );
+    a.write("old.md", "---\ntype: Metric\n---\n\nOld.\n");
+    a.write("new.md", "---\ntype: Metric\n---\n\nNew.\n");
+
+    let b = TempDir::new();
+    b.write(
+        "source.md",
+        "---\ntype: Metric\n---\n\nSee [new](new.md).\n",
+    );
+    b.write("old.md", "---\ntype: Metric\n---\n\nOld.\n");
+    b.write("new.md", "---\ntype: Metric\n---\n\nNew.\n");
+
+    let output = okf()
+        .args([
+            "diff",
+            a.path().to_str().unwrap(),
+            b.path().to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("content (1):"), "{stdout}");
+    assert!(stdout.contains("added links (1):"), "{stdout}");
+    assert!(stdout.contains("removed links (1):"), "{stdout}");
+    assert!(stdout.ends_with("3 change(s).\n"), "{stdout}");
+}

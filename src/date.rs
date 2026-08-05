@@ -333,7 +333,9 @@ impl fmt::Display for DateField {
 pub struct DateTimeField {
     /// The scalar as written in the frontmatter.
     pub raw: String,
-    /// The parsed datetime, or `None` if `raw` is not ISO-8601.
+    /// The parsed datetime, or `None` if `raw` is not a time-bearing ISO-8601
+    /// datetime. A date-only value remains available through `datetime` so it
+    /// can be diagnosed without losing the original scalar.
     pub datetime: Option<DateTime>,
 }
 
@@ -345,10 +347,23 @@ impl DateTimeField {
         Self { raw, datetime }
     }
 
-    /// `true` if the raw scalar parsed as a datetime.
+    /// `true` if the raw scalar parsed as a datetime with a time of day.
     #[must_use]
     pub const fn is_valid(&self) -> bool {
-        self.datetime.is_some()
+        self.has_time()
+    }
+
+    /// `true` if the raw scalar parsed as a datetime with a time of day.
+    ///
+    /// [`DateTime::parse`] intentionally also accepts date-only values for
+    /// callers that need a generic ISO-8601 date/datetime parser. The OKF
+    /// `generated.at` and `verified[].at` fields use this stricter predicate.
+    #[must_use]
+    pub const fn has_time(&self) -> bool {
+        match self.datetime {
+            Some(datetime) => datetime.has_time,
+            None => false,
+        }
     }
 }
 
@@ -530,6 +545,11 @@ mod tests {
 
         let good = DateTimeField::new("2026-06-25T09:00:00Z");
         assert!(good.is_valid());
+        assert!(good.has_time());
         assert_eq!(good.datetime.unwrap().date, Date::new(2026, 6, 25).unwrap());
+
+        let date_only = DateTimeField::new("2026-06-25");
+        assert!(!date_only.is_valid());
+        assert!(!date_only.has_time());
     }
 }

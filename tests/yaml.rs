@@ -41,9 +41,34 @@ fn quoted_scalars() {
         Value::String("line1\nline2".into())
     );
     assert_eq!(
+        Value::parse(r#""\u263A""#).unwrap(),
+        Value::String("\u{263A}".into())
+    );
+    assert_eq!(
         Value::parse("'it''s here'").unwrap(),
         Value::String("it's here".into())
     );
+}
+
+#[test]
+fn malformed_quoted_scalars_are_errors() {
+    for input in ["\"value\" trailing", "'value' trailing"] {
+        assert!(
+            Value::parse(input).is_err(),
+            "accepted malformed input: {input:?}"
+        );
+    }
+
+    assert!(Value::parse("\"value\" # comment").is_ok());
+    assert!(Value::parse(r#""\q""#).is_err());
+    assert!(Value::parse(r#""\u12""#).is_err());
+    assert!(Value::parse(r#""\u12G4""#).is_err());
+    assert!(Value::parse(r#""\uD800""#).is_err());
+}
+
+#[test]
+fn dangling_flow_double_quoted_escape_is_an_error() {
+    assert!(Value::parse("[\"dangling\\").is_err());
 }
 
 #[test]

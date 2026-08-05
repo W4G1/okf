@@ -587,6 +587,7 @@ fn parse_double_quoted(s: &str, line: usize) -> Result<String, YamlError> {
     while i < chars.len() {
         let c = chars[i];
         if c == '"' {
+            validate_quoted_tail(&chars, i, line, "double-quoted")?;
             return Ok(out);
         }
         if c == '\\' {
@@ -606,17 +607,32 @@ fn parse_double_quoted(s: &str, line: usize) -> Result<String, YamlError> {
                 'b' => out.push('\u{0008}'),
                 'f' => out.push('\u{000C}'),
                 'u' => {
-                    let hex: String = chars[i + 1..(i + 5).min(chars.len())].iter().collect();
-                    if hex.len() == 4 {
-                        if let Ok(cp) = u32::from_str_radix(&hex, 16) {
-                            if let Some(ch) = char::from_u32(cp) {
-                                out.push(ch);
-                            }
-                        }
-                        i += 4;
-                    }
+                    let start = i + 1;
+                    let end = start + 4;
+                    let hex = chars.get(start..end).ok_or_else(|| YamlError {
+                        line: line + 1,
+                        message: "truncated Unicode escape in double-quoted string".into(),
+                    })?;
+                    let hex: String = hex.iter().collect();
+                    let cp = u32::from_str_radix(&hex, 16).map_err(|_| YamlError {
+                        line: line + 1,
+                        message: "malformed Unicode escape in double-quoted string".into(),
+                    })?;
+                    let ch = char::from_u32(cp).ok_or_else(|| YamlError {
+                        line: line + 1,
+                        message: "invalid Unicode scalar value in double-quoted string".into(),
+                    })?;
+                    out.push(ch);
+                    i = end - 1;
                 }
-                other => out.push(other),
+                other => {
+                    return Err(YamlError {
+                        line: line + 1,
+                        message: format!(
+                            "unknown escape sequence \\{other} in double-quoted string"
+                        ),
+                    });
+                }
             }
             i += 1;
             continue;
@@ -643,6 +659,7 @@ fn parse_single_quoted(s: &str, line: usize) -> Result<String, YamlError> {
                 i += 2;
                 continue;
             }
+            validate_quoted_tail(&chars, i, line, "single-quoted")?;
             return Ok(out);
         }
         out.push(c);
@@ -652,6 +669,28 @@ fn parse_single_quoted(s: &str, line: usize) -> Result<String, YamlError> {
         line: line + 1,
         message: "unterminated single-quoted string".into(),
     })
+}
+
+/// Ensures that only whitespace or a trailing comment follows a quoted scalar.
+fn validate_quoted_tail(
+    chars: &[char],
+    close: usize,
+    line: usize,
+    quote_name: &str,
+) -> Result<(), YamlError> {
+    for &c in &chars[close + 1..] {
+        if c.is_whitespace() {
+            continue;
+        }
+        if c == '#' {
+            return Ok(());
+        }
+        return Err(YamlError {
+            line: line + 1,
+            message: format!("unexpected content after closing {quote_name} quote"),
+        });
+    }
+    Ok(())
 }
 
 /// A recursive parser for flow collections (`[...]`, `{...}`).
@@ -760,6 +799,9 @@ impl FlowParser {
             while self.pos < self.chars.len() {
                 let cur = self.chars[self.pos];
                 if c == '"' && cur == '\\' {
+                    if self.pos + 1 >= self.chars.len() {
+                        return Err(self.err("dangling escape in double-quoted string"));
+                    }
                     self.pos += 2;
                     continue;
                 }

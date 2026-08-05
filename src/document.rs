@@ -132,11 +132,16 @@ impl Document {
     /// # Errors
     ///
     /// Returns [`DocumentError::MissingKeys`] listing every required key that
-    /// is absent or empty.
+    /// is absent, empty, or has the wrong shape.
     pub fn validate(&self) -> Result<(), DocumentError> {
         let missing: Vec<String> = REQUIRED_FRONTMATTER_KEYS
             .iter()
-            .filter(|key| !self.has(key))
+            .filter(|&&key| {
+                let Some(value) = self.frontmatter.get(key) else {
+                    return true;
+                };
+                value.is_empty_value() || (key == "type" && value.as_display_str().is_none())
+            })
             .map(|key| (*key).to_string())
             .collect();
 

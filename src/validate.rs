@@ -23,8 +23,8 @@ use crate::date::{Date, DateTime};
 use crate::document::Document;
 use crate::frontmatter::Frontmatter;
 use crate::log::Log;
-use crate::provenance::ResourceKind;
-use crate::trust::STATUS_VALUES;
+use crate::provenance::{ResourceKind, Source};
+use crate::trust::{Verification, STATUS_VALUES};
 use crate::yaml::Value;
 use std::collections::HashSet;
 use std::fs;
@@ -149,7 +149,14 @@ pub fn validate_bundle_at(bundle: &Bundle, today: Option<Date>) -> Report {
         let fm = &concept.document.frontmatter;
 
         if concept.document.validate().is_err() {
-            cx.error("missing required frontmatter field `type` (§4.1)");
+            if fm
+                .get("type")
+                .is_some_and(|value| value.as_display_str().is_none())
+            {
+                cx.error("`type` must be a non-empty scalar (§4.1)");
+            } else {
+                cx.error("missing required frontmatter field `type` (§4.1)");
+            }
         }
         check_recommended(&mut cx, &concept.document);
         check_tags(&mut cx, fm);
@@ -295,7 +302,7 @@ fn check_trust(cx: &mut Context, fm: &Frontmatter) {
                 if generated.by.is_none() {
                     cx.warn("`generated.by` is required within `generated` (§5.2)");
                 }
-                if let Some(at) = generated.at.filter(|a| !a.is_valid()) {
+                if let Some(at) = generated.at.filter(|a| !a.has_time()) {
                     cx.warn(format!(
                         "`generated.at` is not an ISO-8601 datetime: {:?} (§5.2)",
                         at.raw
@@ -320,18 +327,43 @@ fn check_trust(cx: &mut Context, fm: &Frontmatter) {
     if events.is_empty() {
         cx.warn("`verified` contains no `{ by, at }` events (§5.2)");
     }
-    for (i, event) in events.iter().enumerate() {
-        if event.by.is_none() {
-            cx.warn(format!("`verified[{i}].by` is missing (§5.2)"));
+    match value {
+        Value::Sequence(items) => {
+            for (i, item) in items.iter().enumerate() {
+                let Some(event) = Verification::from_value(item) else {
+                    cx.warn(format!(
+                        "`verified[{i}]` should be a mapping with `by` and `at`, found {} (§5.2)",
+                        type_name(item)
+                    ));
+                    continue;
+                };
+                check_verification_event(cx, i, &event);
+            }
         }
-        match &event.at {
-            None => cx.warn(format!("`verified[{i}].at` is missing (§5.2)")),
-            Some(at) if !at.is_valid() => cx.warn(format!(
-                "`verified[{i}].at` is not an ISO-8601 datetime: {:?} (§5.2)",
-                at.raw
-            )),
-            Some(_) => {}
+        Value::Mapping(_) => {
+            if let Some(event) = Verification::from_value(value) {
+                check_verification_event(cx, 0, &event);
+            }
         }
+        _ => unreachable!("verified shape checked above"),
+    }
+}
+
+fn check_verification_event(cx: &mut Context, i: usize, event: &Verification) {
+    if event
+        .by
+        .as_ref()
+        .is_none_or(|by| by.as_str().trim().is_empty())
+    {
+        cx.warn(format!("`verified[{i}].by` is missing (§5.2)"));
+    }
+    match &event.at {
+        None => cx.warn(format!("`verified[{i}].at` is missing (§5.2)")),
+        Some(at) if !at.has_time() => cx.warn(format!(
+            "`verified[{i}].at` is not an ISO-8601 datetime: {:?} (§5.2)",
+            at.raw
+        )),
+        Some(_) => {}
     }
 }
 
@@ -394,7 +426,29 @@ fn check_provenance(cx: &mut Context, fm: &Frontmatter) {
     }
 
     let mut seen_ids: HashSet<String> = HashSet::new();
-    for (i, source) in fm.sources().iter().enumerate() {
+    let entries: Vec<(usize, Source)> = match value {
+        Value::Sequence(items) => items
+            .iter()
+            .enumerate()
+            .filter_map(|(i, item)| {
+                if item.as_mapping().is_none() {
+                    cx.warn(format!(
+                        "`sources[{i}]` should be a mapping entry, found {} (§5.1)",
+                        type_name(item)
+                    ));
+                    None
+                } else {
+                    Source::from_value(item).map(|source| (i, source))
+                }
+            })
+            .collect(),
+        Value::Mapping(_) => Source::from_value(value)
+            .into_iter()
+            .map(|source| (0, source))
+            .collect(),
+        _ => unreachable!("sources shape checked above"),
+    };
+    for (i, source) in &entries {
         if source.resource_kind() == ResourceKind::Missing {
             cx.warn(format!(
                 "`sources[{i}].resource` is required within an entry (§5.1)"
@@ -619,11 +673,27 @@ fn validate_reserved(bundle: &Bundle, report: &mut Report) {
     let root_index = bundle.root().join("index.md");
 
     for path in bundle.index_files() {
-        let Ok(text) = fs::read_to_string(path) else {
-            continue;
+        let text = match fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(error) => {
+                report.error(
+                    Some(path.clone()),
+                    None,
+                    format!("unreadable reserved index.md: {error} (§8)"),
+                );
+                continue;
+            }
         };
-        let Ok(doc) = Document::parse(&text) else {
-            continue;
+        let doc = match Document::parse(&text) {
+            Ok(doc) => doc,
+            Err(error) => {
+                report.error(
+                    Some(path.clone()),
+                    None,
+                    format!("unparseable reserved index.md: {error} (§8)"),
+                );
+                continue;
+            }
         };
         if doc.frontmatter.is_empty() {
             continue;
@@ -638,14 +708,14 @@ fn validate_reserved(bundle: &Bundle, report: &mut Report) {
                 .keys()
                 .all(|k| k == "okf_version");
             if !only_version {
-                report.warn(
+                report.error(
                     Some(path.clone()),
                     None,
                     "root index.md frontmatter should declare only `okf_version` (§12)".to_string(),
                 );
             }
         } else {
-            report.warn(
+            report.error(
                 Some(path.clone()),
                 None,
                 "index.md should not contain frontmatter (§8)".to_string(),
@@ -654,12 +724,23 @@ fn validate_reserved(bundle: &Bundle, report: &mut Report) {
     }
 
     for path in bundle.log_files() {
-        let Ok(text) = fs::read_to_string(path) else {
-            continue;
+        let text = match fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(error) => {
+                report.error(
+                    Some(path.clone()),
+                    None,
+                    format!("unreadable reserved log.md: {error} (§9)"),
+                );
+                continue;
+            }
         };
         let log = Log::parse(&text);
+        for issue in log.structural_errors(&text) {
+            report.error(Some(path.clone()), None, format!("{issue} (§9)"));
+        }
         for bad in log.invalid_dates() {
-            report.warn(
+            report.error(
                 Some(path.clone()),
                 None,
                 format!("log date heading is not ISO-8601 `YYYY-MM-DD`: {bad:?} (§9)"),
@@ -713,11 +794,11 @@ const fn type_name(value: &Value) -> &'static str {
     }
 }
 
-/// Light ISO-8601 datetime check, kept for callers that only need a yes/no.
+/// Checks an ISO-8601 datetime with a time and optional zone.
 ///
-/// Accepts a `YYYY-MM-DD` date with an optional time and zone, which is what
-/// `generated.at` and `verified[].at` carry (§5.2).
+/// [`DateTime::parse`] remains the generic date/datetime parser; OKF's trust
+/// timestamps specifically require the time-bearing form (§5.2).
 #[must_use]
 pub fn is_iso8601_datetime(s: &str) -> bool {
-    DateTime::parse(s).is_some()
+    DateTime::parse(s).is_some_and(|datetime| datetime.has_time)
 }

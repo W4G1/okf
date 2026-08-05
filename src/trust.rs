@@ -90,6 +90,16 @@ impl Verification {
         })
     }
 
+    /// `true` when this event has the required actor and a parseable timestamp
+    /// that includes a time of day.
+    #[must_use]
+    pub fn is_valid(&self) -> bool {
+        self.by
+            .as_ref()
+            .is_some_and(|by| !by.as_str().trim().is_empty())
+            && self.at.as_ref().is_some_and(DateTimeField::has_time)
+    }
+
     /// Reads a whole `verified` value into a list of events.
     ///
     /// Consumers **MUST** treat a bare `{ by, at }` mapping as a one-element
@@ -118,13 +128,14 @@ impl fmt::Display for Verification {
 
 /// Returns the verification with the latest parseable `at` (§5.2).
 ///
-/// Events whose `at` is missing or unparseable cannot be ordered and are
-/// skipped; `None` means no event carries a usable timestamp.
+/// Events missing a verifier or a time-bearing, parseable `at` cannot be
+/// ordered and are skipped; `None` means no event carries a usable timestamp.
 #[must_use]
 pub fn latest_verification(events: &[Verification]) -> Option<&Verification> {
     events
         .iter()
-        .filter_map(|v| v.at.as_ref().and_then(|a| a.datetime).map(|dt| (v, dt)))
+        .filter(|v| v.is_valid())
+        .filter_map(|v| v.at.as_ref().and_then(|at| at.datetime).map(|dt| (v, dt)))
         .max_by_key(|(_, dt)| *dt)
         .map(|(v, _)| v)
 }
@@ -148,12 +159,10 @@ impl TrustTier {
     /// Derives the tier from a concept's verification events (§5.3).
     #[must_use]
     pub fn derive(events: &[Verification]) -> Self {
-        if events.is_empty() {
+        let mut valid_events = events.iter().filter(|event| event.is_valid());
+        if valid_events.clone().next().is_none() {
             Self::Unverified
-        } else if events
-            .iter()
-            .any(|v| v.by.as_ref().is_some_and(Actor::is_human))
-        {
+        } else if valid_events.any(|v| v.by.as_ref().is_some_and(Actor::is_human)) {
             Self::HumanReviewed
         } else {
             Self::MachineConfirmed
@@ -273,6 +282,18 @@ mod tests {
         // "How recently" is the latest `at`, not the last entry.
         let latest = latest_verification(&both).unwrap();
         assert_eq!(latest.at.as_ref().unwrap().raw, "2026-06-26T02:00:00Z");
+    }
+
+    #[test]
+    fn malformed_verification_events_do_not_raise_trust() {
+        let malformed =
+            Verification::list_from_value(&v("- { by: human:ahormati, at: yesterday }\n\
+             - { by: human:other, at: 2026-06-26 }\n\
+             - { by: human:third }"));
+        assert_eq!(malformed.len(), 3);
+        assert!(malformed.iter().all(|event| !event.is_valid()));
+        assert_eq!(TrustTier::derive(&malformed), TrustTier::Unverified);
+        assert_eq!(latest_verification(&malformed), None);
     }
 
     #[test]

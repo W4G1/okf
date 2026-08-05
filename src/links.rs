@@ -88,8 +88,8 @@ impl Link {
         let mut out = Vec::new();
         let mut push = |target: &str| {
             let id = match self.kind {
-                LinkKind::Absolute => resolve_absolute(target),
-                LinkKind::Relative => resolve_relative(target, source),
+                LinkKind::Absolute => resolve_absolute_path(target),
+                LinkKind::Relative => resolve_relative_path(target, source),
                 _ => None,
             };
             if let Some(id) = id {
@@ -98,8 +98,12 @@ impl Link {
                 }
             }
         };
-        push(&self.target);
-        if let Some(decoded) = percent_decode(&self.target) {
+        // Strip an anchor before decoding. Otherwise a filename containing an
+        // encoded `%23` would turn into `#` and be mistaken for the anchor
+        // delimiter on the second candidate.
+        let target = strip_anchor(&self.target);
+        push(target);
+        if let Some(decoded) = percent_decode(target) {
             push(&decoded);
         }
         out
@@ -178,18 +182,18 @@ fn strip_anchor(target: &str) -> &str {
     target.find('#').map_or(target, |i| &target[..i])
 }
 
-fn resolve_absolute(target: &str) -> Option<ConceptId> {
-    let t = strip_anchor(target);
+fn resolve_absolute_path(t: &str) -> Option<ConceptId> {
     if t.ends_with('/') {
         return None; // directory link
     }
     // Normalize `.`/`..` segments relative to the bundle root, consistent with
     // relative-link resolution.
-    strip_md(normalize_segments(t, &[])).and_then(|segs| ConceptId::new(segs).ok())
+    normalize_segments(t, &[])
+        .and_then(strip_md)
+        .and_then(|segs| ConceptId::new(segs).ok())
 }
 
-fn resolve_relative(target: &str, source: &ConceptId) -> Option<ConceptId> {
-    let t = strip_anchor(target);
+fn resolve_relative_path(t: &str, source: &ConceptId) -> Option<ConceptId> {
     if t.is_empty() || t.ends_with('/') {
         return None;
     }
@@ -198,22 +202,28 @@ fn resolve_relative(target: &str, source: &ConceptId) -> Option<ConceptId> {
         .parent()
         .map(|p| p.segments().to_vec())
         .unwrap_or_default();
-    strip_md(normalize_segments(t, &base)).and_then(|segs| ConceptId::new(segs).ok())
+    normalize_segments(t, &base)
+        .and_then(strip_md)
+        .and_then(|segs| ConceptId::new(segs).ok())
 }
 
 /// Resolves `.`/`..`/empty components in a `/`-separated path against `base`.
-fn normalize_segments(path: &str, base: &[String]) -> Vec<String> {
+///
+/// A `..` at the bundle root is invalid rather than being allowed to disappear:
+/// silently popping an empty vector would make `../x.md` from a root concept
+/// point at `x.md` inside the bundle.
+fn normalize_segments(path: &str, base: &[String]) -> Option<Vec<String>> {
     let mut segs = base.to_vec();
     for comp in path.split('/') {
         match comp {
             "" | "." => {}
             ".." => {
-                segs.pop();
+                segs.pop()?;
             }
             other => segs.push(other.to_string()),
         }
     }
-    segs
+    Some(segs)
 }
 
 /// Drops a trailing `.md` from the last segment, or `None` if there are none.
@@ -246,19 +256,25 @@ fn strip_md(mut segs: Vec<String>) -> Option<Vec<String>> {
 pub fn field_path_candidates(raw: &str, from: &ConceptId) -> Vec<String> {
     let target = raw.trim();
     match Link::classify(target) {
-        LinkKind::Absolute => {
-            vec![normalize_segments(strip_anchor(target), &[]).join("/")]
-        }
+        LinkKind::Absolute => normalize_segments(strip_anchor(target), &[])
+            .map(|segments| segments.join("/"))
+            .into_iter()
+            .collect(),
         LinkKind::Relative => {
             let base = from
                 .parent()
                 .map(|p| p.segments().to_vec())
                 .unwrap_or_default();
             let stripped = strip_anchor(target);
-            let mut out = vec![normalize_segments(stripped, &base).join("/")];
-            let from_root = normalize_segments(stripped, &[]).join("/");
-            if !out.contains(&from_root) {
-                out.push(from_root);
+            let mut out = Vec::new();
+            if let Some(path) = normalize_segments(stripped, &base) {
+                out.push(path.join("/"));
+            }
+            if let Some(path) = normalize_segments(stripped, &[]) {
+                let from_root = path.join("/");
+                if !out.contains(&from_root) {
+                    out.push(from_root);
+                }
             }
             out.retain(|p| !p.is_empty());
             out
@@ -339,7 +355,7 @@ fn scan_line_links(line: &str, out: &mut Vec<Link>) {
     let chars: Vec<char> = line.chars().collect();
     let mut i = 0;
     while i < chars.len() {
-        if chars[i] == '[' {
+        if chars[i] == '[' && !is_escaped(&chars, i) {
             if let Some((text, dest, next)) = parse_inline_link(&chars, i) {
                 let target = clean_destination(&dest);
                 out.push(Link {
@@ -353,6 +369,18 @@ fn scan_line_links(line: &str, out: &mut Vec<Link>) {
         }
         i += 1;
     }
+}
+
+/// Whether the character at `index` is preceded by an odd number of
+/// backslashes, and is therefore escaped in Markdown.
+fn is_escaped(chars: &[char], index: usize) -> bool {
+    let mut backslashes = 0;
+    let mut i = index;
+    while i > 0 && chars[i - 1] == '\\' {
+        backslashes += 1;
+        i -= 1;
+    }
+    backslashes % 2 == 1
 }
 
 /// Attempts to parse `[text](dest)` starting at `start` (the `[`). Returns the

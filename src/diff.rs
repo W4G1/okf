@@ -1,10 +1,10 @@
 //! Bundle-level diff: an OKF-semantics diff between two [`Bundle`]s.
 //!
 //! [`bundle_diff`] reports concepts added, removed, renamed (detected by
-//! content hash), frontmatter key changes, trust-tier/status changes, and links
-//! broken or mended between two snapshots. It is a semantic diff, not a raw
-//! text diff: two concepts whose frontmatter and body parse to the same value
-//! are equal here even if their source text differs in whitespace.
+//! content hash), same-id body changes, frontmatter key changes, trust-tier/status
+//! changes, and cross-link changes between two snapshots. It is a semantic diff,
+//! not a raw file diff: frontmatter values are compared as parsed values, while
+//! body content is compared as text.
 //!
 //! The rename heuristic hashes a concept's body together with its `type`,
 //! `title`, and `description` (the identifying frontmatter fields that do not
@@ -71,10 +71,20 @@ pub struct BundleDiff {
     pub removed: Vec<ConceptId>,
     /// Concepts whose id changed but whose content hash did not.
     pub renamed: Vec<Rename>,
+    /// Concepts present in both bundles whose body content changed.
+    pub content: Vec<ConceptId>,
     /// Per-concept frontmatter key changes, for ids present in both bundles.
     pub frontmatter: Vec<FrontmatterChange>,
     /// Per-concept trust-tier/status changes, for ids present in both bundles.
     pub trust: Vec<TrustChange>,
+    /// Resolved internal links present in the second bundle but not the first,
+    /// as `(source id, target id)` pairs. Only links to existing concepts are
+    /// included; broken-link state transitions are reported separately below.
+    pub added_links: Vec<(ConceptId, ConceptId)>,
+    /// Resolved internal links present in the first bundle but not the second,
+    /// as `(source id, target id)` pairs. Only links to existing concepts are
+    /// included; broken-link state transitions are reported separately below.
+    pub removed_links: Vec<(ConceptId, ConceptId)>,
     /// Links broken in the first bundle that are resolved in the second, as
     /// `(source id, raw target as written)`.
     pub mended_links: Vec<(ConceptId, String)>,
@@ -90,8 +100,11 @@ impl BundleDiff {
         self.added.is_empty()
             && self.removed.is_empty()
             && self.renamed.is_empty()
+            && self.content.is_empty()
             && self.frontmatter.is_empty()
             && self.trust.is_empty()
+            && self.added_links.is_empty()
+            && self.removed_links.is_empty()
             && self.mended_links.is_empty()
             && self.broken_links.is_empty()
     }
@@ -153,13 +166,18 @@ pub fn bundle_diff(a: &Bundle, b: &Bundle) -> BundleDiff {
         .cloned()
         .collect();
 
-    // Per-concept frontmatter and trust changes for ids present in both bundles.
+    // Per-concept body, frontmatter, and trust changes for ids present in both
+    // bundles.
+    let mut content = Vec::new();
     let mut frontmatter = Vec::new();
     let mut trust = Vec::new();
     for id in a_ids.intersection(&b_ids) {
         let (Some(ca), Some(cb)) = (a.get(id), b.get(id)) else {
             continue;
         };
+        if ca.document.body != cb.document.body {
+            content.push(id.clone());
+        }
         if let Some(fc) = frontmatter_diff(ca, cb) {
             frontmatter.push(fc);
         }
@@ -168,9 +186,18 @@ pub fn bundle_diff(a: &Bundle, b: &Bundle) -> BundleDiff {
         }
     }
 
-    // Links broken vs mended, keyed by (source id, raw target as written). A
-    // rename of the source concept is not tracked here: the source id differs,
-    // so a link from a renamed concept is treated as a separate edge.
+    // Compare valid graph edges by resolved target. This catches additions,
+    // removals, and retargeting separately from broken-link state transitions.
+    // A rename of the source concept is not tracked specially here: the source
+    // id differs, so a link from a renamed concept is a separate edge.
+    let a_links = valid_link_edges(a);
+    let b_links = valid_link_edges(b);
+    let removed_links: Vec<(ConceptId, ConceptId)> =
+        a_links.difference(&b_links).cloned().collect();
+    let added_links: Vec<(ConceptId, ConceptId)> = b_links.difference(&a_links).cloned().collect();
+
+    // Broken vs mended state remains keyed by (source id, raw target as
+    // written), preserving the existing diagnostic detail and behavior.
     let a_broken: BTreeSet<(ConceptId, String)> = a.broken_links().into_iter().collect();
     let b_broken: BTreeSet<(ConceptId, String)> = b.broken_links().into_iter().collect();
     let mended_links: Vec<(ConceptId, String)> = a_broken.difference(&b_broken).cloned().collect();
@@ -180,11 +207,29 @@ pub fn bundle_diff(a: &Bundle, b: &Bundle) -> BundleDiff {
         added,
         removed,
         renamed,
+        content,
         frontmatter,
         trust,
+        added_links,
+        removed_links,
         mended_links,
         broken_links,
     }
+}
+
+/// Returns the valid internal cross-link edges in a bundle.
+fn valid_link_edges(bundle: &Bundle) -> BTreeSet<(ConceptId, ConceptId)> {
+    bundle
+        .concepts()
+        .iter()
+        .flat_map(|concept| {
+            bundle
+                .links_from(&concept.id)
+                .iter()
+                .filter(|link| link.exists)
+                .map(|link| (concept.id.clone(), link.target.clone()))
+        })
+        .collect()
 }
 
 /// A best-effort content hash for a concept: the body plus the `type`,
@@ -305,6 +350,12 @@ impl std::fmt::Display for BundleDiff {
                 writeln!(f, "  ~ {} -> {}", r.from, r.to)?;
             }
         }
+        if !self.content.is_empty() {
+            writeln!(f, "content ({}):", self.content.len())?;
+            for id in &self.content {
+                writeln!(f, "  ~ {id} (body)")?;
+            }
+        }
         if !self.frontmatter.is_empty() {
             writeln!(f, "frontmatter ({}):", self.frontmatter.len())?;
             for fc in &self.frontmatter {
@@ -331,6 +382,18 @@ impl std::fmt::Display for BundleDiff {
                     write!(f, " status {from} -> {to}")?;
                 }
                 writeln!(f)?;
+            }
+        }
+        if !self.added_links.is_empty() {
+            writeln!(f, "added links ({}):", self.added_links.len())?;
+            for (source, target) in &self.added_links {
+                writeln!(f, "  + {source} -> {target}")?;
+            }
+        }
+        if !self.removed_links.is_empty() {
+            writeln!(f, "removed links ({}):", self.removed_links.len())?;
+            for (source, target) in &self.removed_links {
+                writeln!(f, "  - {source} -> {target}")?;
             }
         }
         if !self.mended_links.is_empty() {

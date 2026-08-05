@@ -382,7 +382,7 @@ impl Bundle {
         links::field_path_candidates(raw, from)
             .into_iter()
             .map(|rel| self.root.join(rel))
-            .find(|p| p.exists())
+            .find(|p| p.is_file())
     }
 }
 

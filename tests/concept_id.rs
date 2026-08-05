@@ -61,6 +61,38 @@ fn to_path_keeps_one_segment_to_one_component() {
 }
 
 #[test]
+fn from_path_round_trips_valid_paths_and_rejects_non_markdown_paths() {
+    let root = std::path::Path::new("/bundle");
+    let path = root.join("tables/my notes.md");
+    let id = ConceptId::from_path(root, &path).unwrap();
+    assert_eq!(id, ConceptId::parse("tables/my notes").unwrap());
+    assert_eq!(id.to_path(root), path);
+
+    for path in [
+        root.join("../outside.md"),
+        root.join("tables/../../outside.md"),
+        root.join("tables/my notes.txt"),
+    ] {
+        assert!(
+            ConceptId::from_path(root, &path).is_err(),
+            "accepted invalid path: {}",
+            path.display()
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn from_path_rejects_non_utf8_segments_instead_of_replacing_them() {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+
+    let root = std::path::Path::new("/bundle");
+    let path = root.join(OsString::from_vec(vec![0xff, b'.', b'm', b'd']));
+    assert!(ConceptId::from_path(root, &path).is_err());
+}
+
+#[test]
 fn portability_matches_the_reference_convention() {
     for seg in ["users", "my_table", "v0.2", "a-b", "_x", "A1"] {
         assert!(is_portable_segment(seg), "{seg:?} should be portable");

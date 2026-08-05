@@ -140,20 +140,21 @@ fn trust_tiers_derive_from_the_verifying_actors() {
     assert_eq!(tier("type: X"), TrustTier::Unverified);
     assert_eq!(tier("type: X").to_string(), "unverified");
 
-    let machine = tier("type: X\nverified: [{ by: process:finance-nightly, at: x }]");
+    let machine =
+        tier("type: X\nverified: [{ by: process:finance-nightly, at: 2026-06-26T02:00:00Z }]");
     assert_eq!(machine, TrustTier::MachineConfirmed);
     assert_eq!(machine.to_string(), "machine-confirmed");
 
     let both = tier(
-        "type: X\nverified:\n  - { by: process:finance-nightly, at: x }\n  \
-         - { by: human:ahormati, at: y }",
+        "type: X\nverified:\n  - { by: process:finance-nightly, at: 2026-06-26T02:00:00Z }\n  \
+         - { by: human:ahormati, at: 2026-06-25T09:00:00Z }",
     );
     assert_eq!(both, TrustTier::HumanReviewed);
     assert_eq!(both.to_string(), "human-reviewed");
 
     // A bare mapping is treated as a one-element list.
     assert_eq!(
-        tier("type: X\nverified: { by: human:ahormati, at: z }"),
+        tier("type: X\nverified: { by: human:ahormati, at: 2026-06-25T09:00:00Z }"),
         TrustTier::HumanReviewed
     );
 }
@@ -275,9 +276,8 @@ fn a_non_string_type_is_coerced_not_dropped() {
     // reintroduce the regression.
     let doc = with_frontmatter("type: 42\ntitle: hello");
     assert_eq!(doc.frontmatter.type_().as_deref(), Some("42"));
-    // `validate()` only checks `type` is non-empty, so the deviation still
-    // conforms (§11). A future validator rule could reject it, but the
-    // accessor's contract is to surface what was written, not to legislate.
+    // Non-string scalars remain permissive; the accessor surfaces what was
+    // written, while non-scalar values are rejected by conformance validation.
     assert!(doc.validate().is_ok());
 
     // Booleans and floats coerce the same way.
@@ -292,11 +292,15 @@ fn a_non_string_type_is_coerced_not_dropped() {
         with_frontmatter("type: 1.5").frontmatter.type_().as_deref(),
         Some("1.5")
     );
-    // A non-scalar (sequence) is not a plausible `type` and yields `None`.
-    assert!(with_frontmatter("type: [a, b]")
-        .frontmatter
-        .type_()
-        .is_none());
+    // A non-scalar (sequence or mapping) is not a plausible `type`, and the
+    // document-level conformance check agrees with the type-based accessors.
+    let sequence = with_frontmatter("type: [a, b]");
+    assert!(sequence.frontmatter.type_().is_none());
+    assert!(sequence.validate().is_err());
+
+    let mapping = with_frontmatter("type: { name: Metric }");
+    assert!(mapping.frontmatter.type_().is_none());
+    assert!(mapping.validate().is_err());
 }
 
 #[test]

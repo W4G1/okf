@@ -8,7 +8,7 @@
 //! original Apache-2.0 Python source; see the NOTICE file.
 
 use std::fmt;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 /// Error returned when a concept-id segment is malformed.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -117,39 +117,56 @@ impl ConceptId {
     /// Derives a concept id from a file path relative to `bundle_root`,
     /// stripping the `.md` suffix.
     ///
-    /// Segments are **not** validated here, matching the reference
-    /// `path_to_concept_id` (only `parse_concept_id` validates). A file already
-    /// on disk is a concept whatever it is called, and §11 makes conformance a
-    /// question of frontmatter, not filenames, so a name such as
-    /// `my notes.md` must not turn a readable document into an error.
-    ///
-    /// [`ConceptId::parse`] accepts everything this can return, with one
-    /// exception: a Unix filename containing a literal `\`, which
-    /// [`validate_segment`] rejects because it is a separator elsewhere.
+    /// The path must be a normalized, UTF-8 `.md` path whose segments can be
+    /// represented by a [`ConceptId`]. A file already on disk is a concept
+    /// whatever its portable spelling, and §11 makes conformance a question of
+    /// frontmatter, not filenames, so names such as `my notes.md` remain valid.
+    /// Rejecting non-UTF-8 names rather than replacing them is important: a
+    /// replacement character would produce an id that does not point back to
+    /// the original file.
     ///
     /// # Errors
     ///
     /// Returns [`ConceptIdError`] if `path` is not under `bundle_root` or
-    /// resolves to no segments.
+    /// resolves to no segments, is not a `.md` file, contains a non-normal path
+    /// component, or cannot be represented as UTF-8 without loss.
     pub fn from_path(bundle_root: &Path, path: &Path) -> Result<Self, ConceptIdError> {
         let rel = path
             .strip_prefix(bundle_root)
             .map_err(|_| ConceptIdError(format!("{} is not under bundle root", path.display())))?;
-        let mut segments: Vec<String> = rel
-            .components()
-            .map(|comp| comp.as_os_str().to_string_lossy().to_string())
-            .collect();
-        if let Some(last) = segments.last_mut() {
-            if let Some(stripped) = last.strip_suffix(".md") {
-                *last = stripped.to_string();
-            }
+        let mut segments = Vec::new();
+        for component in rel.components() {
+            let Component::Normal(segment) = component else {
+                return Err(ConceptIdError(format!(
+                    "{} contains a non-normal path component",
+                    path.display()
+                )));
+            };
+            let segment = segment.to_str().ok_or_else(|| {
+                ConceptIdError(format!(
+                    "{} contains a path segment that is not valid UTF-8",
+                    path.display()
+                ))
+            })?;
+            segments.push(segment.to_string());
         }
-        if segments.is_empty() {
+
+        let Some(last) = segments.last_mut() else {
             return Err(ConceptIdError(
                 "concept_id must have at least one segment".into(),
             ));
-        }
-        Ok(Self { segments })
+        };
+        let Some(stripped) = last.strip_suffix(".md") else {
+            return Err(ConceptIdError(format!(
+                "{} does not name a markdown concept",
+                path.display()
+            )));
+        };
+        *last = stripped.to_string();
+
+        // Use the validating constructor so a path-derived id has the same
+        // segment invariants as one parsed from a string.
+        Self::new(segments)
     }
 }
 
@@ -172,10 +189,10 @@ impl std::str::FromStr for ConceptId {
 /// `[A-Za-z0-9_][A-Za-z0-9_.\-]*`, but that rule is an artifact of the reference
 /// implementation rather than a requirement: the specification states no
 /// character constraint on filenames, and §11 makes conformance a question of
-/// frontmatter. [`ConceptId::from_path`] accordingly accepts whatever is on
-/// disk, so applying the ASCII rule here only meant that ids the loader had
-/// just produced could not be parsed back, and that links to those concepts
-/// vanished from the graph without even being reported as broken.
+/// frontmatter. [`ConceptId::from_path`] accordingly accepts non-portable
+/// UTF-8 names, so applying the ASCII rule here only meant that ids the loader
+/// had just produced could not be parsed back, and that links to those
+/// concepts vanished from the graph without even being reported as broken.
 ///
 /// What stays rejected is the set that cannot round-trip through the
 /// `/`-joined string form or through [`ConceptId::to_path`]: an empty segment,

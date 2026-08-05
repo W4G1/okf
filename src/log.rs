@@ -113,6 +113,91 @@ impl Log {
             .filter(|d| !is_iso_date(d))
             .collect()
     }
+
+    /// Returns structural §9 violations found in the source text.
+    ///
+    /// [`Log::parse`] intentionally remains a forgiving reader for consumers
+    /// that want to recover entries from imperfect Markdown. Conformance
+    /// validation uses this stricter pass to ensure that ignored content is
+    /// not mistaken for a valid log.
+    pub(crate) fn structural_errors(&self, text: &str) -> Vec<String> {
+        let mut errors = Vec::new();
+
+        if self.days.is_empty() {
+            errors.push("log contains no date groups".to_string());
+        }
+        for day in &self.days {
+            if day.entries.is_empty() {
+                errors.push(format!("log date group {:?} has no entries", day.date));
+            }
+        }
+
+        let mut previous: Option<(&str, crate::date::Date)> = None;
+        for day in &self.days {
+            let Some(date) = crate::date::Date::parse(&day.date) else {
+                continue;
+            };
+            if let Some((previous_text, previous_date)) = previous {
+                if date > previous_date {
+                    errors.push(format!(
+                        "log date groups are not newest first: {:?} follows {:?}",
+                        day.date, previous_text
+                    ));
+                }
+            }
+            previous = Some((day.date.as_str(), date));
+        }
+
+        let mut saw_date = false;
+        let mut saw_title = false;
+        let mut current_has_entry = false;
+        for (line_index, line) in text.lines().enumerate() {
+            let trimmed = line.trim_end();
+            let t = trimmed.trim_start();
+            if t.is_empty() {
+                continue;
+            }
+            if t.starts_with("## ") {
+                saw_date = true;
+                current_has_entry = false;
+                continue;
+            }
+            if t.starts_with("# ") {
+                if saw_date || saw_title {
+                    errors.push(format!(
+                        "log contains non-log content at line {}",
+                        line_index + 1
+                    ));
+                } else {
+                    saw_title = true;
+                }
+                continue;
+            }
+            if bullet_body(t).is_some() {
+                if saw_date {
+                    current_has_entry = true;
+                } else {
+                    errors.push(format!(
+                        "log contains an entry outside a date group at line {}",
+                        line_index + 1
+                    ));
+                }
+                continue;
+            }
+
+            // Markdown permits an entry's prose to continue on an indented
+            // line. Unindented prose is not silently assigned to a group.
+            if saw_date && current_has_entry && line.chars().next().is_some_and(char::is_whitespace)
+            {
+                continue;
+            }
+            errors.push(format!(
+                "log contains non-log content at line {}",
+                line_index + 1
+            ));
+        }
+        errors
+    }
 }
 
 /// Returns the text after a `*` or `-` bullet marker, if the line is a bullet.

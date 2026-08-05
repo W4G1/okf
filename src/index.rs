@@ -16,6 +16,7 @@
 use crate::document::Document;
 use crate::yaml::Value;
 use std::collections::{BTreeMap, HashMap};
+use std::ffi::OsStr;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -41,6 +42,20 @@ pub struct IndexEntry {
 /// group sorted by title (case-insensitive).
 #[must_use]
 pub fn build_index_text(entries: &[IndexEntry]) -> String {
+    build_index_text_impl(entries, encode_link_destination)
+}
+
+/// Builds index text when entry links are already percent-encoded. The index
+/// generator uses this for filenames obtained as raw `OsStr` bytes; the public
+/// [`build_index_text`] function continues to accept ordinary path strings.
+fn build_index_text_with_encoded_links(entries: &[IndexEntry]) -> String {
+    build_index_text_impl(entries, str::to_owned)
+}
+
+fn build_index_text_impl<F>(entries: &[IndexEntry], encode_link: F) -> String
+where
+    F: Fn(&str) -> String,
+{
     let mut grouped: BTreeMap<String, Vec<(&str, &str, &str)>> = BTreeMap::new();
     for e in entries {
         let key = if e.type_.is_empty() {
@@ -57,8 +72,11 @@ pub fn build_index_text(entries: &[IndexEntry]) -> String {
     let mut sections: Vec<String> = Vec::new();
     for (typ, mut items) in grouped {
         items.sort_by_key(|a| a.0.to_lowercase());
-        let mut lines = vec![format!("# {typ}"), String::new()];
+        let mut lines = vec![format!("# {}", escape_markdown_text(&typ)), String::new()];
         for (title, link, desc) in items {
+            let title = escape_markdown_text(title);
+            let link = encode_link(link);
+            let desc = escape_markdown_text(desc);
             let suffix = if desc.is_empty() {
                 String::new()
             } else {
@@ -69,6 +87,63 @@ pub fn build_index_text(entries: &[IndexEntry]) -> String {
         sections.push(lines.join("\n"));
     }
     format!("{}\n", sections.join("\n\n"))
+}
+
+/// Escapes Markdown delimiters before placing arbitrary text in an index. This
+/// keeps titles and descriptions from creating links, images, or raw HTML while
+/// retaining ordinary punctuation such as `*` and `.` in the rendered text;
+/// line breaks become spaces because index descriptions are one-line values.
+fn escape_markdown_text(text: &str) -> String {
+    let mut escaped = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '\n' | '\r' => escaped.push(' '),
+            '\\' | '[' | ']' | '<' | '>' | '&' => {
+                escaped.push('\\');
+                escaped.push(c);
+            }
+            c => escaped.push(c),
+        }
+    }
+    escaped
+}
+
+/// Percent-encodes a relative Markdown destination. Keeping only unreserved
+/// URI bytes and path separators makes brackets, parentheses, quotes, spaces,
+/// `#`, and `%` unable to alter the link syntax while preserving the filename
+/// that the destination addresses.
+fn encode_link_destination(link: &str) -> String {
+    percent_encode_path(link.as_bytes())
+}
+
+fn percent_encode_path(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut encoded = String::with_capacity(bytes.len());
+    for &byte in bytes {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~' | b'/') {
+            encoded.push(byte as char);
+        } else {
+            encoded.push('%');
+            encoded.push(HEX[(byte >> 4) as usize] as char);
+            encoded.push(HEX[(byte & 0x0f) as usize] as char);
+        }
+    }
+    encoded
+}
+
+/// Encodes one filesystem component without first converting it through a
+/// lossy UTF-8 representation. This keeps an index destination usable even
+/// when the filesystem permits a non-UTF-8 filename.
+fn encoded_component(name: &OsStr) -> String {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        percent_encode_path(name.as_bytes())
+    }
+    #[cfg(not(unix))]
+    {
+        percent_encode_path(name.to_string_lossy().as_bytes())
+    }
 }
 
 /// A synthesizer for subdirectory descriptions: given the directory's path
@@ -184,15 +259,16 @@ pub fn regenerate_indexes_with(
                 entries.push(IndexEntry {
                     type_,
                     title,
-                    link: name,
+                    link: encoded_component(child.file_name().unwrap_or_default()),
                     description,
                 });
             } else if child.is_dir() {
                 let description = dir_descriptions.get(&child).cloned().unwrap_or_default();
+                let encoded_name = encoded_component(child.file_name().unwrap_or_default());
                 entries.push(IndexEntry {
                     type_: "Subdirectories".to_string(),
                     title: name.clone(),
-                    link: format!("{name}/{INDEX_FILE}"),
+                    link: format!("{encoded_name}/{INDEX_FILE}"),
                     description,
                 });
             }
@@ -202,14 +278,7 @@ pub fn regenerate_indexes_with(
             continue;
         }
 
-        let index_path = directory.join(INDEX_FILE);
-        let body = build_index_text(&entries);
-        let text = match preserved_frontmatter(&index_path) {
-            Some(fm) => format!("---\n{fm}---\n\n{body}"),
-            None => body,
-        };
-        fs::write(&index_path, text)?;
-        written.push(index_path);
+        written.push(write_index(directory, bundle_root, &entries)?);
 
         if directory == bundle_root {
             continue;
@@ -238,6 +307,25 @@ pub fn regenerate_indexes_with(
 fn load_doc(path: &Path) -> Option<Document> {
     let text = fs::read_to_string(path).ok()?;
     Document::parse(&text).ok()
+}
+
+fn write_index(
+    directory: &Path,
+    bundle_root: &Path,
+    entries: &[IndexEntry],
+) -> io::Result<PathBuf> {
+    let index_path = directory.join(INDEX_FILE);
+    let body = build_index_text_with_encoded_links(entries);
+    let text = if directory == bundle_root {
+        match preserved_frontmatter(&index_path) {
+            Some(fm) => format!("---\n{fm}---\n\n{body}"),
+            None => body,
+        }
+    } else {
+        body
+    };
+    fs::write(&index_path, text)?;
+    Ok(index_path)
 }
 
 /// The `okf_version` declaration to carry over when rewriting an `index.md`.

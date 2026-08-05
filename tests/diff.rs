@@ -82,6 +82,23 @@ fn edit_breaks_rename_detection() {
 }
 
 #[test]
+fn same_id_body_changes_are_reported() {
+    let a = TempDir::new();
+    a.write("metric.md", CONCEPT);
+    let b = TempDir::new();
+    b.write(
+        "metric.md",
+        "---\ntype: Metric\ntitle: Revenue\ndescription: Recognized revenue.\n---\n\n# Definition\n\nUpdated revenue definition.\n",
+    );
+
+    let diff = bundle_diff(&load(&a), &load(&b));
+    assert_eq!(diff.content.len(), 1);
+    assert_eq!(diff.content[0].to_string(), "metric");
+    assert!(diff.frontmatter.is_empty());
+    assert!(diff.to_string().contains("content (1):"));
+}
+
+#[test]
 fn frontmatter_key_changes_are_reported() {
     let a = TempDir::new();
     a.write(
@@ -168,6 +185,56 @@ fn newly_broken_link_is_reported() {
     let diff = bundle_diff(&load(&a), &load(&b));
     assert!(diff.broken_links.iter().any(|(_, t)| t == "other.md"));
     assert!(diff.mended_links.is_empty());
+}
+
+#[test]
+fn valid_link_additions_removals_and_retargeting_are_reported() {
+    let a = TempDir::new();
+    a.write(
+        "source.md",
+        "---\ntype: Metric\n---\n\nSee [old](old.md).\n",
+    );
+    a.write(
+        "removed.md",
+        "---\ntype: Metric\n---\n\nSee [old](old.md).\n",
+    );
+    a.write("added.md", "---\ntype: Metric\n---\n\nNo links.\n");
+    a.write("old.md", CONCEPT);
+    a.write("new.md", CONCEPT);
+
+    let b = TempDir::new();
+    b.write(
+        "source.md",
+        "---\ntype: Metric\n---\n\nSee [new](new.md).\n",
+    );
+    b.write("removed.md", "---\ntype: Metric\n---\n\nNo links.\n");
+    b.write("added.md", "---\ntype: Metric\n---\n\nSee [new](new.md).\n");
+    b.write("old.md", CONCEPT);
+    b.write("new.md", CONCEPT);
+
+    let diff = bundle_diff(&load(&a), &load(&b));
+    assert!(diff
+        .added_links
+        .iter()
+        .any(|(source, target)| source.name() == "source" && target.name() == "new"));
+    assert!(diff
+        .added_links
+        .iter()
+        .any(|(source, target)| source.name() == "added" && target.name() == "new"));
+    assert!(diff
+        .removed_links
+        .iter()
+        .any(|(source, target)| source.name() == "source" && target.name() == "old"));
+    assert!(diff
+        .removed_links
+        .iter()
+        .any(|(source, target)| { source.name() == "removed" && target.name() == "old" }));
+    assert!(diff.mended_links.is_empty());
+    assert!(diff.broken_links.is_empty());
+
+    let out = diff.to_string();
+    assert!(out.contains("added links (2):"), "{out}");
+    assert!(out.contains("removed links (2):"), "{out}");
 }
 
 #[test]
