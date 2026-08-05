@@ -131,6 +131,25 @@ fn lint_with_warnings_is_data_error() {
 }
 
 #[test]
+fn validate_output_omits_spec_section_references() {
+    let tmp = good_bundle();
+    tmp.write(
+        "bad.md",
+        "---\ntype: Note\ntags: one, two\nsources:\n  - { id: known, resource: https://example.test/source }\n---\n\nClaim.[^unknown]\n\n[^unknown]: Not a source id\n",
+    );
+
+    let output = okf()
+        .args(["validate", tmp.path().to_str().unwrap()])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(output.stdout).unwrap();
+
+    assert!(stdout.contains("no tags are read from it"), "{stdout}");
+    assert!(stdout.contains("matches no `sources[].id`"), "{stdout}");
+    assert!(!stdout.contains('§'), "{stdout}");
+}
+
+#[test]
 fn parse_missing_file_is_no_input() {
     let status = okf().args(["parse", "/no/such/file.md"]).status().unwrap();
     assert_eq!(code(status), EX_NOINPUT);

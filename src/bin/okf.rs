@@ -116,10 +116,10 @@ USAGE:
     okf <command> [args]
 
 COMMANDS:
-    validate     <bundle>    Check a bundle against OKF v0.2 conformance (§11)
+    validate     <bundle>    Check a bundle against OKF v0.2 conformance
     info         <bundle>    Summarize a bundle (concepts, types, trust, links)
     trust        <bundle>    Report trust tier, status, and staleness per concept
-    computations <bundle>    List Attested Computation contracts (§10)
+    computations <bundle>    List Attested Computation contracts
     index        <bundle>    (Re)generate every index.md in the bundle
     graph        <bundle>    Print the cross-link graph (--format text|mermaid|json)
     parse        <file>      Parse one concept document and print its structure
@@ -223,7 +223,7 @@ fn cmd_validate(args: &[String]) -> Result<ExitCode, CliError> {
     let report = validate_bundle_at(&bundle, today(args)?);
 
     for d in &report.diagnostics {
-        println!("{d}");
+        print_diagnostic(d);
     }
 
     let errors = report.error_count();
@@ -249,7 +249,7 @@ fn cmd_lint(args: &[String]) -> Result<ExitCode, CliError> {
     let report = lint_bundle_at(&bundle, today(args)?);
 
     for d in &report.diagnostics {
-        println!("{d}");
+        print_diagnostic(d);
     }
 
     let warnings = report.warning_count();
@@ -266,6 +266,104 @@ fn cmd_lint(args: &[String]) -> Result<ExitCode, CliError> {
         println!("✗ {warnings} lint warning(s)");
         Ok(ExitCode::from(EX_DATAERR))
     }
+}
+
+/// Prints diagnostics without implementation-specific OKF section citations.
+fn print_diagnostic(diagnostic: &okf::validate::Diagnostic) {
+    println!("{}", strip_spec_references(&diagnostic.to_string()));
+}
+
+/// Removes section citations from CLI text while preserving the surrounding
+/// explanation. The full diagnostic message remains available to library
+/// consumers through [`Diagnostic::message`](okf::validate::Diagnostic::message).
+fn strip_spec_references(text: &str) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0;
+
+    while i < chars.len() {
+        if chars[i] == '(' {
+            if let Some(relative_end) = chars[i + 1..].iter().position(|&c| c == ')') {
+                let end = i + 1 + relative_end;
+                if is_section_group(&chars[i + 1..end]) {
+                    if out.ends_with(' ') {
+                        out.pop();
+                    }
+                    i = end + 1;
+                    continue;
+                }
+            }
+        }
+
+        if let Some(end) = section_reference_end(&chars, i) {
+            i = end;
+            if i < chars.len() && chars[i].is_whitespace() && out.ends_with(' ') {
+                i += 1;
+            }
+            continue;
+        }
+
+        out.push(chars[i]);
+        i += 1;
+    }
+
+    out.trim_end().to_string()
+}
+
+fn is_section_group(chars: &[char]) -> bool {
+    let mut i = 0;
+    loop {
+        while i < chars.len() && chars[i].is_whitespace() {
+            i += 1;
+        }
+        let Some(end) = section_reference_end(chars, i) else {
+            return false;
+        };
+        i = end;
+        while i < chars.len() && chars[i].is_whitespace() {
+            i += 1;
+        }
+        if i == chars.len() {
+            return true;
+        }
+
+        if chars[i] == ',' {
+            i += 1;
+            continue;
+        }
+        if chars.get(i..i + 2) == Some(&['t', 'o']) {
+            i += 2;
+            continue;
+        }
+        return false;
+    }
+}
+
+fn section_reference_end(chars: &[char], start: usize) -> Option<usize> {
+    if chars.get(start) != Some(&'§') {
+        return None;
+    }
+
+    let mut i = start + 1;
+    let digit_start = i;
+    while i < chars.len() && chars[i].is_ascii_digit() {
+        i += 1;
+    }
+    if i == digit_start {
+        return None;
+    }
+
+    while i < chars.len() && chars[i] == '.' {
+        i += 1;
+        let decimal_start = i;
+        while i < chars.len() && chars[i].is_ascii_digit() {
+            i += 1;
+        }
+        if i == decimal_start {
+            return None;
+        }
+    }
+    Some(i)
 }
 
 fn cmd_info(args: &[String]) -> Result<ExitCode, CliError> {
@@ -299,11 +397,11 @@ fn cmd_info(args: &[String]) -> Result<ExitCode, CliError> {
         *by_tier.entry(c.trust_tier().to_string()).or_default() += 1;
         *by_status.entry(c.status().to_string()).or_default() += 1;
     }
-    println!("\ntrust tiers (§5.3):");
+    println!("\ntrust tiers:");
     for (tier, n) in &by_tier {
         println!("  {n:>4}  {tier}");
     }
-    println!("\nstatus (§5.4):");
+    println!("\nstatus:");
     for (status, n) in &by_status {
         println!("  {n:>4}  {status}");
     }
@@ -710,7 +808,7 @@ fn cmd_parse(args: &[String]) -> Result<ExitCode, CliError> {
 
 /// The trust block: tier, status, `generated`, `verified`, and `stale_after`.
 fn print_parse_trust(fm: &okf::Frontmatter) {
-    println!("\ntrust (§5):");
+    println!("\ntrust:");
     println!("  tier:      {}", fm.trust_tier());
     println!("  status:    {}", fm.status());
     if let Some(generated) = fm.generated() {
@@ -734,7 +832,7 @@ fn print_parse_sources(fm: &okf::Frontmatter) {
     if sources.is_empty() {
         return;
     }
-    println!("\nsources ({}) (§5.1):", sources.len());
+    println!("\nsources ({}):", sources.len());
     for source in &sources {
         println!("  {source} [{:?}]", source.resource_kind());
         if let Some(author) = &source.author {
@@ -759,7 +857,7 @@ fn print_parse_attributions(doc: &Document) {
     if attributions.is_empty() {
         return;
     }
-    println!("\nattribution ({}) (§5.1):", attributions.len());
+    println!("\nattribution ({}):", attributions.len());
     for a in &attributions {
         let target = a.source.as_ref().map_or_else(
             || "(no matching sources[].id)".to_string(),
@@ -774,7 +872,7 @@ fn print_parse_computation(doc: &Document) {
     let Some(contract) = doc.attested_computation() else {
         return;
     };
-    println!("\nattested computation (§10):");
+    println!("\nattested computation:");
     println!(
         "  runtime:     {}",
         contract.runtime.as_deref().unwrap_or("(missing)")
@@ -810,7 +908,7 @@ fn print_parse_links(doc: &Document) {
     let citations = doc.citations();
     if !citations.is_empty() {
         println!(
-            "\nlegacy citations ({}), superseded by `sources` (§13.1):",
+            "\nlegacy citations ({}), superseded by `sources`:",
             citations.len()
         );
         for cit in &citations {
