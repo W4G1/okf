@@ -43,6 +43,13 @@
 #[doc = include_str!("../../../README.md")]
 pub struct ReadmeExamples;
 
+// Hidden from the documented API: the CLI implementation is exposed only so
+// the okf binary and the cargo-okf subcommand can share it, and carries no
+// stability promise for library consumers.
+#[cfg(feature = "validator")]
+#[doc(hidden)]
+pub mod cli;
+
 pub use okf_core::*;
 #[cfg(feature = "validator")]
 pub use okf_validator::*;

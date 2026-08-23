@@ -1,11 +1,11 @@
 [workspace]
 resolver = "3"
-members = ["crates/okf-core", "crates/okf-validator", "crates/okf", "crates/reserved/*"]
+members = ["crates/okf-core", "crates/okf-validator", "crates/okf", "crates/cargo-okf", "crates/reserved/*"]
 
 # Metadata shared by all member crates; each inherits these with
 # `<key>.workspace = true`.
 [workspace.package]
-version = "0.2.2"
+version = "0.2.3"
 edition = "2024"
 authors = ["Walter van der Giessen <waltervdgiessen@gmail.com>"]
 license = "Apache-2.0"
@@ -16,5 +16,6 @@ keywords = ["okf", "knowledge", "markdown", "frontmatter", "metadata"]
 categories = ["parser-implementations", "data-structures"]
 
 [workspace.dependencies]
-okf-core = { path = "crates/okf-core", version = "0.2.2" }
-okf-validator = { path = "crates/okf-validator", version = "0.2.2" }
+okf-core = { path = "crates/okf-core", version = "0.2.3" }
+okf-validator = { path = "crates/okf-validator", version = "0.2.3" }
+okf = { path = "crates/okf", version = "0.2.3" }
