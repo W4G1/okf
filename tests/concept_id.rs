@@ -5,8 +5,8 @@
 //! ASCII convention survives as `is_portable_segment`, which drives a warning
 //! rather than a parse error.
 
-use okf::concept_id::is_portable_segment;
 use okf::ConceptId;
+use okf::concept_id::is_portable_segment;
 
 #[test]
 fn accepts_names_the_reference_ascii_rule_rejected() {

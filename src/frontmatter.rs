@@ -23,8 +23,8 @@
 //!
 //! [spec]: https://github.com/GoogleCloudPlatform/open-knowledge-format/blob/main/SPEC.md
 
-use crate::computation::{Attester, Executor, Parameter, ATTESTED_COMPUTATION_TYPE};
-use crate::date::{Date, DateField, DateTimeField};
+use crate::computation::{ATTESTED_COMPUTATION_TYPE, Attester, Executor, Parameter};
+use crate::date::{Date, DateTime, DateTimeField};
 use crate::provenance::{Source, UsageWindow};
 use crate::trust::{self, Generated, Status, TrustTier, Verification};
 use crate::yaml::{Mapping, Value};
@@ -296,22 +296,31 @@ impl Frontmatter {
         Status::parse(self.display_str("status").as_deref())
     }
 
-    /// The `stale_after` date, on and after which the content is stale (§5.5).
+    /// The `stale_after` timestamp, on and after which the content is stale (§5.5).
     #[must_use]
-    pub fn stale_after(&self) -> Option<DateField> {
+    pub fn stale_after(&self) -> Option<DateTimeField> {
         self.display_str("stale_after")
-            .map(|s| DateField::new(s.into_owned()))
+            .map(|s| DateTimeField::new(s.into_owned()))
+    }
+
+    /// Whether the concept is stale at `now`: `now >= stale_after` (§5.5).
+    /// A concept with no (or an unreadable / offset-less) `stale_after` is never stale.
+    #[must_use]
+    pub fn is_stale_at(&self, now: DateTime) -> bool {
+        let Some(stale_after) = self.stale_after() else {
+            return false;
+        };
+        if !stale_after.is_valid() {
+            return false;
+        }
+        trust::is_stale_at(stale_after.datetime, now)
     }
 
     /// Whether the concept is stale on `today`: `today >= stale_after` (§5.5).
-    /// A concept with no (or an unreadable) `stale_after` is never stale.
-    ///
-    /// A datetime-valued `stale_after` is compared on its date part, as
-    /// [`DateField::effective_date`] explains.
+    /// Evaluates staleness at midnight UTC on `today`.
     #[must_use]
     pub fn is_stale_on(&self, today: Date) -> bool {
-        let stale_after = self.stale_after().and_then(|d| d.effective_date());
-        trust::is_stale_on(stale_after, today)
+        self.is_stale_at(today.to_utc_datetime())
     }
 
     /// `true` when `type` is `Attested Computation` (§10.1).

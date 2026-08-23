@@ -92,10 +92,10 @@ impl Link {
                 LinkKind::Relative => resolve_relative_path(target, source),
                 _ => None,
             };
-            if let Some(id) = id {
-                if !out.contains(&id) {
-                    out.push(id);
-                }
+            if let Some(id) = id
+                && !out.contains(&id)
+            {
+                out.push(id);
             }
         };
         // Strip an anchor before decoding. Otherwise a filename containing an
@@ -355,17 +355,18 @@ fn scan_line_links(line: &str, out: &mut Vec<Link>) {
     let chars: Vec<char> = line.chars().collect();
     let mut i = 0;
     while i < chars.len() {
-        if chars[i] == '[' && !is_escaped(&chars, i) {
-            if let Some((text, dest, next)) = parse_inline_link(&chars, i) {
-                let target = clean_destination(&dest);
-                out.push(Link {
-                    text,
-                    kind: Link::classify(&target),
-                    target,
-                });
-                i = next;
-                continue;
-            }
+        if chars[i] == '['
+            && !is_escaped(&chars, i)
+            && let Some((text, dest, next)) = parse_inline_link(&chars, i)
+        {
+            let target = clean_destination(&dest);
+            out.push(Link {
+                text,
+                kind: Link::classify(&target),
+                target,
+            });
+            i = next;
+            continue;
         }
         i += 1;
     }
@@ -373,7 +374,7 @@ fn scan_line_links(line: &str, out: &mut Vec<Link>) {
 
 /// Whether the character at `index` is preceded by an odd number of
 /// backslashes, and is therefore escaped in Markdown.
-fn is_escaped(chars: &[char], index: usize) -> bool {
+const fn is_escaped(chars: &[char], index: usize) -> bool {
     let mut backslashes = 0;
     let mut i = index;
     while i > 0 && chars[i - 1] == '\\' {
@@ -445,10 +446,10 @@ fn parse_inline_link(chars: &[char], start: usize) -> Option<(String, String, us
 /// the path rather than a separator before a title.
 fn clean_destination(dest: &str) -> String {
     let d = dest.trim();
-    if let Some(rest) = d.strip_prefix('<') {
-        if let Some(end) = rest.find('>') {
-            return rest[..end].to_string();
-        }
+    if let Some(rest) = d.strip_prefix('<')
+        && let Some(end) = rest.find('>')
+    {
+        return rest[..end].to_string();
     }
     strip_title(d)
 }
@@ -503,11 +504,11 @@ fn parse_citation_line(line: &str) -> Option<Citation> {
     let mut text = None;
     let mut target = None;
     let chars: Vec<char> = after.chars().collect();
-    if let Some(open) = chars.iter().position(|&c| c == '[') {
-        if let Some((t, dest, _)) = parse_inline_link(&chars, open) {
-            text = Some(t);
-            target = Some(clean_destination(&dest));
-        }
+    if let Some(open) = chars.iter().position(|&c| c == '[')
+        && let Some((t, dest, _)) = parse_inline_link(&chars, open)
+    {
+        text = Some(t);
+        target = Some(clean_destination(&dest));
     }
     Some(Citation {
         number,

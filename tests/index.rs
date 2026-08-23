@@ -4,7 +4,7 @@ mod common;
 
 use common::TempDir;
 use okf::index::{
-    build_index_text, default_synthesize, regenerate_indexes, regenerate_indexes_with, IndexEntry,
+    IndexEntry, build_index_text, default_synthesize, regenerate_indexes, regenerate_indexes_with,
 };
 use okf::links::extract_links;
 
@@ -239,9 +239,10 @@ fn nested_indexes_do_not_keep_root_version_frontmatter() {
 
     regenerate_indexes(tmp.path()).unwrap();
 
-    assert!(tmp
-        .read("index.md")
-        .starts_with("---\nokf_version: \"0.2\"\n---\n"));
+    assert!(
+        tmp.read("index.md")
+            .starts_with("---\nokf_version: \"0.2\"\n---\n")
+    );
     let nested = tmp.read("tables/index.md");
     assert!(!nested.starts_with("---"), "{nested}");
     assert!(!nested.contains("okf_version"), "{nested}");

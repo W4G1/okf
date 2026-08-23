@@ -1,7 +1,7 @@
 [package]
 name = "okf"
 version = "0.2.1"
-edition = "2021"
+edition = "2024"
 authors = ["Walter van der Giessen <waltervdgiessen@gmail.com>"]
 description = "A pure-Rust, zero-dependency implementation of the Open Knowledge Format (OKF) v0.2: parser, model, validator, provenance/trust/attestation families, link graph, and index/log tooling."
 license = "Apache-2.0"

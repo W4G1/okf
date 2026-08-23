@@ -17,14 +17,14 @@
 //! date to compare against.
 
 use crate::bundle::Bundle;
-use crate::computation::{ComputationSource, ATTESTED_COMPUTATION_TYPE};
+use crate::computation::{ATTESTED_COMPUTATION_TYPE, ComputationSource};
 use crate::concept_id::ConceptId;
 use crate::date::{Date, DateTime};
 use crate::document::Document;
 use crate::frontmatter::Frontmatter;
 use crate::log::Log;
 use crate::provenance::{ResourceKind, Source};
-use crate::trust::{Verification, STATUS_VALUES};
+use crate::trust::{STATUS_VALUES, Verification};
 use crate::yaml::Value;
 use std::collections::HashSet;
 use std::fs;
@@ -302,9 +302,9 @@ fn check_trust(cx: &mut Context, fm: &Frontmatter) {
                 if generated.by.is_none() {
                     cx.warn("`generated.by` is required within `generated` (§5.2)");
                 }
-                if let Some(at) = generated.at.filter(|a| !a.has_time()) {
+                if let Some(at) = generated.at.filter(|a| !a.is_valid()) {
                     cx.warn(format!(
-                        "`generated.at` is not an ISO-8601 datetime: {:?} (§5.2)",
+                        "`generated.at` is not an ISO-8601 datetime with an explicit offset: {:?} (§5.2)",
                         at.raw
                     ));
                 }
@@ -359,8 +359,8 @@ fn check_verification_event(cx: &mut Context, i: usize, event: &Verification) {
     }
     match &event.at {
         None => cx.warn(format!("`verified[{i}].at` is missing (§5.2)")),
-        Some(at) if !at.has_time() => cx.warn(format!(
-            "`verified[{i}].at` is not an ISO-8601 datetime: {:?} (§5.2)",
+        Some(at) if !at.is_valid() => cx.warn(format!(
+            "`verified[{i}].at` is not an ISO-8601 datetime with an explicit offset: {:?} (§5.2)",
             at.raw
         )),
         Some(_) => {}
@@ -381,17 +381,19 @@ fn check_lifecycle(cx: &mut Context, fm: &Frontmatter, today: Option<Date>) {
     let Some(stale_after) = fm.stale_after() else {
         return;
     };
-    match stale_after.date {
-        None => cx.warn(format!(
-            "`stale_after` is not an absolute `YYYY-MM-DD` date: {:?} (§5.5)",
-            stale_after.raw
-        )),
-        Some(date) => {
-            if let Some(today) = today {
-                if today >= date {
-                    cx.info(format!("stale since {date} (§5.5)"));
-                }
+    match &stale_after.datetime {
+        Some(dt) if stale_after.is_valid() => {
+            if let Some(today) = today
+                && today.to_utc_datetime() >= *dt
+            {
+                cx.info(format!("stale since {stale_after} (§5.5)"));
             }
+        }
+        _ => {
+            cx.warn(format!(
+                "`stale_after` is not an ISO-8601 datetime with an explicit offset: {:?} (§5.5)",
+                stale_after.raw
+            ));
         }
     }
 }
@@ -418,7 +420,7 @@ fn check_provenance(cx: &mut Context, fm: &Frontmatter) {
         for (field, date) in [("from", &window.from), ("to", &window.to)] {
             if let Some(d) = date.as_ref().filter(|d| !d.is_valid()) {
                 cx.warn(format!(
-                    "`usage_window.{field}` is not a `YYYY-MM-DD` date: {:?} (§5.1)",
+                    "`usage_window.{field}` is not an ISO-8601 datetime with an explicit offset: {:?} (§5.1)",
                     d.raw
                 ));
             }
@@ -454,16 +456,16 @@ fn check_provenance(cx: &mut Context, fm: &Frontmatter) {
                 "`sources[{i}].resource` is required within an entry (§5.1)"
             ));
         }
-        if let Some(id) = &source.id {
-            if !seen_ids.insert(id.clone()) {
-                cx.warn(format!(
-                    "duplicate `sources[].id` {id:?}; ids are the join key for attribution (§5.1)"
-                ));
-            }
+        if let Some(id) = &source.id
+            && !seen_ids.insert(id.clone())
+        {
+            cx.warn(format!(
+                "duplicate `sources[].id` {id:?}; ids are the join key for attribution (§5.1)"
+            ));
         }
         if let Some(last_modified) = source.last_modified.as_ref().filter(|d| !d.is_valid()) {
             cx.warn(format!(
-                "`sources[{i}].last_modified` is not a `YYYY-MM-DD` date: {:?} (§5.1)",
+                "`sources[{i}].last_modified` is not an ISO-8601 datetime with an explicit offset: {:?} (§5.1)",
                 last_modified.raw
             ));
         }
@@ -794,11 +796,11 @@ const fn type_name(value: &Value) -> &'static str {
     }
 }
 
-/// Checks an ISO-8601 datetime with a time and optional zone.
+/// Checks an ISO-8601 datetime with a time of day and an explicit UTC offset.
 ///
-/// [`DateTime::parse`] remains the generic date/datetime parser; OKF's trust
-/// timestamps specifically require the time-bearing form (§5.2).
+/// OKF's timestamp fields require a time of day with an explicit offset (§5).
 #[must_use]
 pub fn is_iso8601_datetime(s: &str) -> bool {
-    DateTime::parse(s).is_some_and(|datetime| datetime.has_time)
+    DateTime::parse(s)
+        .is_some_and(|datetime| datetime.has_time && datetime.offset_minutes.is_some())
 }

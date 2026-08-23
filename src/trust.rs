@@ -15,7 +15,7 @@
 //!   ([`TrustTier::derive`], §5.3).
 
 use crate::actor::Actor;
-use crate::date::{Date, DateTimeField};
+use crate::date::{Date, DateTime, DateTimeField};
 use crate::yaml::Value;
 use std::fmt;
 
@@ -91,13 +91,13 @@ impl Verification {
     }
 
     /// `true` when this event has the required actor and a parseable timestamp
-    /// that includes a time of day.
+    /// that includes a time of day and an explicit UTC offset.
     #[must_use]
     pub fn is_valid(&self) -> bool {
         self.by
             .as_ref()
             .is_some_and(|by| !by.as_str().trim().is_empty())
-            && self.at.as_ref().is_some_and(DateTimeField::has_time)
+            && self.at.as_ref().is_some_and(DateTimeField::is_valid)
     }
 
     /// Reads a whole `verified` value into a list of events.
@@ -128,7 +128,7 @@ impl fmt::Display for Verification {
 
 /// Returns the verification with the latest parseable `at` (§5.2).
 ///
-/// Events missing a verifier or a time-bearing, parseable `at` cannot be
+/// Events missing a verifier or a valid, parseable `at` cannot be
 /// ordered and are skipped; `None` means no event carries a usable timestamp.
 #[must_use]
 pub fn latest_verification(events: &[Verification]) -> Option<&Verification> {
@@ -235,13 +235,21 @@ impl fmt::Display for Status {
     }
 }
 
-/// Whether a concept with this `stale_after` date is stale on `today`.
+/// Whether a concept with this `stale_after` timestamp is stale at `now`.
 ///
-/// §5.5: "A concept is stale when `today >= stale_after`." An absent or
-/// unparseable `stale_after` is never stale.
+/// §5.5: "A concept is stale when `now >= stale_after`." An absent,
+/// offset-less, or unparseable `stale_after` is never stale.
 #[must_use]
-pub fn is_stale_on(stale_after: Option<Date>, today: Date) -> bool {
-    stale_after.is_some_and(|d| today >= d)
+pub fn is_stale_at(stale_after: Option<DateTime>, now: DateTime) -> bool {
+    stale_after.is_some_and(|dt| dt.offset_minutes.is_some() && dt.has_time && now >= dt)
+}
+
+/// Whether a concept with this `stale_after` timestamp is stale on `today`.
+///
+/// Evaluates staleness at midnight UTC on `today`.
+#[must_use]
+pub fn is_stale_on(stale_after: Option<DateTime>, today: Date) -> bool {
+    is_stale_at(stale_after, today.to_utc_datetime())
 }
 
 #[cfg(test)]
@@ -307,15 +315,33 @@ mod tests {
     }
 
     #[test]
-    fn staleness_is_a_plain_date_comparison() {
-        let stale_after = Date::new(2026, 9, 23);
-        assert!(!is_stale_on(stale_after, Date::new(2026, 9, 22).unwrap()));
-        assert!(
-            is_stale_on(stale_after, Date::new(2026, 9, 23).unwrap()),
-            "stale on the day itself"
-        );
-        assert!(is_stale_on(stale_after, Date::new(2026, 9, 24).unwrap()));
-        assert!(!is_stale_on(None, Date::new(2099, 1, 1).unwrap()));
+    fn staleness_is_an_instant_comparison() {
+        let stale_after = DateTime::parse("2026-09-23T00:00:00Z");
+        assert!(!is_stale_at(
+            stale_after,
+            DateTime::parse("2026-09-22T23:59:59Z").unwrap()
+        ));
+        assert!(is_stale_at(
+            stale_after,
+            DateTime::parse("2026-09-23T00:00:00Z").unwrap()
+        ));
+        assert!(is_stale_at(
+            stale_after,
+            DateTime::parse("2026-09-24T12:00:00Z").unwrap()
+        ));
+        assert!(!is_stale_at(
+            None,
+            DateTime::parse("2099-01-01T00:00:00Z").unwrap()
+        ));
+        // Date-only or offset-less values are ignored
+        assert!(!is_stale_at(
+            DateTime::parse("2026-09-23"),
+            DateTime::parse("2026-09-24T00:00:00Z").unwrap()
+        ));
+        assert!(!is_stale_at(
+            DateTime::parse("2026-09-23T00:00:00"),
+            DateTime::parse("2026-09-24T00:00:00Z").unwrap()
+        ));
     }
 
     #[test]

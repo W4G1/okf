@@ -106,14 +106,15 @@ fn scan_labels(line: &str) -> Vec<String> {
     let bytes = line.as_bytes();
     let mut i = 0;
     while i + 2 < bytes.len() {
-        if bytes[i] == b'[' && bytes[i + 1] == b'^' {
-            if let Some(close) = line[i + 2..].find(']') {
-                let label = line[i + 2..i + 2 + close].trim();
-                if !label.is_empty() && !label.contains('[') {
-                    out.push(label.to_string());
-                    i += 2 + close + 1;
-                    continue;
-                }
+        if bytes[i] == b'['
+            && bytes[i + 1] == b'^'
+            && let Some(close) = line[i + 2..].find(']')
+        {
+            let label = line[i + 2..i + 2 + close].trim();
+            if !label.is_empty() && !label.contains('[') {
+                out.push(label.to_string());
+                i += 2 + close + 1;
+                continue;
             }
         }
         i += 1;

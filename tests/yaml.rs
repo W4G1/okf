@@ -276,7 +276,7 @@ fn conservative_number_resolution() {
     // Zero-padded codes stay strings (not coerced to ints).
     assert_eq!(Value::parse("007").unwrap(), Value::String("007".into()));
     assert_eq!(Value::parse("08").unwrap(), Value::String("08".into()));
-    // Bare-exponent forms stay strings; only point-bearing floats are floats.
+    // Bare-exponent forms stay strings; only floats with a decimal point are floats.
     assert_eq!(Value::parse("1e3").unwrap(), Value::String("1e3".into()));
     assert_eq!(Value::parse("1.5e3").unwrap(), Value::Float(1500.0));
     assert_eq!(Value::parse("0").unwrap(), Value::Int(0));

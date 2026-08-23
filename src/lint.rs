@@ -168,10 +168,10 @@ fn index_source_id(bundle_root: &Path, index_path: &Path) -> Option<ConceptId> {
             _ => None,
         })
         .collect();
-    if let Some(last) = segments.last_mut() {
-        if let Some(stripped) = last.strip_suffix(".md") {
-            *last = stripped.to_string();
-        }
+    if let Some(last) = segments.last_mut()
+        && let Some(stripped) = last.strip_suffix(".md")
+    {
+        *last = stripped.to_string();
     }
     ConceptId::new(segments).ok()
 }
@@ -321,13 +321,13 @@ fn check_links_to_deprecated(cx: &mut Cx, bundle: &Bundle) {
         if !link.exists || !warned.insert(link.target.clone()) {
             continue;
         }
-        if let Some(target) = bundle.get(&link.target) {
-            if target.status().is_deprecated() {
-                cx.warn(
-                    "L10",
-                    format!("links to deprecated concept `{}`", link.target),
-                );
-            }
+        if let Some(target) = bundle.get(&link.target)
+            && target.status().is_deprecated()
+        {
+            cx.warn(
+                "L10",
+                format!("links to deprecated concept `{}`", link.target),
+            );
         }
     }
 }
@@ -336,10 +336,10 @@ fn check_staleness(cx: &mut Cx, fm: &Frontmatter, today: Option<Date>) {
     let Some(today) = today else {
         return;
     };
-    let Some(stale_after) = fm.stale_after().and_then(|d| d.effective_date()) else {
+    let Some(stale_after) = fm.stale_after() else {
         return;
     };
-    if today >= stale_after {
+    if fm.is_stale_on(today) {
         cx.warn(
             "L11",
             format!("stale since {stale_after} (`stale_after` passed)"),

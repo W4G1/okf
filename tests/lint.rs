@@ -7,7 +7,7 @@
 mod common;
 
 use common::TempDir;
-use okf::{lint_bundle, lint_bundle_at, Bundle, Date, Severity};
+use okf::{Bundle, Date, Severity, lint_bundle, lint_bundle_at};
 
 /// Returns the messages of every finding with the given rule code (without
 /// the `[code] ` prefix).
@@ -277,7 +277,7 @@ fn l11_stale_with_today() {
     tmp.write(
         "metric.md",
         "---\ntype: Metric\ntitle: Revenue\ndescription: d\n\
-         stale_after: 2026-06-15\n\
+         stale_after: 2026-06-15T00:00:00Z\n\
          generated: { by: ref/x, at: 2026-06-01T00:00:00Z }\n\
          verified: { by: human:a, at: 2026-06-02T00:00:00Z }\n\
          ---\n\n# Definition\n\nProse.\n",
@@ -293,7 +293,8 @@ fn l11_stale_with_today() {
     let with_today = lint_bundle_at(&bundle, Date::new(2026, 7, 1));
     let l11 = messages_for(&with_today, "L11");
     assert!(
-        l11.iter().any(|m| m.contains("stale since 2026-06-15")),
+        l11.iter()
+            .any(|m| m.contains("stale since 2026-06-15T00:00:00Z")),
         "{l11:?}"
     );
 }

@@ -315,11 +315,11 @@ fn computation_section(body: &str) -> Option<Vec<&str>> {
     let mut lines = body.lines();
     let mut level = 0;
     for line in lines.by_ref() {
-        if let Some((l, title)) = heading(line) {
-            if title.eq_ignore_ascii_case(COMPUTATION_HEADING) {
-                level = l;
-                break;
-            }
+        if let Some((l, title)) = heading(line)
+            && title.eq_ignore_ascii_case(COMPUTATION_HEADING)
+        {
+            level = l;
+            break;
         }
     }
     if level == 0 {
@@ -327,10 +327,10 @@ fn computation_section(body: &str) -> Option<Vec<&str>> {
     }
     let mut section = Vec::new();
     for line in lines {
-        if let Some((l, _)) = heading(line) {
-            if l <= level {
-                break;
-            }
+        if let Some((l, _)) = heading(line)
+            && l <= level
+        {
+            break;
         }
         section.push(line);
     }

@@ -251,7 +251,7 @@ impl Value {
     }
 
     /// The borrowing form of [`as_display_string`](Self::as_display_string):
-    /// returns a [`Cow`] borrowing the [`String`](Self::String) case and
+    /// returns a [`std::borrow::Cow`] borrowing the [`String`](Self::String) case and
     /// owning the coerced form for [`Bool`](Self::Bool)/[`Int`](Self::Int)/
     /// [`Float`](Self::Float). `None` for non-scalar variants.
     ///

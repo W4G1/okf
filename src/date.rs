@@ -1,13 +1,14 @@
 //! Calendar dates and ISO-8601 datetimes for the trust and lifecycle families
 //! (§5).
 //!
-//! OKF v0.2 puts date-shaped fields in frontmatter and asks consumers to answer
+//! OKF v0.2 puts timestamp fields in frontmatter and asks consumers to answer
 //! questions about them: which verification is the most recent, and is
-//! `today >= stale_after`. Two shapes occur:
+//! `now >= stale_after`.
 //!
-//! - ISO-8601 datetimes in `generated.at` and `verified[].at` (§5.2).
-//! - Plain `YYYY-MM-DD` dates in `stale_after` (§5.5),
-//!   `sources[].last_modified`, and `usage_window` (§5.1).
+//! Every timestamp-valued key in OKF frontmatter is an ISO-8601 datetime with
+//! an explicit UTC offset (e.g. `2026-06-30T14:00:00Z`), across `generated.at`,
+//! `verified[].at`, `stale_after`, `sources[].last_modified`, and `usage_window`.
+//! Plain `YYYY-MM-DD` dates are used only in `log.md` section headings (§9).
 //!
 //! Answering those needs real date arithmetic, so this module implements the
 //! small amount required on the standard library alone: a proleptic Gregorian
@@ -88,6 +89,12 @@ impl Date {
     pub fn from_days_since_epoch(days: i64) -> Self {
         let (year, month, day) = civil_from_days(days);
         Self { year, month, day }
+    }
+
+    /// Returns a UTC datetime at midnight (`00:00:00Z`) on this date.
+    #[must_use]
+    pub const fn to_utc_datetime(&self) -> DateTime {
+        DateTime::from_date_utc(*self)
     }
 }
 
@@ -228,6 +235,48 @@ impl DateTime {
     pub fn utc_date(&self) -> Date {
         Date::from_days_since_epoch(self.to_utc_seconds().div_euclid(86_400))
     }
+
+    /// `true` if the parsed datetime carries an explicit UTC offset.
+    #[must_use]
+    pub const fn has_offset(&self) -> bool {
+        self.offset_minutes.is_some()
+    }
+
+    /// The current instant in UTC from the system clock.
+    #[must_use]
+    pub fn now_utc() -> Option<Self> {
+        let duration = SystemTime::now().duration_since(UNIX_EPOCH).ok()?;
+        let secs = i64::try_from(duration.as_secs()).unwrap_or(i64::MAX);
+        let nanos = duration.subsec_nanos();
+        let days = secs.div_euclid(86_400);
+        let rem_secs = secs.rem_euclid(86_400);
+        let hour = u32::try_from(rem_secs / 3600).ok()?;
+        let minute = u32::try_from((rem_secs % 3600) / 60).ok()?;
+        let second = u32::try_from(rem_secs % 60).ok()?;
+        Some(Self {
+            date: Date::from_days_since_epoch(days),
+            hour,
+            minute,
+            second,
+            nanosecond: nanos,
+            offset_minutes: Some(0),
+            has_time: true,
+        })
+    }
+
+    /// Creates a UTC datetime at midnight (`00:00:00Z`) for a given [`Date`].
+    #[must_use]
+    pub const fn from_date_utc(date: Date) -> Self {
+        Self {
+            date,
+            hour: 0,
+            minute: 0,
+            second: 0,
+            nanosecond: 0,
+            offset_minutes: Some(0),
+            has_time: true,
+        }
+    }
 }
 
 impl PartialOrd for DateTime {
@@ -328,14 +377,17 @@ impl fmt::Display for DateField {
 
 /// A frontmatter datetime field: the scalar exactly as written, plus its parse.
 ///
-/// See [`DateField`] for why the raw text is retained.
+/// Keeping the raw text lets a consumer round-trip the value and lets
+/// [`validate`](crate::validate) report *which* scalar is malformed instead of
+/// silently dropping it: the spec's permissiveness rule (§11) means an
+/// unparseable datetime must never make a document unreadable.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DateTimeField {
     /// The scalar as written in the frontmatter.
     pub raw: String,
-    /// The parsed datetime, or `None` if `raw` is not a time-bearing ISO-8601
-    /// datetime. A date-only value remains available through `datetime` so it
-    /// can be diagnosed without losing the original scalar.
+    /// The parsed datetime, or `None` if `raw` is not an ISO-8601
+    /// datetime. A date-only or offset-less value remains available through
+    /// `datetime` so it can be diagnosed without losing the original scalar.
     pub datetime: Option<DateTime>,
 }
 
@@ -347,21 +399,31 @@ impl DateTimeField {
         Self { raw, datetime }
     }
 
-    /// `true` if the raw scalar parsed as a datetime with a time of day.
+    /// `true` if the raw scalar parsed as an ISO-8601 datetime with a time of
+    /// day and an explicit UTC offset (§5).
     #[must_use]
     pub const fn is_valid(&self) -> bool {
-        self.has_time()
+        self.has_time() && self.has_offset()
     }
 
     /// `true` if the raw scalar parsed as a datetime with a time of day.
     ///
     /// [`DateTime::parse`] intentionally also accepts date-only values for
-    /// callers that need a generic ISO-8601 date/datetime parser. The OKF
-    /// `generated.at` and `verified[].at` fields use this stricter predicate.
+    /// callers that need a generic ISO-8601 date/datetime parser. OKF frontmatter
+    /// timestamp fields use [`DateTimeField::is_valid`].
     #[must_use]
     pub const fn has_time(&self) -> bool {
         match self.datetime {
             Some(datetime) => datetime.has_time,
+            None => false,
+        }
+    }
+
+    /// `true` if the raw scalar parsed with an explicit UTC offset.
+    #[must_use]
+    pub const fn has_offset(&self) -> bool {
+        match self.datetime {
+            Some(datetime) => datetime.offset_minutes.is_some(),
             None => false,
         }
     }
@@ -546,10 +608,17 @@ mod tests {
         let good = DateTimeField::new("2026-06-25T09:00:00Z");
         assert!(good.is_valid());
         assert!(good.has_time());
+        assert!(good.has_offset());
         assert_eq!(good.datetime.unwrap().date, Date::new(2026, 6, 25).unwrap());
+
+        let no_offset = DateTimeField::new("2026-06-25T09:00:00");
+        assert!(!no_offset.is_valid());
+        assert!(no_offset.has_time());
+        assert!(!no_offset.has_offset());
 
         let date_only = DateTimeField::new("2026-06-25");
         assert!(!date_only.is_valid());
         assert!(!date_only.has_time());
+        assert!(!date_only.has_offset());
     }
 }

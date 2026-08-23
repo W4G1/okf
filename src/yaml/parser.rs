@@ -231,10 +231,10 @@ impl Parser {
             }
             text.push(' ');
             text.push_str(content);
-            if let Some(quote) = open_quote {
-                if closes_quote(content, quote, 0) {
-                    open_quote = None;
-                }
+            if let Some(quote) = open_quote
+                && closes_quote(content, quote, 0)
+            {
+                open_quote = None;
             }
             self.pos += 1;
         }
@@ -547,15 +547,15 @@ fn interpret_plain(s: &str) -> Value {
         ".nan" | ".NaN" | ".NAN" => return Value::Float(f64::NAN),
         _ => {}
     }
-    if is_canonical_int(s) {
-        if let Ok(i) = s.parse::<i64>() {
-            return Value::Int(i);
-        }
+    if is_canonical_int(s)
+        && let Ok(i) = s.parse::<i64>()
+    {
+        return Value::Int(i);
     }
-    if is_canonical_float(s) {
-        if let Ok(f) = s.parse::<f64>() {
-            return Value::Float(f);
-        }
+    if is_canonical_float(s)
+        && let Ok(f) = s.parse::<f64>()
+    {
+        return Value::Float(f);
     }
     Value::String(s.to_string())
 }

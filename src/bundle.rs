@@ -18,7 +18,7 @@
 
 use crate::computation::AttestedComputation;
 use crate::concept_id::ConceptId;
-use crate::date::Date;
+use crate::date::{Date, DateTime};
 use crate::document::Document;
 use crate::error::{BundleError, DocumentError};
 use crate::links;
@@ -71,6 +71,12 @@ impl Concept {
     #[must_use]
     pub fn status(&self) -> Status {
         self.document.frontmatter.status()
+    }
+
+    /// Whether this concept is stale at `now`: `now >= stale_after` (§5.5).
+    #[must_use]
+    pub fn is_stale_at(&self, now: DateTime) -> bool {
+        self.document.frontmatter.is_stale_at(now)
     }
 
     /// Whether `today >= stale_after` (§5.5).
@@ -360,6 +366,15 @@ impl Bundle {
             }
         }
         out
+    }
+
+    /// Every concept that is stale at `now`: `now >= stale_after` (§5.5).
+    #[must_use]
+    pub fn stale_at(&self, now: DateTime) -> Vec<&Concept> {
+        self.concepts
+            .iter()
+            .filter(|c| c.is_stale_at(now))
+            .collect()
     }
 
     /// Every concept that is stale on `today`: `today >= stale_after` (§5.5).

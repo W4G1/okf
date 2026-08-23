@@ -1,6 +1,6 @@
 //! Link classification, resolution, and citation extraction tests (§5, §8).
 
-use okf::links::{extract_citations, extract_links, Link, LinkKind};
+use okf::links::{Link, LinkKind, extract_citations, extract_links};
 use okf::{ConceptId, Document};
 
 #[test]

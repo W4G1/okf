@@ -3,7 +3,7 @@
 mod common;
 
 use common::TempDir;
-use okf::{bundle_diff, Bundle};
+use okf::{Bundle, bundle_diff};
 
 /// A minimal conformant concept body.
 const CONCEPT: &str = "---\n\
@@ -213,22 +213,26 @@ fn valid_link_additions_removals_and_retargeting_are_reported() {
     b.write("new.md", CONCEPT);
 
     let diff = bundle_diff(&load(&a), &load(&b));
-    assert!(diff
-        .added_links
-        .iter()
-        .any(|(source, target)| source.name() == "source" && target.name() == "new"));
-    assert!(diff
-        .added_links
-        .iter()
-        .any(|(source, target)| source.name() == "added" && target.name() == "new"));
-    assert!(diff
-        .removed_links
-        .iter()
-        .any(|(source, target)| source.name() == "source" && target.name() == "old"));
-    assert!(diff
-        .removed_links
-        .iter()
-        .any(|(source, target)| { source.name() == "removed" && target.name() == "old" }));
+    assert!(
+        diff.added_links
+            .iter()
+            .any(|(source, target)| source.name() == "source" && target.name() == "new")
+    );
+    assert!(
+        diff.added_links
+            .iter()
+            .any(|(source, target)| source.name() == "added" && target.name() == "new")
+    );
+    assert!(
+        diff.removed_links
+            .iter()
+            .any(|(source, target)| source.name() == "source" && target.name() == "old")
+    );
+    assert!(
+        diff.removed_links
+            .iter()
+            .any(|(source, target)| { source.name() == "removed" && target.name() == "old" })
+    );
     assert!(diff.mended_links.is_empty());
     assert!(diff.broken_links.is_empty());
 

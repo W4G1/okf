@@ -125,10 +125,12 @@ fn a_bare_verified_mapping_is_read_as_a_one_element_list() {
     assert_eq!(events[0].by.as_ref().unwrap().as_str(), "human:ahormati");
     assert_eq!(events[0].at.as_ref().unwrap().raw, "2026-06-25T09:00:00Z");
 
-    assert!(with_frontmatter("type: X")
-        .frontmatter
-        .verified()
-        .is_empty());
+    assert!(
+        with_frontmatter("type: X")
+            .frontmatter
+            .verified()
+            .is_empty()
+    );
 }
 
 #[test]
@@ -165,12 +167,15 @@ fn staleness_compares_stale_after_against_a_given_day() {
     let stale = |frontmatter: &str| with_frontmatter(frontmatter).frontmatter.is_stale_on(today);
 
     assert!(
-        stale("type: X\nstale_after: 2026-09-23"),
-        "stale on the day itself"
+        stale("type: X\nstale_after: '2026-09-23T00:00:00Z'"),
+        "stale on the instant itself"
     );
-    assert!(!stale("type: X\nstale_after: 2026-09-24"));
+    assert!(!stale("type: X\nstale_after: '2026-09-24T00:00:00Z'"));
     assert!(!stale("type: X"));
     assert!(!stale("type: X\nstale_after: not-a-date"));
+    // Bare dates or datetimes with no offset are ignored per OKF v0.2 §5
+    assert!(!stale("type: X\nstale_after: 2026-09-23"));
+    assert!(!stale("type: X\nstale_after: '2026-09-23T00:00:00'"));
 }
 
 #[test]
@@ -201,15 +206,14 @@ fn empty_frontmatter_block_is_empty_mapping() {
 }
 
 #[test]
-fn a_datetime_valued_stale_after_is_compared_on_its_date() {
-    // §5.5 asks for "an absolute date (`YYYY-MM-DD`)", so a datetime there is a
-    // deviation the validator reports. It still has to be compared, though, and
-    // the reference truncates to the first ten characters rather than treating
-    // the concept as fresh forever.
+fn a_datetime_with_offset_is_valid_stale_after() {
     let doc = with_frontmatter("type: X\nstale_after: '2026-09-23T00:00:00Z'");
     let field = doc.frontmatter.stale_after().unwrap();
-    assert!(!field.is_valid(), "still reported as not a plain date");
-    assert_eq!(field.effective_date(), Date::new(2026, 9, 23));
+    assert!(field.is_valid());
+    assert_eq!(
+        field.datetime.unwrap().date,
+        Date::new(2026, 9, 23).unwrap()
+    );
 
     assert!(doc.frontmatter.is_stale_on(Date::new(2026, 9, 23).unwrap()));
     assert!(!doc.frontmatter.is_stale_on(Date::new(2026, 9, 22).unwrap()));

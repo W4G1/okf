@@ -132,18 +132,18 @@ pub const SUPPORTED_OKF_VERSIONS: [&str; 2] = ["0.1", "0.2"];
 #[doc(inline)]
 pub use actor::{Actor, ActorKind};
 #[doc(inline)]
-pub use bundle::{Bundle, Concept, ResolvedLink, ResolvedSource, RESERVED_FILENAMES};
+pub use bundle::{Bundle, Concept, RESERVED_FILENAMES, ResolvedLink, ResolvedSource};
 #[doc(inline)]
 pub use computation::{
-    AttestedComputation, Attester, ComputationSource, Executor, InlineComputation, Parameter,
-    ATTESTED_COMPUTATION_TYPE,
+    ATTESTED_COMPUTATION_TYPE, AttestedComputation, Attester, ComputationSource, Executor,
+    InlineComputation, Parameter,
 };
 #[doc(inline)]
 pub use concept_id::{ConceptId, ConceptIdError};
 #[doc(inline)]
 pub use date::{Date, DateField, DateTime, DateTimeField};
 #[doc(inline)]
-pub use diff::{bundle_diff, BundleDiff, FrontmatterChange, Rename, TrustChange};
+pub use diff::{BundleDiff, FrontmatterChange, Rename, TrustChange, bundle_diff};
 #[doc(inline)]
 pub use document::Document;
 #[doc(inline)]
@@ -166,6 +166,6 @@ pub use provenance::{Attribution, ResourceKind, Source, UsageWindow};
 #[doc(inline)]
 pub use trust::{Generated, Status, TrustTier, Verification};
 #[doc(inline)]
-pub use validate::{validate_bundle, validate_bundle_at, Diagnostic, Report, Severity};
+pub use validate::{Diagnostic, Report, Severity, validate_bundle, validate_bundle_at};
 #[doc(inline)]
 pub use yaml::{Mapping, Value};

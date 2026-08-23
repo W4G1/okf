@@ -13,8 +13,8 @@ mod common;
 
 use common::TempDir;
 use okf::{
-    validate_bundle, validate_bundle_at, ActorKind, Bundle, ComputationSource, ConceptId, Date,
-    Document, ResourceKind, Severity, Status, TrustTier,
+    ActorKind, Bundle, ComputationSource, ConceptId, Date, Document, ResourceKind, Severity,
+    Status, TrustTier, validate_bundle, validate_bundle_at,
 };
 
 const INCOME_STATEMENT: &str = r"---
@@ -25,7 +25,7 @@ tags: [finance, income-statement]
 status: stable
 generated: { by: reference_agent/gemini-2.5-pro, at: 2026-06-20T22:53:05Z }
 verified: { by: human:ahormati, at: 2026-06-25T09:00:00Z }
-stale_after: 2026-12-31
+stale_after: 2026-12-31T00:00:00Z
 sources:
   - id: fpa-handbook
     resource: https://wiki.acme/finance/fpa-handbook
@@ -57,20 +57,20 @@ attester:
   resource: references/attesters/sql-equality.py
 generated: { by: reference_agent/gemini-2.5-pro, at: 2026-06-28T14:00:00Z }
 verified: { by: human:ahormati, at: 2026-06-25T09:00:00Z }
-stale_after: 2026-12-31
+stale_after: 2026-12-31T00:00:00Z
 sources:
   - id: rev-policy
     resource: https://wiki.acme/finance/revenue-recognition
     title: Revenue recognition policy
     author: team:finance-fpa
-    last_modified: 2026-04-02
+    last_modified: 2026-04-02T00:00:00Z
   - id: exec-rev-dash
     resource: dashboards/exec-revenue
     title: Executive revenue dashboard
     author: team:finance-fpa
     usage_count: 5000
-    last_modified: 2026-06-18
-usage_window: { from: 2026-06-01, to: 2026-06-30 }
+    last_modified: 2026-06-18T00:00:00Z
+usage_window: { from: 2026-06-01T00:00:00Z, to: 2026-06-30T00:00:00Z }
 ---
 
 # Computation
@@ -103,7 +103,7 @@ attester:
   resource: references/attesters/dbt-binding.py
 generated: { by: reference_agent/gemini-2.5-pro, at: 2026-06-14T14:00:00Z }
 verified: { by: process:finance-nightly, at: 2026-06-12T08:00:00Z }
-stale_after: 2026-06-15
+stale_after: 2026-06-15T00:00:00Z
 sources:
   - id: cost-alloc
     resource: https://wiki.acme/finance/cost-allocation
@@ -238,8 +238,14 @@ fn sources_carry_credibility_signals_framed_by_a_usage_window() {
     assert_eq!(policy.resource_kind(), ResourceKind::Url);
     assert_eq!(policy.author.as_ref().unwrap().as_str(), "team:finance-fpa");
     assert_eq!(
-        policy.last_modified.as_ref().unwrap().date,
-        Date::new(2026, 4, 2)
+        policy
+            .last_modified
+            .as_ref()
+            .unwrap()
+            .datetime
+            .unwrap()
+            .date,
+        Date::new(2026, 4, 2).unwrap()
     );
     assert_eq!(policy.usage_count, None);
 
@@ -248,8 +254,14 @@ fn sources_carry_credibility_signals_framed_by_a_usage_window() {
     assert_eq!(dashboard.usage_count, Some(5000));
     let shared = fm.usage_window();
     let window = dashboard.effective_usage_window(shared.as_ref()).unwrap();
-    assert_eq!(window.from.as_ref().unwrap().date, Date::new(2026, 6, 1));
-    assert_eq!(window.to.as_ref().unwrap().date, Date::new(2026, 6, 30));
+    assert_eq!(
+        window.from.as_ref().unwrap().datetime.unwrap().date,
+        Date::new(2026, 6, 1).unwrap()
+    );
+    assert_eq!(
+        window.to.as_ref().unwrap().datetime.unwrap().date,
+        Date::new(2026, 6, 30).unwrap()
+    );
 }
 
 #[test]
@@ -310,17 +322,21 @@ fn attested_computation_contracts_are_read_in_full() {
     assert_eq!(profit.runtime.as_deref(), Some("dbt"));
     assert_eq!(profit.parameters.len(), 2);
     assert_eq!(profit.parameters[1].name.as_deref(), Some("segment"));
-    assert!(profit
-        .executor
-        .as_ref()
-        .unwrap()
-        .receipt
-        .contains(&"compiled_sql".to_string()));
-    assert!(profit
-        .computation
-        .code()
-        .unwrap()
-        .contains("{{ ref('fct_income_statement') }}"));
+    assert!(
+        profit
+            .executor
+            .as_ref()
+            .unwrap()
+            .receipt
+            .contains(&"compiled_sql".to_string())
+    );
+    assert!(
+        profit
+            .computation
+            .code()
+            .unwrap()
+            .contains("{{ ref('fct_income_statement') }}")
+    );
 }
 
 #[test]
@@ -343,16 +359,22 @@ fn contract_paths_resolve_from_the_bundle_root() {
 
     // A path-valued field resolves only to a regular file, not merely an
     // existing directory.
-    assert!(bundle
-        .resolve_path_field(&revenue_id, "references")
-        .is_none());
+    assert!(
+        bundle
+            .resolve_path_field(&revenue_id, "references")
+            .is_none()
+    );
 
-    assert!(bundle
-        .resolve_path_field(&revenue_id, "references/nope.py")
-        .is_none());
-    assert!(bundle
-        .resolve_path_field(&revenue_id, "https://example.com")
-        .is_none());
+    assert!(
+        bundle
+            .resolve_path_field(&revenue_id, "references/nope.py")
+            .is_none()
+    );
+    assert!(
+        bundle
+            .resolve_path_field(&revenue_id, "https://example.com")
+            .is_none()
+    );
 }
 
 #[test]
@@ -408,9 +430,11 @@ fn staleness_reporting_is_opt_in_and_deterministic() {
 
     // No date supplied: nothing is reported stale, whatever the clock says.
     let plain = validate_bundle(&bundle);
-    assert!(!plain
-        .of(Severity::Info)
-        .any(|d| d.message.contains("stale since")));
+    assert!(
+        !plain
+            .of(Severity::Info)
+            .any(|d| d.message.contains("stale since"))
+    );
 
     let dated = validate_bundle_at(&bundle, Date::new(2026, 7, 1));
     let stale: Vec<&str> = dated
@@ -531,9 +555,9 @@ fn malformed_families_warn_without_breaking_conformance() {
     };
     has("`tags` should be a list of short strings");
     has("unknown `status` value");
-    has("`stale_after` is not an absolute");
+    has("`stale_after` is not an ISO-8601 datetime with an explicit offset");
     has("`generated.by` is required");
-    has("`verified[0].at` is not an ISO-8601 datetime");
+    has("`verified[0].at` is not an ISO-8601 datetime with an explicit offset");
     has("duplicate `sources[].id`");
     has("`sources[1].resource` is required");
     has("matches no `sources[].id`");
@@ -560,12 +584,16 @@ fn malformed_sources_members_are_diagnosed_without_being_conformance_errors() {
     let report = validate_bundle(&bundle);
 
     assert!(report.is_conformant(), "{:#?}", report.diagnostics);
-    assert!(report
-        .of(Severity::Warning)
-        .any(|d| { d.message.contains("`sources[1]`") && d.message.contains("mapping entry") }));
-    assert!(report
-        .of(Severity::Warning)
-        .any(|d| { d.message.contains("`sources[2]`") && d.message.contains("mapping entry") }));
+    assert!(
+        report
+            .of(Severity::Warning)
+            .any(|d| { d.message.contains("`sources[1]`") && d.message.contains("mapping entry") })
+    );
+    assert!(
+        report
+            .of(Severity::Warning)
+            .any(|d| { d.message.contains("`sources[2]`") && d.message.contains("mapping entry") })
+    );
 }
 
 #[test]
@@ -577,9 +605,11 @@ fn non_scalar_type_is_a_conformance_error_and_not_a_type_match() {
     assert!(bundle.concepts_of_type("Metric").next().is_none());
     let report = validate_bundle(&bundle);
     assert!(!report.is_conformant());
-    assert!(report
-        .of(Severity::Error)
-        .any(|d| d.message.contains("`type` must be a non-empty scalar")));
+    assert!(
+        report
+            .of(Severity::Error)
+            .any(|d| d.message.contains("`type` must be a non-empty scalar"))
+    );
 }
 
 #[test]
@@ -600,15 +630,19 @@ fn malformed_verification_events_do_not_elevate_trust_or_hide_diagnostics() {
     assert_eq!(concept.trust_tier(), TrustTier::Unverified);
 
     let report = validate_bundle(&bundle);
-    assert!(report.of(Severity::Warning).any(|d| d
-        .message
-        .contains("`verified[0].at` is not an ISO-8601 datetime")));
-    assert!(report.of(Severity::Warning).any(|d| d
-        .message
-        .contains("`verified[1].at` is not an ISO-8601 datetime")));
-    assert!(report
-        .of(Severity::Warning)
-        .any(|d| d.message.contains("`verified[2]` should be a mapping")));
+    assert!(report.of(Severity::Warning).any(|d| {
+        d.message
+            .contains("`verified[0].at` is not an ISO-8601 datetime with an explicit offset")
+    }));
+    assert!(report.of(Severity::Warning).any(|d| {
+        d.message
+            .contains("`verified[1].at` is not an ISO-8601 datetime with an explicit offset")
+    }));
+    assert!(
+        report
+            .of(Severity::Warning)
+            .any(|d| d.message.contains("`verified[2]` should be a mapping"))
+    );
 }
 
 #[test]
@@ -627,12 +661,14 @@ fn trust_timestamps_require_time_but_generic_datetime_parsing_stays_permissive()
 
     assert!(report.is_conformant(), "{:#?}", report.diagnostics);
     assert_eq!(bundle.concepts()[0].trust_tier(), TrustTier::Unverified);
-    assert!(report.of(Severity::Warning).any(|d| d
-        .message
-        .contains("`generated.at` is not an ISO-8601 datetime")));
-    assert!(report.of(Severity::Warning).any(|d| d
-        .message
-        .contains("`verified[0].at` is not an ISO-8601 datetime")));
+    assert!(report.of(Severity::Warning).any(|d| {
+        d.message
+            .contains("`generated.at` is not an ISO-8601 datetime with an explicit offset")
+    }));
+    assert!(report.of(Severity::Warning).any(|d| {
+        d.message
+            .contains("`verified[0].at` is not an ISO-8601 datetime with an explicit offset")
+    }));
     assert!(okf::DateTime::parse("2026-06-26").is_some());
     assert!(!okf::validate::is_iso8601_datetime("2026-06-26"));
     assert!(okf::validate::is_iso8601_datetime("2026-06-26T00:00:00Z"));
@@ -652,15 +688,21 @@ fn malformed_and_unreadable_reserved_files_are_conformance_errors() {
     let bundle = Bundle::load(tmp.path()).unwrap();
     let report = validate_bundle(&bundle);
     assert!(!report.is_conformant());
-    assert!(report
-        .of(Severity::Error)
-        .any(|d| { d.message.contains("unparseable reserved index.md") }));
-    assert!(report
-        .of(Severity::Error)
-        .any(|d| { d.message.contains("should not contain frontmatter") }));
-    assert!(report
-        .of(Severity::Error)
-        .any(|d| { d.message.contains("log date heading is not ISO-8601") }));
+    assert!(
+        report
+            .of(Severity::Error)
+            .any(|d| { d.message.contains("unparseable reserved index.md") })
+    );
+    assert!(
+        report
+            .of(Severity::Error)
+            .any(|d| { d.message.contains("should not contain frontmatter") })
+    );
+    assert!(
+        report
+            .of(Severity::Error)
+            .any(|d| { d.message.contains("log date heading is not ISO-8601") })
+    );
 
     let unreadable = TempDir::new();
     unreadable.write("a.md", "---\ntype: Note\n---\nBody.\n");
@@ -669,12 +711,16 @@ fn malformed_and_unreadable_reserved_files_are_conformance_errors() {
     let bundle = Bundle::load(unreadable.path()).unwrap();
     let report = validate_bundle(&bundle);
     assert!(!report.is_conformant());
-    assert!(report
-        .of(Severity::Error)
-        .any(|d| d.message.contains("unreadable reserved index.md")));
-    assert!(report
-        .of(Severity::Error)
-        .any(|d| d.message.contains("unreadable reserved log.md")));
+    assert!(
+        report
+            .of(Severity::Error)
+            .any(|d| d.message.contains("unreadable reserved index.md"))
+    );
+    assert!(
+        report
+            .of(Severity::Error)
+            .any(|d| d.message.contains("unreadable reserved log.md"))
+    );
 }
 
 #[test]
@@ -700,9 +746,13 @@ fn log_structure_requires_nonempty_newest_first_date_groups() {
         let report = validate_bundle(&Bundle::load(tmp.path()).unwrap());
 
         assert!(!report.is_conformant(), "accepted log: {contents:?}");
-        assert!(report.of(Severity::Error).any(|diagnostic| {
-            diagnostic.message.contains(expected)
-        }), "{expected:?}: {:#?}", report.diagnostics);
+        assert!(
+            report
+                .of(Severity::Error)
+                .any(|diagnostic| { diagnostic.message.contains(expected) }),
+            "{expected:?}: {:#?}",
+            report.diagnostics
+        );
     }
 }
 
@@ -719,6 +769,22 @@ fn valid_log_structure_allows_custom_titles_and_unmarked_prose_entries() {
          \x20 Continued prose is still part of the preceding entry.\n\
          ## 2026-06-26\n\
          - **Update**: An older marked entry.\n",
+    );
+    let report = validate_bundle(&Bundle::load(tmp.path()).unwrap());
+
+    assert!(report.is_conformant(), "{:#?}", report.diagnostics);
+}
+
+#[test]
+fn log_with_frontmatter_loads_and_conforms() {
+    let tmp = TempDir::new();
+    tmp.write("a.md", "---\ntype: Note\n---\nBody.\n");
+    tmp.write(
+        "log.md",
+        "---\ntype: Log\ntitle: Bundle history\n---\n\n\
+         # Bundle history\n\n\
+         ## 2026-07-01\n\
+         - **Verified** the full bundle.\n",
     );
     let report = validate_bundle(&Bundle::load(tmp.path()).unwrap());
 
@@ -762,9 +828,10 @@ fn computation_keys_on_another_type_are_noted() {
     );
     let bundle = Bundle::load(tmp.path()).unwrap();
     let report = validate_bundle(&bundle);
-    assert!(report.of(Severity::Info).any(|d| d
-        .message
-        .contains("a sanctioned computation is its own concept")));
+    assert!(report.of(Severity::Info).any(|d| {
+        d.message
+            .contains("a sanctioned computation is its own concept")
+    }));
 }
 
 #[test]

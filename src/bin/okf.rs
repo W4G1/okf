@@ -17,8 +17,8 @@
 #![warn(clippy::pedantic, clippy::nursery)]
 
 use okf::{
-    bundle_diff, lint_bundle_at, validate_bundle_at, Bundle, Date, Document, Severity, TrustTier,
-    Value,
+    Bundle, Date, Document, Severity, TrustTier, Value, bundle_diff, lint_bundle_at,
+    validate_bundle_at,
 };
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -139,10 +139,10 @@ const VALUED_FLAGS: [&str; 2] = ["--today", "--format"];
 /// Returns the first positional argument, or an error. Everything after a `--`
 /// separator is treated as positional (so paths beginning with `-` work).
 fn positional<'a>(args: &'a [String], what: &str) -> Result<&'a str, CliError> {
-    if let Some(pos) = args.iter().position(|a| a == "--") {
-        if let Some(arg) = args.get(pos + 1) {
-            return Ok(arg.as_str());
-        }
+    if let Some(pos) = args.iter().position(|a| a == "--")
+        && let Some(arg) = args.get(pos + 1)
+    {
+        return Ok(arg.as_str());
     }
     let mut skip = false;
     for arg in args {
@@ -282,16 +282,16 @@ fn strip_spec_references(text: &str) -> String {
     let mut i = 0;
 
     while i < chars.len() {
-        if chars[i] == '(' {
-            if let Some(relative_end) = chars[i + 1..].iter().position(|&c| c == ')') {
-                let end = i + 1 + relative_end;
-                if is_section_group(&chars[i + 1..end]) {
-                    if out.ends_with(' ') {
-                        out.pop();
-                    }
-                    i = end + 1;
-                    continue;
+        if chars[i] == '('
+            && let Some(relative_end) = chars[i + 1..].iter().position(|&c| c == ')')
+        {
+            let end = i + 1 + relative_end;
+            if is_section_group(&chars[i + 1..end]) {
+                if out.ends_with(' ') {
+                    out.pop();
                 }
+                i = end + 1;
+                continue;
             }
         }
 

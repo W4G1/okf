@@ -13,8 +13,8 @@
 //!     title: GA4 BigQuery Export schema
 //!     author: team:ga4-docs
 //!     usage_count: 5000
-//!     last_modified: 2026-05-30
-//! usage_window: { from: 2026-06-01, to: 2026-06-30 }
+//!     last_modified: 2026-05-30T00:00:00Z
+//! usage_window: { from: 2026-06-01T00:00:00Z, to: 2026-06-30T00:00:00Z }
 //! ```
 //!
 //! Two design points from the spec show up directly in this module's API:
@@ -30,21 +30,21 @@
 //!   moment the list is reordered. [`attributions`] performs that join.
 
 use crate::actor::Actor;
-use crate::date::DateField;
+use crate::date::DateTimeField;
 use crate::footnotes;
 use crate::yaml::Value;
 use std::fmt;
 
-/// The date range that frames `usage_count` (§5.1).
+/// The date/time range that frames `usage_count` (§5.1).
 ///
 /// Written once as a sibling of `sources`; a single entry MAY carry its own to
 /// override the shared one.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct UsageWindow {
     /// Start of the window.
-    pub from: Option<DateField>,
+    pub from: Option<DateTimeField>,
     /// End of the window.
-    pub to: Option<DateField>,
+    pub to: Option<DateTimeField>,
 }
 
 impl UsageWindow {
@@ -56,18 +56,18 @@ impl UsageWindow {
             from: map
                 .get("from")
                 .and_then(Value::as_display_string)
-                .map(DateField::new),
+                .map(DateTimeField::new),
             to: map
                 .get("to")
                 .and_then(Value::as_display_string)
-                .map(DateField::new),
+                .map(DateTimeField::new),
         })
     }
 }
 
 impl fmt::Display for UsageWindow {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let dash = |d: &Option<DateField>| {
+        let dash = |d: &Option<DateTimeField>| {
             d.as_ref()
                 .map_or_else(|| "?".to_string(), |d| d.raw.clone())
         };
@@ -108,7 +108,7 @@ pub struct Source {
     pub usage_count: Option<i64>,
     /// When the source itself last changed. A recency signal, distinct from
     /// `generated.at` (which records when the *concept* was written).
-    pub last_modified: Option<DateField>,
+    pub last_modified: Option<DateTimeField>,
     /// An entry-level override of the shared `usage_window`.
     pub usage_window: Option<UsageWindow>,
 }
@@ -125,7 +125,7 @@ impl Source {
             title: string("title"),
             author: string("author").map(Actor::parse),
             usage_count: map.get("usage_count").and_then(Value::as_int),
-            last_modified: string("last_modified").map(DateField::new),
+            last_modified: string("last_modified").map(DateTimeField::new),
             usage_window: map.get("usage_window").and_then(UsageWindow::from_value),
         })
     }
@@ -259,13 +259,13 @@ mod tests {
   resource: https://wiki.acme/finance/revenue-recognition
   title: Revenue recognition policy
   author: team:finance-fpa
-  last_modified: 2026-04-02
+  last_modified: 2026-04-02T00:00:00Z
 - id: exec-rev-dash
   resource: dashboards/exec-revenue
   title: Executive revenue dashboard
   author: team:finance-fpa
   usage_count: 5000
-  last_modified: 2026-06-18
+  last_modified: 2026-06-18T00:00:00Z
 ";
 
     fn sources() -> Vec<Source> {
@@ -280,8 +280,8 @@ mod tests {
         assert_eq!(s[0].resource_kind(), ResourceKind::Url);
         assert_eq!(s[0].author.as_ref().unwrap().as_str(), "team:finance-fpa");
         assert_eq!(
-            s[0].last_modified.as_ref().unwrap().date,
-            Date::new(2026, 4, 2)
+            s[0].last_modified.as_ref().unwrap().datetime.unwrap().date,
+            Date::new(2026, 4, 2).unwrap()
         );
         assert_eq!(s[0].usage_count, None);
 
@@ -304,19 +304,22 @@ mod tests {
 
     #[test]
     fn usage_window_entry_overrides_shared() {
-        let shared =
-            UsageWindow::from_value(&Value::parse("{ from: 2026-06-01, to: 2026-06-30 }").unwrap())
-                .unwrap();
+        let shared = UsageWindow::from_value(
+            &Value::parse("{ from: 2026-06-01T00:00:00Z, to: 2026-06-30T00:00:00Z }").unwrap(),
+        )
+        .unwrap();
         let plain = &sources()[1];
         assert_eq!(plain.effective_usage_window(Some(&shared)), Some(&shared));
 
         let overridden = Source::from_value(
-            &Value::parse("{ resource: x, usage_window: { from: 2026-01-01, to: 2026-01-31 } }")
-                .unwrap(),
+            &Value::parse(
+                "{ resource: x, usage_window: { from: 2026-01-01T00:00:00Z, to: 2026-01-31T00:00:00Z } }",
+            )
+            .unwrap(),
         )
         .unwrap();
         let window = overridden.effective_usage_window(Some(&shared)).unwrap();
-        assert_eq!(window.from.as_ref().unwrap().raw, "2026-01-01");
+        assert_eq!(window.from.as_ref().unwrap().raw, "2026-01-01T00:00:00Z");
     }
 
     #[test]

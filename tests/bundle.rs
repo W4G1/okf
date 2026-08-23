@@ -5,7 +5,7 @@ mod common;
 
 use common::TempDir;
 use okf::{
-    validate_bundle, Bundle, BundleError, ConceptId, ConceptIdError, DocumentError, Severity,
+    Bundle, BundleError, ConceptId, ConceptIdError, DocumentError, Severity, validate_bundle,
 };
 
 /// Builds the Appendix A example bundle and returns its temp dir.
@@ -101,9 +101,11 @@ fn broken_links_are_detected_but_not_fatal() {
     // Broken links are informational, not conformance errors.
     let report = validate_bundle(&bundle);
     assert!(report.is_conformant());
-    assert!(report
-        .of(Severity::Info)
-        .any(|d| d.message.contains("does/not/exist")));
+    assert!(
+        report
+            .of(Severity::Info)
+            .any(|d| d.message.contains("does/not/exist"))
+    );
 }
 
 #[test]
@@ -122,9 +124,11 @@ fn missing_type_is_a_conformance_error() {
     let bundle = Bundle::load(tmp.path()).unwrap();
     let report = validate_bundle(&bundle);
     assert!(!report.is_conformant());
-    assert!(report
-        .of(Severity::Error)
-        .any(|d| d.message.contains("type")));
+    assert!(
+        report
+            .of(Severity::Error)
+            .any(|d| d.message.contains("type"))
+    );
 }
 
 #[test]

@@ -13,11 +13,15 @@
 //! Date headings use ISO-8601 `YYYY-MM-DD`. The leading bold word
 //! (`**Update**`, `**Creation**`, …) is a convention, not a requirement.
 
+use crate::document::Document;
+use crate::frontmatter::Frontmatter;
 use std::fmt::Write as _;
 
 /// A parsed `log.md`.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Log {
+    /// Optional frontmatter block.
+    pub frontmatter: Frontmatter,
     /// The top-level `# ` heading text, if any.
     pub title: Option<String>,
     /// Date-grouped entries, in document order (the convention is newest-first).
@@ -46,10 +50,18 @@ impl Log {
     /// Parses `log.md` text.
     #[must_use]
     pub fn parse(text: &str) -> Self {
-        let mut log = Self::default();
+        let (frontmatter, body) = match Document::parse(text) {
+            Ok(doc) => (doc.frontmatter, doc.body),
+            Err(_) => (Frontmatter::new(), text.to_string()),
+        };
+        let mut log = Self {
+            frontmatter,
+            title: None,
+            days: Vec::new(),
+        };
         let mut current: Option<LogDay> = None;
 
-        for line in text.lines() {
+        for line in body.lines() {
             let trimmed = line.trim_end();
             let t = trimmed.trim_start();
             if let Some(rest) = t.strip_prefix("## ") {
@@ -64,10 +76,10 @@ impl Log {
                 if log.title.is_none() && current.is_none() {
                     log.title = Some(rest.trim().to_string());
                 }
-            } else if let Some(rest) = bullet_body(t) {
-                if let Some(day) = current.as_mut() {
-                    day.entries.push(parse_entry(rest));
-                }
+            } else if let Some(rest) = bullet_body(t)
+                && let Some(day) = current.as_mut()
+            {
+                day.entries.push(parse_entry(rest));
             }
         }
         if let Some(day) = current.take() {
@@ -80,6 +92,13 @@ impl Log {
     #[must_use]
     pub fn to_markdown(&self) -> String {
         let mut out = String::new();
+        if !self.frontmatter.is_empty() {
+            let fm_text =
+                crate::yaml::Value::Mapping(self.frontmatter.as_mapping().clone()).to_yaml_string();
+            out.push_str("---\n");
+            out.push_str(&fm_text);
+            out.push_str("---\n\n");
+        }
         if let Some(title) = &self.title {
             let _ = writeln!(out, "# {title}");
             out.push('\n');
@@ -137,21 +156,39 @@ impl Log {
             let Some(date) = crate::date::Date::parse(&day.date) else {
                 continue;
             };
-            if let Some((previous_text, previous_date)) = previous {
-                if date > previous_date {
-                    errors.push(format!(
-                        "log date groups are not newest first: {:?} follows {:?}",
-                        day.date, previous_text
-                    ));
-                }
+            if let Some((previous_text, previous_date)) = previous
+                && date > previous_date
+            {
+                errors.push(format!(
+                    "log date groups are not newest first: {:?} follows {:?}",
+                    day.date, previous_text
+                ));
             }
             previous = Some((day.date.as_str(), date));
+        }
+
+        let lines: Vec<&str> = text.lines().collect();
+        let mut start_idx = 0;
+        if !lines.is_empty() && lines[0].trim() == "---" {
+            let mut end_idx = None;
+            for (i, line) in lines.iter().enumerate().skip(1) {
+                if line.trim() == "---" {
+                    end_idx = Some(i);
+                    break;
+                }
+            }
+            if let Some(end) = end_idx {
+                start_idx = end + 1;
+            } else {
+                errors.push("Unterminated YAML frontmatter block".to_string());
+            }
         }
 
         let mut saw_date = false;
         let mut saw_title = false;
         let mut current_has_entry = false;
-        for (line_index, line) in text.lines().enumerate() {
+        for (line_offset, line) in lines[start_idx..].iter().enumerate() {
+            let line_index = start_idx + line_offset;
             let trimmed = line.trim_end();
             let t = trimmed.trim_start();
             if t.is_empty() {
@@ -208,16 +245,16 @@ fn bullet_body(line: &str) -> Option<&str> {
 /// Parses a bullet body into an optional bold `kind` and the remaining text.
 fn parse_entry(body: &str) -> LogEntry {
     let b = body.trim();
-    if let Some(rest) = b.strip_prefix("**") {
-        if let Some(end) = rest.find("**") {
-            let kind = rest[..end].trim().to_string();
-            let mut text = rest[end + 2..].trim_start();
-            text = text.strip_prefix(':').unwrap_or(text).trim_start();
-            return LogEntry {
-                kind: Some(kind),
-                text: text.to_string(),
-            };
-        }
+    if let Some(rest) = b.strip_prefix("**")
+        && let Some(end) = rest.find("**")
+    {
+        let kind = rest[..end].trim().to_string();
+        let mut text = rest[end + 2..].trim_start();
+        text = text.strip_prefix(':').unwrap_or(text).trim_start();
+        return LogEntry {
+            kind: Some(kind),
+            text: text.to_string(),
+        };
     }
     LogEntry {
         kind: None,

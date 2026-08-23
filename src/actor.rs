@@ -9,7 +9,7 @@
 //! | `human:<id>`            | a person               | `human:ahormati`                 |
 //! | `process:<id>`          | an automated process   | `process:finance-nightly`        |
 //!
-//! The `human:` prefix is load-bearing: trust tiers (§5.3) are derived from it,
+//! The `human:` prefix is significant: trust tiers (§5.3) are derived from it,
 //! so [`Actor::is_human`] is the single place that decision is made.
 //!
 //! Anything else parses as [`ActorKind::Other`] rather than an error. The spec
