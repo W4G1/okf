@@ -18,13 +18,15 @@ as a directory of markdown files with YAML metadata.
 
 ## Installation
 
-This repository is a workspace of two crates:
+This repository is a workspace of three crates:
 
 - [`okf-core`](https://crates.io/crates/okf-core): the library implementing the
-  OKF specification (parser, model, validator, link graph, index/log tooling).
+  OKF specification (parser, model, link graph, index/log tooling).
+- [`okf-validator`](https://crates.io/crates/okf-validator): §11 conformance
+  validation and opinionated linting, built on `okf-core`.
 - [`okf`](https://crates.io/crates/okf): the `okf` command-line tool, which
-  also re-exports the entire `okf-core` API, so depending on `okf` alone gives
-  you both.
+  also re-exports the entire `okf-core` and `okf-validator` API, so depending
+  on `okf` alone gives you everything.
 
 Install the CLI from [crates.io](https://crates.io/crates/okf):
 

@@ -127,7 +127,7 @@ impl Document {
     /// other field the spec describes is a SHOULD, so a concept carrying only
     /// `type` passes here; see [`Document::missing_recommended`] for the
     /// producer-side checklist and
-    /// [`validate_bundle`](crate::validate_bundle) for the full diagnostics.
+    /// `validate_bundle` (in the okf-validator crate) for the full diagnostics.
     ///
     /// # Errors
     ///
@@ -159,7 +159,7 @@ impl Document {
     /// None of these is a conformance failure, so [`Document::validate`]
     /// ignores them: §11 forbids rejecting a concept for a missing optional
     /// field. This is the checklist a *producer* wants before publishing, and
-    /// it is what [`validate_bundle`](crate::validate_bundle) reports as
+    /// it is what `validate_bundle` (in the okf-validator crate) reports as
     /// warnings. An empty result means the document is fully filled in.
     ///
     /// `generated` counts as set when a legacy v0.1 `timestamp` stands in for

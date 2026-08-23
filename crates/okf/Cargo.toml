@@ -14,6 +14,7 @@ categories = ["command-line-utilities", "parser-implementations", "data-structur
 
 [dependencies]
 okf-core.workspace = true
+okf-validator.workspace = true
 
 # The lib target re-exports all of okf-core, so `cargo add okf` keeps working
 # as a library dependency (`use okf::Bundle;`) while `cargo install okf` still

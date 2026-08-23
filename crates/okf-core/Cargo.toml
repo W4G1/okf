@@ -17,3 +17,9 @@ categories.workspace = true
 # and builds on the standard library alone (including its own YAML-subset
 # parser, markdown link scanner, and directory walker).
 [dependencies]
+
+# Path-only (no version), so cargo strips this cycle-free dev-dependency when
+# publishing; it exists because the bundle integration tests assert against
+# validation output.
+[dev-dependencies]
+okf-validator = { path = "../okf-validator" }

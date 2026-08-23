@@ -1,0 +1,16 @@
+[package]
+name = "okf-validator"
+description = "Conformance validation and opinionated linting for Open Knowledge Format (OKF) v0.2 bundles: severity-tagged diagnostics for spec violations and bundle hygiene."
+documentation = "https://docs.rs/okf-validator"
+readme = "README.md"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+okf-core.workspace = true

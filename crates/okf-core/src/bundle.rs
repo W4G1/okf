@@ -305,7 +305,7 @@ impl Bundle {
     ///
     /// Returns `None` whether the root `index.md` is absent, unreadable, or
     /// lacks the key; a malformed root `index.md` is reported separately by
-    /// [`validate_bundle`](crate::validate_bundle).
+    /// `validate_bundle` (in the okf-validator crate).
     #[must_use]
     pub fn okf_version(&self) -> Option<&str> {
         self.okf_version.as_deref()

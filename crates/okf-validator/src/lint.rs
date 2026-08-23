@@ -32,13 +32,13 @@
 //! | L15  | warning  | orphan: no inbound links and not listed in any `index.md` |
 //! | L16  | warning  | an existing `index.md` is out of sync with its directory  |
 
-use crate::bundle::Bundle;
-use crate::concept_id::ConceptId;
-use crate::date::Date;
-use crate::document::Document;
-use crate::frontmatter::Frontmatter;
-use crate::trust::Status;
 use crate::validate::{Diagnostic, Report, Severity};
+use okf_core::bundle::Bundle;
+use okf_core::concept_id::ConceptId;
+use okf_core::date::Date;
+use okf_core::document::Document;
+use okf_core::frontmatter::Frontmatter;
+use okf_core::trust::Status;
 use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -138,7 +138,7 @@ fn is_concept_link(raw: &str) -> bool {
     if t.starts_with('#') || t.is_empty() {
         return false;
     }
-    if crate::links::LinkKind::External == crate::links::Link::classify(t) {
+    if okf_core::links::LinkKind::External == okf_core::links::Link::classify(t) {
         return false;
     }
     let before_anchor = t.split('#').next().unwrap_or(t);
@@ -298,7 +298,7 @@ fn check_verified_before_generated(cx: &mut Cx, fm: &Frontmatter) {
         return;
     };
     let verified = fm.verified();
-    let Some(latest) = crate::trust::latest_verification(&verified) else {
+    let Some(latest) = okf_core::trust::latest_verification(&verified) else {
         return;
     };
     let Some(latest_at) = latest.at.as_ref().and_then(|a| a.datetime) else {

@@ -44,3 +44,4 @@
 pub struct ReadmeExamples;
 
 pub use okf_core::*;
+pub use okf_validator::*;

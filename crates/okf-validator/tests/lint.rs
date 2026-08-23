@@ -7,11 +7,12 @@
 mod common;
 
 use common::TempDir;
-use okf_core::{Bundle, Date, Severity, lint_bundle, lint_bundle_at};
+use okf_core::{Bundle, Date};
+use okf_validator::{Severity, lint_bundle, lint_bundle_at};
 
 /// Returns the messages of every finding with the given rule code (without
 /// the `[code] ` prefix).
-fn messages_for<'a>(report: &'a okf_core::validate::Report, code: &'a str) -> Vec<&'a str> {
+fn messages_for<'a>(report: &'a okf_validator::validate::Report, code: &'a str) -> Vec<&'a str> {
     let prefix = format!("[{code}] ");
     report
         .diagnostics
@@ -20,7 +21,7 @@ fn messages_for<'a>(report: &'a okf_core::validate::Report, code: &'a str) -> Ve
         .collect()
 }
 
-fn has(report: &okf_core::validate::Report, code: &str) -> bool {
+fn has(report: &okf_validator::validate::Report, code: &str) -> bool {
     report
         .diagnostics
         .iter()

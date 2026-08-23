@@ -11,6 +11,7 @@ name = "okf"
 version = "0.2.2"
 dependencies = [
  "okf-core",
+ "okf-validator",
 ]
 
 [[package]]
@@ -20,6 +21,9 @@ version = "0.0.0"
 [[package]]
 name = "okf-core"
 version = "0.2.2"
+dependencies = [
+ "okf-validator",
+]
 
 [[package]]
 name = "okf-derive"
@@ -39,7 +43,10 @@ version = "0.0.0"
 
 [[package]]
 name = "okf-validator"
-version = "0.0.0"
+version = "0.2.2"
+dependencies = [
+ "okf-core",
+]
 
 [[package]]
 name = "okf-web"

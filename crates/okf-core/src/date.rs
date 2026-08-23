@@ -325,7 +325,7 @@ impl std::str::FromStr for DateTime {
 /// A frontmatter date field: the scalar exactly as written, plus its parse.
 ///
 /// Keeping the raw text lets a consumer round-trip the value and lets
-/// [`validate`](crate::validate) report *which* scalar is malformed instead of
+/// the okf-validator crate report *which* scalar is malformed instead of
 /// silently dropping it: the spec's permissiveness rule (§11) means an
 /// unparseable date must never make a document unreadable.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -378,7 +378,7 @@ impl fmt::Display for DateField {
 /// A frontmatter datetime field: the scalar exactly as written, plus its parse.
 ///
 /// Keeping the raw text lets a consumer round-trip the value and lets
-/// [`validate`](crate::validate) report *which* scalar is malformed instead of
+/// the okf-validator crate report *which* scalar is malformed instead of
 /// silently dropping it: the spec's permissiveness rule (§11) means an
 /// unparseable datetime must never make a document unreadable.
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -4,9 +4,8 @@
 mod common;
 
 use common::TempDir;
-use okf_core::{
-    Bundle, BundleError, ConceptId, ConceptIdError, DocumentError, Severity, validate_bundle,
-};
+use okf_core::{Bundle, BundleError, ConceptId, ConceptIdError, DocumentError};
+use okf_validator::{Severity, validate_bundle};
 
 /// Builds the Appendix A example bundle and returns its temp dir.
 fn appendix_a() -> TempDir {

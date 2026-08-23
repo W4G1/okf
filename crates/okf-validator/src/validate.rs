@@ -16,16 +16,16 @@
 //! [`validate_bundle`] is deterministic and [`validate_bundle_at`] takes the
 //! date to compare against.
 
-use crate::bundle::Bundle;
-use crate::computation::{ATTESTED_COMPUTATION_TYPE, ComputationSource};
-use crate::concept_id::ConceptId;
-use crate::date::{Date, DateTime};
-use crate::document::Document;
-use crate::frontmatter::Frontmatter;
-use crate::log::Log;
-use crate::provenance::{ResourceKind, Source};
-use crate::trust::{STATUS_VALUES, Verification};
-use crate::yaml::Value;
+use okf_core::bundle::Bundle;
+use okf_core::computation::{ATTESTED_COMPUTATION_TYPE, ComputationSource};
+use okf_core::concept_id::ConceptId;
+use okf_core::date::{Date, DateTime};
+use okf_core::document::Document;
+use okf_core::frontmatter::Frontmatter;
+use okf_core::log::Log;
+use okf_core::provenance::{ResourceKind, Source};
+use okf_core::trust::{STATUS_VALUES, Verification};
+use okf_core::yaml::Value;
 use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
@@ -627,7 +627,7 @@ fn check_path_fields(cx: &mut Context, bundle: &Bundle, fm: &Frontmatter) {
         if field == "resource" && !explicit_path {
             continue;
         }
-        if crate::links::field_path_candidates(target, &id).is_empty() {
+        if okf_core::links::field_path_candidates(target, &id).is_empty() {
             continue; // a URI, nothing in the bundle to resolve
         }
         if bundle.resolve_path_field(&id, target).is_none() {
@@ -654,7 +654,7 @@ fn check_segment_portability(bundle: &Bundle, report: &mut Report) {
     let mut seen: HashSet<&str> = HashSet::new();
     for concept in bundle.concepts() {
         for segment in concept.id.segments() {
-            if crate::concept_id::is_portable_segment(segment) || !seen.insert(segment) {
+            if okf_core::concept_id::is_portable_segment(segment) || !seen.insert(segment) {
                 continue;
             }
             report.warn(
@@ -761,19 +761,19 @@ fn check_declared_version(bundle: &Bundle, report: &mut Report) {
         return;
     };
     let declared = declared.trim();
-    if declared == crate::OKF_VERSION {
+    if declared == okf_core::OKF_VERSION {
         return;
     }
-    let message = if crate::SUPPORTED_OKF_VERSIONS.contains(&declared) {
+    let message = if okf_core::SUPPORTED_OKF_VERSIONS.contains(&declared) {
         format!(
             "bundle targets OKF v{declared}; read as v{} under the §13.1 fallbacks",
-            crate::OKF_VERSION
+            okf_core::OKF_VERSION
         )
     } else {
         format!(
             "bundle declares an unrecognized `okf_version: {declared}`; consuming it \
              best-effort as v{} (§12)",
-            crate::OKF_VERSION
+            okf_core::OKF_VERSION
         )
     };
     report.info(Some(bundle.root().join("index.md")), None, message);

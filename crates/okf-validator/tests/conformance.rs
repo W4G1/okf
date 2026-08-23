@@ -13,9 +13,10 @@ mod common;
 
 use common::TempDir;
 use okf_core::{
-    ActorKind, Bundle, ComputationSource, ConceptId, Date, Document, ResourceKind, Severity,
-    Status, TrustTier, validate_bundle, validate_bundle_at,
+    ActorKind, Bundle, ComputationSource, ConceptId, Date, Document, ResourceKind, Status,
+    TrustTier,
 };
+use okf_validator::{Severity, validate_bundle, validate_bundle_at};
 
 const INCOME_STATEMENT: &str = r"---
 type: Metric
@@ -670,8 +671,8 @@ fn trust_timestamps_require_time_but_generic_datetime_parsing_stays_permissive()
             .contains("`verified[0].at` is not an ISO-8601 datetime with an explicit offset")
     }));
     assert!(okf_core::DateTime::parse("2026-06-26").is_some());
-    assert!(!okf_core::validate::is_iso8601_datetime("2026-06-26"));
-    assert!(okf_core::validate::is_iso8601_datetime(
+    assert!(!okf_validator::validate::is_iso8601_datetime("2026-06-26"));
+    assert!(okf_validator::validate::is_iso8601_datetime(
         "2026-06-26T00:00:00Z"
     ));
 }

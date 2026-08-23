@@ -139,7 +139,7 @@ impl Log {
     /// that want to recover entries from imperfect Markdown. Conformance
     /// validation uses this stricter pass to ensure that ignored content is
     /// not mistaken for a valid log.
-    pub(crate) fn structural_errors(&self, text: &str) -> Vec<String> {
+    pub fn structural_errors(&self, text: &str) -> Vec<String> {
         let mut errors = Vec::new();
 
         if self.days.is_empty() {
