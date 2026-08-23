@@ -121,7 +121,7 @@ fn flow_mapping() {
 #[test]
 fn colons_inside_flow_scalars_are_content() {
     // OKF v0.2 frontmatter depends on this: `human:ahormati` and an ISO-8601
-    // time both carry colons that do not separate a key from a value (§5.2, §7).
+    // time both carry colons that do not separate a key from a value.
     let v =
         roundtrip("generated: { by: reference_agent/gemini-2.5-pro, at: 2026-06-20T22:53:05Z }\n");
     let generated = v

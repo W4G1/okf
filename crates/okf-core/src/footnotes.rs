@@ -1,4 +1,4 @@
-//! Markdown footnotes, the carrier for per-claim attribution (§5.1).
+//! Markdown footnotes, the carrier for per-claim attribution.
 //!
 //! v0.2 retires the v0.1 body `# Citations` list. To attribute a specific claim
 //! to a source, a producer writes a footnote whose **label is a

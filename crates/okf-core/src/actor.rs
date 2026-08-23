@@ -1,7 +1,7 @@
-//! The actor convention (§7): who or what performed an action.
+//! The actor convention: who or what performed an action.
 //!
 //! Fields that record an identity (`generated.by`, `verified[].by`, and
-//! `sources[].author`, §5.1) share one convention:
+//! `sources[].author`) share one convention:
 //!
 //! | Form                    | Meaning                | Example                          |
 //! |-------------------------|------------------------|----------------------------------|
@@ -9,12 +9,12 @@
 //! | `human:<id>`            | a person               | `human:ahormati`                 |
 //! | `process:<id>`          | an automated process   | `process:finance-nightly`        |
 //!
-//! The `human:` prefix is significant: trust tiers (§5.3) are derived from it,
+//! The `human:` prefix is significant: trust tiers are derived from it,
 //! so [`Actor::is_human`] is the single place that decision is made.
 //!
 //! Anything else parses as [`ActorKind::Other`] rather than an error. The spec
 //! itself writes `author: team:ga4-docs`, so other `<scheme>:<id>` forms do
-//! occur in practice; a consumer must keep them, not reject them (§11).
+//! occur in practice; a consumer must keep them, not reject them.
 
 use std::fmt;
 
@@ -42,7 +42,7 @@ impl fmt::Display for ActorKind {
     }
 }
 
-/// A parsed actor string (§7), retaining the text exactly as written.
+/// A parsed actor string, retaining the text exactly as written.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Actor {
     raw: String,
@@ -73,13 +73,13 @@ impl Actor {
         &self.raw
     }
 
-    /// Which of the §7 forms this actor uses.
+    /// Which actor form this uses.
     #[must_use]
     pub const fn kind(&self) -> ActorKind {
         self.kind
     }
 
-    /// `true` for a `human:<id>` actor, the signal trust tiers key off (§5.3).
+    /// `true` for a `human:<id>` actor, the signal trust tiers key off.
     #[must_use]
     pub fn is_human(&self) -> bool {
         self.kind == ActorKind::Human

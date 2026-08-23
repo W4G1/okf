@@ -1,4 +1,4 @@
-//! Concept-id segment rules (§2).
+//! Concept-id segment rules.
 //!
 //! The spec states no character constraint on filenames, so `validate_segment`
 //! rejects only what cannot be a concept id. The reference implementation's

@@ -1,5 +1,4 @@
-//! Calendar dates and ISO-8601 datetimes for the trust and lifecycle families
-//! (§5).
+//! Calendar dates and ISO-8601 datetimes for the trust and lifecycle families.
 //!
 //! OKF v0.2 puts timestamp fields in frontmatter and asks consumers to answer
 //! questions about them: which verification is the most recent, and is
@@ -8,7 +7,7 @@
 //! Every timestamp-valued key in OKF frontmatter is an ISO-8601 datetime with
 //! an explicit UTC offset (e.g. `2026-06-30T14:00:00Z`), across `generated.at`,
 //! `verified[].at`, `stale_after`, `sources[].last_modified`, and `usage_window`.
-//! Plain `YYYY-MM-DD` dates are used only in `log.md` section headings (§9).
+//! Plain `YYYY-MM-DD` dates are used only in `log.md` section headings.
 //!
 //! Answering those needs real date arithmetic, so this module implements the
 //! small amount required on the standard library alone: a proleptic Gregorian
@@ -127,7 +126,7 @@ impl std::error::Error for ParseDateError {}
 /// UTC offset.
 ///
 /// A value with no offset is treated as UTC for comparison, which is what
-/// consumers need in order to answer "which verification is most recent" (§5.2)
+/// consumers need in order to answer "which verification is most recent"
 /// across producers that write `Z`, `+02:00`, or nothing at all.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct DateTime {
@@ -326,7 +325,7 @@ impl std::str::FromStr for DateTime {
 ///
 /// Keeping the raw text lets a consumer round-trip the value and lets
 /// the okf-validator crate report *which* scalar is malformed instead of
-/// silently dropping it: the spec's permissiveness rule (§11) means an
+/// silently dropping it: the spec's permissiveness rule means an
 /// unparseable date must never make a document unreadable.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DateField {
@@ -353,7 +352,7 @@ impl DateField {
     /// The date this field designates, accepting a datetime by taking its date
     /// part.
     ///
-    /// [`DateField::date`] is deliberately strict, because §5.5 asks
+    /// [`DateField::date`] is deliberately strict, because the spec asks
     /// `stale_after` for "an absolute date (`YYYY-MM-DD`)" and the validator
     /// should report a datetime there as the deviation it is. A comparison still
     /// has to reach a verdict, though, and reading a malformed date as "never
@@ -379,7 +378,7 @@ impl fmt::Display for DateField {
 ///
 /// Keeping the raw text lets a consumer round-trip the value and lets
 /// the okf-validator crate report *which* scalar is malformed instead of
-/// silently dropping it: the spec's permissiveness rule (§11) means an
+/// silently dropping it: the spec's permissiveness rule means an
 /// unparseable datetime must never make a document unreadable.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DateTimeField {
@@ -400,7 +399,7 @@ impl DateTimeField {
     }
 
     /// `true` if the raw scalar parsed as an ISO-8601 datetime with a time of
-    /// day and an explicit UTC offset (§5).
+    /// day and an explicit UTC offset.
     #[must_use]
     pub const fn is_valid(&self) -> bool {
         self.has_time() && self.has_offset()

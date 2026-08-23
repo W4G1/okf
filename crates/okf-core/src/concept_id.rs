@@ -1,7 +1,7 @@
 //! Concept identifiers and their mapping to/from file paths.
 //!
 //! A *concept id* is the path of a concept's file within the bundle with the
-//! `.md` suffix removed, e.g. `tables/users.md` has id `tables/users` (§2).
+//! `.md` suffix removed, e.g. `tables/users.md` has id `tables/users`.
 //! This module ports the reference `bundle/paths.py`. Its ASCII segment rule is
 //! kept as [`is_portable_segment`], a guidance check, rather than as a parse
 //! error: see [`validate_segment`]. Ported to Rust and modified from the
@@ -119,7 +119,7 @@ impl ConceptId {
     ///
     /// The path must be a normalized, UTF-8 `.md` path whose segments can be
     /// represented by a [`ConceptId`]. A file already on disk is a concept
-    /// whatever its portable spelling, and §11 makes conformance a question of
+    /// whatever its portable spelling, and conformance is a question of
     /// frontmatter, not filenames, so names such as `my notes.md` remain valid.
     /// Rejecting non-UTF-8 names rather than replacing them is important: a
     /// replacement character would produce an id that does not point back to
@@ -188,7 +188,7 @@ impl std::str::FromStr for ConceptId {
 /// The reference `bundle/paths.py` restricts segments to
 /// `[A-Za-z0-9_][A-Za-z0-9_.\-]*`, but that rule is an artifact of the reference
 /// implementation rather than a requirement: the specification states no
-/// character constraint on filenames, and §11 makes conformance a question of
+/// character constraint on filenames, and conformance is a question of
 /// frontmatter. [`ConceptId::from_path`] accordingly accepts non-portable
 /// UTF-8 names, so applying the ASCII rule here only meant that ids the loader
 /// had just produced could not be parsed back, and that links to those

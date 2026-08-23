@@ -4,7 +4,7 @@ Conformance validation and opinionated linting for [Open Knowledge Format
 (OKF)](https://github.com/GoogleCloudPlatform/open-knowledge-format) v0.2
 bundles, built on [okf-core](https://crates.io/crates/okf-core).
 
-- `validate_bundle` checks §11 conformance with severity-tagged diagnostics:
+- `validate_bundle` checks conformance with severity-tagged diagnostics:
   only true spec violations are errors, optional-family problems are warnings
   and infos.
 - `lint_bundle` goes beyond conformance with bundle hygiene checks, each

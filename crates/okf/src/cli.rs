@@ -1,7 +1,7 @@
 //! `okf`: a command-line tool for the Open Knowledge Format.
 //!
 //! Subcommands:
-//!   validate     <bundle>   Check a bundle against OKF v0.2 §11 conformance.
+//!   validate     <bundle>   Check a bundle against OKF v0.2 conformance.
 //!   info         <bundle>   Print a summary of a bundle.
 //!   trust        <bundle>   Report trust tier, status, and staleness per concept.
 //!   computations <bundle>   List Attested Computation contracts.
@@ -758,7 +758,7 @@ fn print_graph_json(bundle: &Bundle, sources: bool) {
     print!("{out}");
 }
 
-/// A minimal JSON string escaper (RFC 8259 §7). The crate is zero-dependency,
+/// A minimal JSON string escaper (RFC 8259). The crate is zero-dependency,
 /// so the escaping is hand-rolled rather than delegating to `serde_json`.
 fn json_str(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
@@ -831,7 +831,7 @@ fn print_parse_trust(fm: &crate::Frontmatter) {
     }
 }
 
-/// The `sources` block with its credibility signals (§5.1).
+/// The `sources` block with its credibility signals.
 fn print_parse_sources(fm: &crate::Frontmatter) {
     let sources = fm.sources();
     if sources.is_empty() {
@@ -856,7 +856,7 @@ fn print_parse_sources(fm: &crate::Frontmatter) {
     }
 }
 
-/// Footnote attribution keyed to `sources[].id` (§5.1).
+/// Footnote attribution keyed to `sources[].id`.
 fn print_parse_attributions(doc: &Document) {
     let attributions = doc.attributions();
     if attributions.is_empty() {
@@ -872,7 +872,7 @@ fn print_parse_attributions(doc: &Document) {
     }
 }
 
-/// The Attested Computation contract (§10), when the document carries one.
+/// The Attested Computation contract, when the document carries one.
 fn print_parse_computation(doc: &Document) {
     let Some(contract) = doc.attested_computation() else {
         return;
@@ -901,7 +901,7 @@ fn print_parse_computation(doc: &Document) {
     }
 }
 
-/// Markdown links and any legacy `# Citations` list (§13.1).
+/// Markdown links and any legacy `# Citations` list.
 fn print_parse_links(doc: &Document) {
     let links = doc.links();
     if !links.is_empty() {

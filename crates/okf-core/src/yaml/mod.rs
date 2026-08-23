@@ -1,7 +1,7 @@
 //! A small, dependency-free YAML *subset* used for OKF frontmatter.
 //!
 //! OKF frontmatter is, in practice, a flat-ish YAML mapping of scalars, lists,
-//! and occasionally nested mappings (see the [specification][spec] §4.1). A
+//! and occasionally nested mappings (see the [specification][spec]). A
 //! full YAML 1.2 engine would be overkill and would pull in dependencies, so
 //! this module implements the pragmatic subset that real frontmatter uses:
 //!
@@ -35,12 +35,12 @@
 //! loses nothing, since [`DateField`](crate::DateField) and
 //! [`DateTimeField`](crate::DateTimeField) keep the text beside the parsed
 //! value, and it means a malformed date can be reported rather than silently
-//! dropped (§11).
+//! dropped.
 //!
 //! The consequence shows up on the way out. A bare ISO datetime is not stable
 //! even under the reference's own round-trip: `PyYAML` loads it into a `datetime`
 //! and dumps it back as `2026-06-30 14:00:00+00:00`, losing the `T` and `Z`
-//! separators §5.2 asks for. A quoted one survives byte-identical. So the
+//! separators the spec asks for. A quoted one survives byte-identical. So the
 //! emitter quotes a datetime-valued string and leaves a bare `YYYY-MM-DD` plain,
 //! which is how both the specification and the reference write `stale_after`,
 //! `last_modified`, and `usage_window`.

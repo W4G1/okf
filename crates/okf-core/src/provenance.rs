@@ -1,5 +1,4 @@
-//! Provenance: the `sources` frontmatter family and per-claim attribution
-//! (§5.1).
+//! Provenance: the `sources` frontmatter family and per-claim attribution.
 //!
 //! `sources` records the materials a concept derives from, external or internal
 //! to the bundle, together with the *credibility signals* (`author`,
@@ -35,7 +34,7 @@ use crate::footnotes;
 use crate::yaml::Value;
 use std::fmt;
 
-/// The date/time range that frames `usage_count` (§5.1).
+/// The date/time range that frames `usage_count`.
 ///
 /// Written once as a sibling of `sources`; a single entry MAY carry its own to
 /// override the shared one.
@@ -75,7 +74,7 @@ impl fmt::Display for UsageWindow {
     }
 }
 
-/// What kind of thing a `sources[].resource` names (§5.1).
+/// What kind of thing a `sources[].resource` names.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ResourceKind {
     /// An absolute URL.
@@ -100,7 +99,7 @@ pub struct Source {
     pub resource: Option<String>,
     /// Human-readable label for the source.
     pub title: Option<String>,
-    /// Who or what produced the source, in the actor convention (§7). An
+    /// Who or what produced the source, in the actor convention. An
     /// authority signal.
     pub author: Option<Actor>,
     /// How often `resource` was exercised over the usage window. An adoption
@@ -133,7 +132,7 @@ impl Source {
     /// Reads a whole `sources` value into a list of entries.
     ///
     /// A bare mapping is accepted as a one-element list, mirroring the rule
-    /// §5.2 states for `verified`; any other shape yields an empty list.
+    /// the spec states for `verified`; any other shape yields an empty list.
     pub fn list_from_value(value: &Value) -> Vec<Self> {
         match value {
             Value::Sequence(items) => items.iter().filter_map(Self::from_value).collect(),
@@ -189,7 +188,7 @@ impl fmt::Display for Source {
 }
 
 /// A body claim attributed to a source, produced by joining footnote labels to
-/// `sources[].id` (§5.1).
+/// `sources[].id`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Attribution {
     /// The footnote label, which is the join key.
@@ -210,13 +209,13 @@ impl Attribution {
     }
 }
 
-/// Joins the body's footnotes to `sources` by label (§5.1).
+/// Joins the body's footnotes to `sources` by label.
 ///
 /// Every label that appears as a reference or a definition gets one entry, in
 /// order of first appearance. A label with no matching `sources[].id` still
 /// appears, with [`Attribution::source`] set to `None`: an unresolvable
 /// attribution is a producer mistake to report, not grounds for rejecting the
-/// document (§11).
+/// document.
 #[must_use]
 pub fn attributions(sources: &[Source], body: &str) -> Vec<Attribution> {
     let refs = footnotes::extract_refs(body);

@@ -1,4 +1,4 @@
-//! Parsing and building `log.md` update histories (§9).
+//! Parsing and building `log.md` update histories.
 //!
 //! A log is a flat list of date-grouped entries, newest first:
 //!
@@ -123,7 +123,7 @@ impl Log {
     }
 
     /// Returns the date headings that are not valid ISO-8601 `YYYY-MM-DD`
-    /// (§9 requires this form).
+    /// (the spec requires this form).
     #[must_use]
     pub fn invalid_dates(&self) -> Vec<&str> {
         self.days
@@ -133,7 +133,7 @@ impl Log {
             .collect()
     }
 
-    /// Returns structural §9 violations found in the source text.
+    /// Returns structural log violations found in the source text.
     ///
     /// [`Log::parse`] intentionally remains a forgiving reader for consumers
     /// that want to recover entries from imperfect Markdown. Conformance

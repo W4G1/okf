@@ -1,4 +1,4 @@
-//! Link classification, resolution, and citation extraction tests (§5, §8).
+//! Link classification, resolution, and citation extraction tests.
 
 use okf_core::links::{Link, LinkKind, extract_citations, extract_links};
 use okf_core::{ConceptId, Document};
@@ -114,7 +114,7 @@ fn protocol_relative_url_is_external() {
 
 #[test]
 fn any_uri_scheme_is_external() {
-    // §4.1's `resource` is a URI, not necessarily an http URL, so a warehouse
+    // `resource` is a URI, not necessarily an http URL, so a warehouse
     // identifier must not be mistaken for a relative path.
     assert_eq!(
         Link::classify("bigquery:acme.sales.orders"),
@@ -134,7 +134,7 @@ fn any_uri_scheme_is_external() {
 
 #[test]
 fn field_paths_try_both_readings_of_a_relative_target() {
-    // §6.2 reads a relative path against the concept; §6.3's `references/`
+    // One reading resolves a relative path against the concept; the `references/`
     // convention is written from the bundle root. Both are offered, in that
     // order.
     let from = ConceptId::parse("computations/revenue").unwrap();

@@ -78,7 +78,7 @@ fn validate_conformant_bundle_succeeds() {
 fn validate_nonconformant_bundle_is_data_error() {
     let tmp = TempDir::new();
     tmp.write("index.md", "---\nokf_version: \"0.2\"\n---\n\n# Mini\n");
-    // A concept with no `type` fails §11 conformance.
+    // A concept with no `type` fails conformance.
     tmp.write(
         "metrics/revenue.md",
         "---\ntitle: Revenue\n---\n\nRevenue is money.\n",

@@ -1,4 +1,4 @@
-//! End-to-end conformance tests for [`validate_bundle`] and the §11 clauses,
+//! End-to-end conformance tests for [`validate_bundle`] and conformance clauses,
 //! driven by the specification's Appendix A worked example: an income statement
 //! whose two figures are split into attested computations, with every
 //! frontmatter family populated and the two computations deliberately left in
@@ -182,7 +182,7 @@ fn narrative_concept_links_to_each_computation() {
     assert_eq!(targets, vec!["computations/revenue", "computations/profit"]);
     assert!(bundle.links_from(&statement).iter().all(|l| l.exists));
 
-    // Each computation knows which concepts use it (§10.5's discovery path).
+    // Each computation knows which concepts use it (discovery path).
     assert_eq!(bundle.backlinks(&id("computations/revenue")), &[statement]);
 }
 
@@ -194,13 +194,13 @@ fn trust_tiers_and_freshness_differ_per_computation() {
     let revenue = bundle.get(&id("computations/revenue")).unwrap();
     let profit = bundle.get(&id("computations/profit")).unwrap();
 
-    // A human signed off revenue; only a process signed off profit (§5.3).
+    // A human signed off revenue; only a process signed off profit.
     assert_eq!(revenue.trust_tier(), TrustTier::HumanReviewed);
     assert_eq!(profit.trust_tier(), TrustTier::MachineConfirmed);
     assert!(revenue.trust_tier() > profit.trust_tier());
     assert_eq!(revenue.status(), Status::Stable);
 
-    // "Revenue can be fresh while profit is past its stale_after" (§10.4).
+    // "Revenue can be fresh while profit is past its stale_after".
     let today = Date::new(2026, 7, 1).unwrap();
     assert!(!revenue.is_stale_on(today));
     assert!(profit.is_stale_on(today));
@@ -208,7 +208,7 @@ fn trust_tiers_and_freshness_differ_per_computation() {
     assert_eq!(stale.len(), 1);
     assert_eq!(stale[0].id, id("computations/profit"));
 
-    // A bare `verified` mapping is one event, not a parse failure (§5.2).
+    // A bare `verified` mapping is one event, not a parse failure.
     let verified = revenue.document.frontmatter.verified();
     assert_eq!(verified.len(), 1);
     assert_eq!(verified[0].by.as_ref().unwrap().kind(), ActorKind::Human);
@@ -219,7 +219,7 @@ fn trust_tiers_and_freshness_differ_per_computation() {
         Some("reference_agent")
     );
     // `verified` is independent of `generated.at`: content changed after the
-    // human sign-off, and that is legal (§5.2).
+    // human sign-off, and that is legal.
     let generated_at = generated.at.unwrap().datetime.unwrap();
     let verified_at = verified[0].at.as_ref().unwrap().datetime.unwrap();
     assert!(generated_at > verified_at);
@@ -250,7 +250,7 @@ fn sources_carry_credibility_signals_framed_by_a_usage_window() {
     );
     assert_eq!(policy.usage_count, None);
 
-    // The shared window frames the dashboard's usage_count (§5.1).
+    // The shared window frames the dashboard's usage_count.
     let dashboard = &sources[1];
     assert_eq!(dashboard.usage_count, Some(5000));
     let shared = fm.usage_window();
@@ -347,7 +347,7 @@ fn contract_paths_resolve_from_the_bundle_root() {
     let revenue_id = id("computations/revenue");
 
     // The spec writes `references/...` from the bundle root even though the
-    // concept lives in `computations/` (§6.2, §6.3).
+    // concept lives in `computations/`.
     let executor = bundle
         .resolve_path_field(&revenue_id, "references/skills/run-on-bq.md")
         .unwrap();
@@ -454,7 +454,7 @@ fn staleness_reporting_is_opt_in_and_deterministic() {
 #[test]
 fn v0_1_documents_still_load_under_the_documented_fallbacks() {
     // The Appendix A "v0.1 form": one concept, a `timestamp`, and a body
-    // citations list (§13.1).
+    // citations list.
     let doc = Document::parse(
         "---\n\
          type: Metric\n\
@@ -478,7 +478,7 @@ fn v0_1_documents_still_load_under_the_documented_fallbacks() {
         changed.datetime.unwrap().date,
         Date::new(2026, 5, 28).unwrap()
     );
-    // Absent trust frontmatter has meaning, and is never a rejection (§11).
+    // Absent trust frontmatter has meaning, and is never a rejection.
     assert_eq!(doc.frontmatter.trust_tier(), TrustTier::Unverified);
     assert_eq!(doc.frontmatter.status(), Status::Stable);
     assert_eq!(doc.frontmatter.legacy_keys(), vec!["timestamp"]);
@@ -542,7 +542,7 @@ fn malformed_families_warn_without_breaking_conformance() {
 
     assert!(
         report.is_conformant(),
-        "`type` is present, so §11 is satisfied"
+        "`type` is present, so conformance is satisfied"
     );
     let warnings: Vec<&str> = report
         .of(Severity::Warning)
@@ -810,7 +810,7 @@ fn declared_version_is_reported_never_enforced() {
         let report = validate_bundle(&bundle);
         assert!(
             report.is_conformant(),
-            "a version mismatch is never a violation (§12)"
+            "a version mismatch is never a violation"
         );
         assert!(
             report
@@ -866,7 +866,7 @@ fn regenerating_indexes_keeps_the_declared_version() {
     let bundle = Bundle::load(tmp.path()).unwrap();
     assert_eq!(bundle.okf_version(), Some("0.2"));
 
-    // Attested Computations get their own index section, which is how §10.5's
+    // Attested Computations get their own index section, which is how
     // discovery-by-type works from an index.
     let computations = tmp.read("computations/index.md");
     assert!(

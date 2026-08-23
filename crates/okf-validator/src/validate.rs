@@ -1,4 +1,4 @@
-//! Conformance checking against OKF v0.2 §11.
+//! Conformance checking against OKF v0.2.
 //!
 //! A bundle is **conformant** if (1) every non-reserved `.md` file has a
 //! parseable frontmatter block, (2) every frontmatter has a non-empty `type`,
@@ -6,8 +6,8 @@
 //! is soft guidance: consumers MUST NOT reject a bundle for missing optional
 //! fields, unknown types or keys, broken links, or missing `index.md` files.
 //!
-//! Accordingly, [`validate_bundle`] reports only true §11 violations as
-//! [`Severity::Error`]. The v0.2 families (§5, §10) are all optional, so
+//! Accordingly, [`validate_bundle`] reports only true conformance violations as
+//! [`Severity::Error`]. The v0.2 families are all optional, so
 //! everything they contribute here is a [`Severity::Warning`] (a producer
 //! mistake worth fixing) or [`Severity::Info`] (a permitted state worth
 //! knowing about, such as a broken link or a concept past its `stale_after`).
@@ -33,7 +33,7 @@ use std::path::PathBuf;
 /// Severity of a diagnostic.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Severity {
-    /// A §11 conformance violation.
+    /// A conformance violation.
     Error,
     /// A soft-guidance deviation (the bundle is still conformant).
     Warning,
@@ -85,7 +85,7 @@ pub struct Report {
 
 impl Report {
     /// `true` if there are no [`Severity::Error`] diagnostics, i.e. the bundle
-    /// conforms to §11.
+    /// is conformant.
     #[must_use]
     pub fn is_conformant(&self) -> bool {
         !self
@@ -114,7 +114,7 @@ impl Report {
     }
 }
 
-/// Validates a loaded bundle against §11, returning all findings.
+/// Validates a loaded bundle, returning all findings.
 ///
 /// Deterministic: `stale_after` dates are checked for *syntax* but not against
 /// the clock. Use [`validate_bundle_at`] to also flag stale concepts.
@@ -124,7 +124,7 @@ pub fn validate_bundle(bundle: &Bundle) -> Report {
 }
 
 /// Validates a bundle, additionally reporting concepts that are stale on
-/// `today` (§5.5).
+/// `today`.
 #[must_use]
 pub fn validate_bundle_at(bundle: &Bundle, today: Option<Date>) -> Report {
     let mut report = Report::default();
@@ -153,9 +153,9 @@ pub fn validate_bundle_at(bundle: &Bundle, today: Option<Date>) -> Report {
                 .get("type")
                 .is_some_and(|value| value.as_display_str().is_none())
             {
-                cx.error("`type` must be a non-empty scalar (§4.1)");
+                cx.error("`type` must be a non-empty scalar");
             } else {
-                cx.error("missing required frontmatter field `type` (§4.1)");
+                cx.error("missing required frontmatter field `type`");
             }
         }
         check_recommended(&mut cx, &concept.document);
@@ -174,7 +174,7 @@ pub fn validate_bundle_at(bundle: &Bundle, today: Option<Date>) -> Report {
     validate_reserved(bundle, &mut report);
     check_declared_version(bundle, &mut report);
 
-    // Broken cross-links are permitted (§6.1); report them as info only.
+    // Broken cross-links are permitted; report them as info only.
     for (source, raw) in bundle.broken_links() {
         report.info(
             None,
@@ -246,9 +246,9 @@ impl Report {
     }
 }
 
-/// §4.1's recommended fields, plus `generated` from §5.2.
+/// Recommended fields, plus `generated`.
 ///
-/// Always a warning: §11 forbids rejecting a concept for a missing optional
+/// Always a warning: conformance forbids rejecting a concept for a missing optional
 /// field, however much a producer wants it filled in.
 fn check_recommended(cx: &mut Context, doc: &Document) {
     for field in doc.missing_recommended() {
@@ -257,24 +257,13 @@ fn check_recommended(cx: &mut Context, doc: &Document) {
         if field == "runtime" {
             continue;
         }
-        cx.warn(format!(
-            "missing recommended frontmatter field `{field}` ({})",
-            recommended_by(field)
-        ));
+        cx.warn(format!("missing recommended frontmatter field `{field}`"));
     }
 }
 
-/// The section that recommends a given frontmatter key, for the diagnostic.
-fn recommended_by(field: &str) -> &'static str {
-    match field {
-        "generated" => "§5.2",
-        _ => "§4.1",
-    }
-}
-
-/// The shape of `tags` (§4.1).
+/// The shape of `tags`.
 ///
-/// Worth its own check because the failure is silent: §4.1 asks for "a YAML list
+/// Worth its own check because the failure is silent: the spec asks for "a YAML list
 /// of short strings", and a producer that writes `tags: a, b, c` gets one plain
 /// scalar, so [`Frontmatter::tags`] reads no tags at all and the concept
 /// disappears from every tag view.
@@ -284,27 +273,27 @@ fn check_tags(cx: &mut Context, fm: &Frontmatter) {
     };
     if !matches!(value, Value::Sequence(_)) {
         cx.warn(format!(
-            "`tags` should be a list of short strings, found {}; no tags are read from it (§4.1)",
+            "`tags` should be a list of short strings, found {}; no tags are read from it",
             type_name(value)
         ));
     }
 }
 
-/// `generated` and `verified` (§5.2).
+/// `generated` and `verified`.
 fn check_trust(cx: &mut Context, fm: &Frontmatter) {
     if let Some(value) = fm.get("generated").filter(|v| !v.is_empty_value()) {
         match fm.generated() {
             None => cx.warn(format!(
-                "`generated` should be a `{{ by, at }}` mapping, found {} (§5.2)",
+                "`generated` should be a `{{ by, at }}` mapping, found {}",
                 type_name(value)
             )),
             Some(generated) => {
                 if generated.by.is_none() {
-                    cx.warn("`generated.by` is required within `generated` (§5.2)");
+                    cx.warn("`generated.by` is required within `generated`");
                 }
                 if let Some(at) = generated.at.filter(|a| !a.is_valid()) {
                     cx.warn(format!(
-                        "`generated.at` is not an ISO-8601 datetime with an explicit offset: {:?} (§5.2)",
+                        "`generated.at` is not an ISO-8601 datetime with an explicit offset: {:?}",
                         at.raw
                     ));
                 }
@@ -318,21 +307,21 @@ fn check_trust(cx: &mut Context, fm: &Frontmatter) {
     if !matches!(value, Value::Sequence(_) | Value::Mapping(_)) {
         cx.warn(format!(
             "`verified` should be a list of `{{ by, at }}` events (a bare mapping is read as \
-             a one-element list), found {} (§5.2)",
+             a one-element list), found {}",
             type_name(value)
         ));
         return;
     }
     let events = fm.verified();
     if events.is_empty() {
-        cx.warn("`verified` contains no `{ by, at }` events (§5.2)");
+        cx.warn("`verified` contains no `{ by, at }` events");
     }
     match value {
         Value::Sequence(items) => {
             for (i, item) in items.iter().enumerate() {
                 let Some(event) = Verification::from_value(item) else {
                     cx.warn(format!(
-                        "`verified[{i}]` should be a mapping with `by` and `at`, found {} (§5.2)",
+                        "`verified[{i}]` should be a mapping with `by` and `at`, found {}",
                         type_name(item)
                     ));
                     continue;
@@ -355,24 +344,24 @@ fn check_verification_event(cx: &mut Context, i: usize, event: &Verification) {
         .as_ref()
         .is_none_or(|by| by.as_str().trim().is_empty())
     {
-        cx.warn(format!("`verified[{i}].by` is missing (§5.2)"));
+        cx.warn(format!("`verified[{i}].by` is missing"));
     }
     match &event.at {
-        None => cx.warn(format!("`verified[{i}].at` is missing (§5.2)")),
+        None => cx.warn(format!("`verified[{i}].at` is missing")),
         Some(at) if !at.is_valid() => cx.warn(format!(
-            "`verified[{i}].at` is not an ISO-8601 datetime with an explicit offset: {:?} (§5.2)",
+            "`verified[{i}].at` is not an ISO-8601 datetime with an explicit offset: {:?}",
             at.raw
         )),
         Some(_) => {}
     }
 }
 
-/// `status` and `stale_after` (§5.4, §5.5).
+/// `status` and `stale_after`.
 fn check_lifecycle(cx: &mut Context, fm: &Frontmatter, today: Option<Date>) {
     let status = fm.status();
     if !status.is_known() {
         cx.warn(format!(
-            "unknown `status` value {:?}; §5.4 defines {} (consumers must still accept it)",
+            "unknown `status` value {:?}; the spec defines {} (consumers must still accept it)",
             status.to_string(),
             STATUS_VALUES.join(", ")
         ));
@@ -386,30 +375,30 @@ fn check_lifecycle(cx: &mut Context, fm: &Frontmatter, today: Option<Date>) {
             if let Some(today) = today
                 && today.to_utc_datetime() >= *dt
             {
-                cx.info(format!("stale since {stale_after} (§5.5)"));
+                cx.info(format!("stale since {stale_after}"));
             }
         }
         _ => {
             cx.warn(format!(
-                "`stale_after` is not an ISO-8601 datetime with an explicit offset: {:?} (§5.5)",
+                "`stale_after` is not an ISO-8601 datetime with an explicit offset: {:?}",
                 stale_after.raw
             ));
         }
     }
 }
 
-/// `sources` and its credibility signals (§5.1).
+/// `sources` and its credibility signals.
 fn check_provenance(cx: &mut Context, fm: &Frontmatter) {
     let Some(value) = fm.get("sources").filter(|v| !v.is_empty_value()) else {
         // A `usage_window` with nothing to frame is a producer slip.
         if fm.get("usage_window").is_some() {
-            cx.warn("`usage_window` is present without `sources` to frame (§5.1)");
+            cx.warn("`usage_window` is present without `sources` to frame");
         }
         return;
     };
     if !matches!(value, Value::Sequence(_) | Value::Mapping(_)) {
         cx.warn(format!(
-            "`sources` should be a list of entries, found {} (§5.1)",
+            "`sources` should be a list of entries, found {}",
             type_name(value)
         ));
         return;
@@ -420,7 +409,7 @@ fn check_provenance(cx: &mut Context, fm: &Frontmatter) {
         for (field, date) in [("from", &window.from), ("to", &window.to)] {
             if let Some(d) = date.as_ref().filter(|d| !d.is_valid()) {
                 cx.warn(format!(
-                    "`usage_window.{field}` is not an ISO-8601 datetime with an explicit offset: {:?} (§5.1)",
+                    "`usage_window.{field}` is not an ISO-8601 datetime with an explicit offset: {:?}",
                     d.raw
                 ));
             }
@@ -435,7 +424,7 @@ fn check_provenance(cx: &mut Context, fm: &Frontmatter) {
             .filter_map(|(i, item)| {
                 if item.as_mapping().is_none() {
                     cx.warn(format!(
-                        "`sources[{i}]` should be a mapping entry, found {} (§5.1)",
+                        "`sources[{i}]` should be a mapping entry, found {}",
                         type_name(item)
                     ));
                     None
@@ -453,19 +442,19 @@ fn check_provenance(cx: &mut Context, fm: &Frontmatter) {
     for (i, source) in &entries {
         if source.resource_kind() == ResourceKind::Missing {
             cx.warn(format!(
-                "`sources[{i}].resource` is required within an entry (§5.1)"
+                "`sources[{i}].resource` is required within an entry"
             ));
         }
         if let Some(id) = &source.id
             && !seen_ids.insert(id.clone())
         {
             cx.warn(format!(
-                "duplicate `sources[].id` {id:?}; ids are the join key for attribution (§5.1)"
+                "duplicate `sources[].id` {id:?}; ids are the join key for attribution"
             ));
         }
         if let Some(last_modified) = source.last_modified.as_ref().filter(|d| !d.is_valid()) {
             cx.warn(format!(
-                "`sources[{i}].last_modified` is not an ISO-8601 datetime with an explicit offset: {:?} (§5.1)",
+                "`sources[{i}].last_modified` is not an ISO-8601 datetime with an explicit offset: {:?}",
                 last_modified.raw
             ));
         }
@@ -475,7 +464,7 @@ fn check_provenance(cx: &mut Context, fm: &Frontmatter) {
                 .is_none()
         {
             cx.warn(format!(
-                "`sources[{i}].usage_count` has no `usage_window` to frame it (§5.1)"
+                "`sources[{i}].usage_count` has no `usage_window` to frame it"
             ));
         }
     }
@@ -487,7 +476,7 @@ fn check_provenance(cx: &mut Context, fm: &Frontmatter) {
             let raw = item.as_mapping().and_then(|m| m.get("usage_count"));
             if let Some(raw) = raw.filter(|v| v.as_int().is_none()) {
                 cx.warn(format!(
-                    "`sources[{i}].usage_count` should be an integer, found {} (§5.1)",
+                    "`sources[{i}].usage_count` should be an integer, found {}",
                     type_name(raw)
                 ));
             }
@@ -495,44 +484,44 @@ fn check_provenance(cx: &mut Context, fm: &Frontmatter) {
     }
 }
 
-/// Footnote attribution keyed to `sources[].id` (§5.1).
+/// Footnote attribution keyed to `sources[].id`.
 fn check_attribution(cx: &mut Context, doc: &Document) {
     let has_sources = !doc.frontmatter.sources().is_empty();
     for attribution in doc.attributions() {
         if !attribution.is_resolved() && has_sources {
             cx.warn(format!(
                 "footnote [^{}] matches no `sources[].id`; the label is the join key for \
-                 attribution (§5.1)",
+                 attribution",
                 attribution.label
             ));
         }
         if attribution.references > 0 && attribution.definitions == 0 {
             cx.warn(format!(
-                "footnote [^{}] is cited but never defined (§5.1)",
+                "footnote [^{}] is cited but never defined",
                 attribution.label
             ));
         }
     }
 }
 
-/// v0.1 constructs that v0.2 supersedes (§13.1).
+/// v0.1 constructs that v0.2 supersedes.
 fn check_legacy(cx: &mut Context, doc: &Document) {
     let fm = &doc.frontmatter;
     if !is_blank(fm, "timestamp") {
         if is_blank(fm, "generated") {
-            cx.warn("`timestamp` is superseded by `generated: { by, at }` (§13.1)");
+            cx.warn("`timestamp` is superseded by `generated: { by, at }`");
         } else {
-            cx.warn("`timestamp` is redundant alongside `generated` and should be removed (§13.1)");
+            cx.warn("`timestamp` is redundant alongside `generated` and should be removed");
         }
     }
     if doc.has_legacy_citations() {
         cx.warn(
-            "the body `# Citations` list is superseded by the `sources` frontmatter field (§13.1)",
+            "the body `# Citations` list is superseded by the `sources` frontmatter field",
         );
     }
 }
 
-/// The Attested Computation contract (§10).
+/// The Attested Computation contract.
 fn check_computation(cx: &mut Context, doc: &Document) {
     let fm = &doc.frontmatter;
     let computation_keys = [
@@ -552,7 +541,7 @@ fn check_computation(cx: &mut Context, doc: &Document) {
         if !present.is_empty() {
             cx.info(format!(
                 "carries computation field(s) `{}` but `type` is not `{ATTESTED_COMPUTATION_TYPE}`; \
-                 a sanctioned computation is its own concept (§10.1)",
+                 a sanctioned computation is its own concept",
                 present.join("`, `")
             ));
         }
@@ -564,54 +553,54 @@ fn check_computation(cx: &mut Context, doc: &Document) {
     };
 
     if contract.runtime.is_none() {
-        cx.warn("`runtime` is required on an `Attested Computation`; it defines what `parameters` mean (§10.2)");
+        cx.warn("`runtime` is required on an `Attested Computation`; it defines what `parameters` mean");
     }
     match &contract.computation {
         ComputationSource::Missing => cx.warn(
-            "no computation: set `computation` to a path or add a `# Computation` block to the body (§10.3)",
+            "no computation: set `computation` to a path or add a `# Computation` block to the body",
         ),
         ComputationSource::File(_) if contract.has_redundant_inline => cx.warn(
-            "`computation` names a file and the body also has a `# Computation` block; §10.3 asks for one or the other",
+            "`computation` names a file and the body also has a `# Computation` block; the spec asks for one or the other",
         ),
         _ => {}
     }
 
     for (i, parameter) in contract.parameters.iter().enumerate() {
         if parameter.name.is_none() {
-            cx.warn(format!("`parameters[{i}].name` is missing (§10.2)"));
+            cx.warn(format!("`parameters[{i}].name` is missing"));
         }
         if parameter.type_.is_none() {
-            cx.warn(format!("`parameters[{i}].type` is missing (§10.2)"));
+            cx.warn(format!("`parameters[{i}].type` is missing"));
         }
     }
 
     match &contract.executor {
-        None => cx.warn("missing `executor`: nothing says how to run the computation (§10.2)"),
+        None => cx.warn("missing `executor`: nothing says how to run the computation"),
         Some(executor) => {
             if executor.resource.is_none() {
                 cx.warn(
-                    "`executor.resource` is missing; it names the run instructions or code (§10.2)",
+                    "`executor.resource` is missing; it names the run instructions or code",
                 );
             }
             if executor.receipt.is_empty() {
                 cx.warn(
-                    "`executor.receipt` is empty; it declares the evidence the attester inspects (§10.2)",
+                    "`executor.receipt` is empty; it declares the evidence the attester inspects",
                 );
             }
         }
     }
 
     match &contract.attester {
-        None => cx.warn("missing `attester`: nothing can check a run's receipt (§10.2)"),
+        None => cx.warn("missing `attester`: nothing can check a run's receipt"),
         Some(attester) if attester.resource.is_none() => {
-            cx.warn("`attester.resource` is missing; it names the deterministic check (§10.2)");
+            cx.warn("`attester.resource` is missing; it names the deterministic check");
         }
         Some(_) => {}
     }
 }
 
-/// Path-valued fields that point inside the bundle but resolve to nothing
-/// (§6.2). Informational, since a bundle may legitimately be shipped without
+/// Path-valued fields that point inside the bundle but resolve to nothing.
+/// Informational, since a bundle may legitimately be shipped without
 /// the files its executor or attester references.
 ///
 /// `resource` is only checked when it is written unambiguously as a path
@@ -632,17 +621,17 @@ fn check_path_fields(cx: &mut Context, bundle: &Bundle, fm: &Frontmatter) {
         }
         if bundle.resolve_path_field(&id, target).is_none() {
             cx.info(format!(
-                "`{field}` does not resolve to a file in the bundle: {raw} (§6.2)"
+                "`{field}` does not resolve to a file in the bundle: {raw}"
             ));
         }
     }
 }
 
 /// Concept-id segments outside the reference implementation's
-/// `[A-Za-z0-9_][A-Za-z0-9_.\-]*` convention (§2).
+/// `[A-Za-z0-9_][A-Za-z0-9_.\-]*` convention.
 ///
 /// Never an error. The spec places no character constraint on filenames and
-/// §11 makes conformance a question of frontmatter, so [`ConceptId`] accepts
+/// conformance is a question of frontmatter, so [`ConceptId`] accepts
 /// these names and the bundle stays conformant. It is still worth telling a
 /// producer: such a name has to be written as `<...>` or percent-encoded to be
 /// linked from markdown, and is not guaranteed to survive every filesystem
@@ -664,7 +653,7 @@ fn check_segment_portability(bundle: &Bundle, report: &mut Report) {
                     "concept-id segment {segment:?} is outside the conventional \
                      `[A-Za-z0-9_][A-Za-z0-9_.-]*` set; the bundle is still conformant, but \
                      such a name needs `<...>` or percent-encoding to link portably and is \
-                     not guaranteed to survive every filesystem unchanged (§2)"
+                     not guaranteed to survive every filesystem unchanged"
                 ),
             );
         }
@@ -681,7 +670,7 @@ fn validate_reserved(bundle: &Bundle, report: &mut Report) {
                 report.error(
                     Some(path.clone()),
                     None,
-                    format!("unreadable reserved index.md: {error} (§8)"),
+                    format!("unreadable reserved index.md: {error}"),
                 );
                 continue;
             }
@@ -692,7 +681,7 @@ fn validate_reserved(bundle: &Bundle, report: &mut Report) {
                 report.error(
                     Some(path.clone()),
                     None,
-                    format!("unparseable reserved index.md: {error} (§8)"),
+                    format!("unparseable reserved index.md: {error}"),
                 );
                 continue;
             }
@@ -701,7 +690,7 @@ fn validate_reserved(bundle: &Bundle, report: &mut Report) {
             continue;
         }
         // Frontmatter is only permitted in the bundle-root index.md, and only
-        // to declare `okf_version` (§12).
+        // to declare `okf_version`.
         let is_root = path == &root_index;
         if is_root {
             let only_version = doc
@@ -713,14 +702,14 @@ fn validate_reserved(bundle: &Bundle, report: &mut Report) {
                 report.error(
                     Some(path.clone()),
                     None,
-                    "root index.md frontmatter should declare only `okf_version` (§12)".to_string(),
+                    "root index.md frontmatter should declare only `okf_version`".to_string(),
                 );
             }
         } else {
             report.error(
                 Some(path.clone()),
                 None,
-                "index.md should not contain frontmatter (§8)".to_string(),
+                "index.md should not contain frontmatter".to_string(),
             );
         }
     }
@@ -732,28 +721,28 @@ fn validate_reserved(bundle: &Bundle, report: &mut Report) {
                 report.error(
                     Some(path.clone()),
                     None,
-                    format!("unreadable reserved log.md: {error} (§9)"),
+                    format!("unreadable reserved log.md: {error}"),
                 );
                 continue;
             }
         };
         let log = Log::parse(&text);
         for issue in log.structural_errors(&text) {
-            report.error(Some(path.clone()), None, format!("{issue} (§9)"));
+            report.error(Some(path.clone()), None, issue);
         }
         for bad in log.invalid_dates() {
             report.error(
                 Some(path.clone()),
                 None,
-                format!("log date heading is not ISO-8601 `YYYY-MM-DD`: {bad:?} (§9)"),
+                format!("log date heading is not ISO-8601 `YYYY-MM-DD`: {bad:?}"),
             );
         }
     }
 }
 
-/// The `okf_version` a bundle declares (§12).
+/// The `okf_version` a bundle declares.
 ///
-/// Never an error. §12 is explicit that a consumer which does not understand
+/// Never an error. The spec is explicit that a consumer which does not understand
 /// the declared version should attempt best-effort consumption rather than
 /// refusing the bundle.
 fn check_declared_version(bundle: &Bundle, report: &mut Report) {
@@ -766,13 +755,13 @@ fn check_declared_version(bundle: &Bundle, report: &mut Report) {
     }
     let message = if okf_core::SUPPORTED_OKF_VERSIONS.contains(&declared) {
         format!(
-            "bundle targets OKF v{declared}; read as v{} under the §13.1 fallbacks",
+            "bundle targets OKF v{declared}; read as v{} under documented fallbacks",
             okf_core::OKF_VERSION
         )
     } else {
         format!(
             "bundle declares an unrecognized `okf_version: {declared}`; consuming it \
-             best-effort as v{} (§12)",
+             best-effort as v{}",
             okf_core::OKF_VERSION
         )
     };
@@ -798,7 +787,7 @@ const fn type_name(value: &Value) -> &'static str {
 
 /// Checks an ISO-8601 datetime with a time of day and an explicit UTC offset.
 ///
-/// OKF's timestamp fields require a time of day with an explicit offset (§5).
+/// OKF's timestamp fields require a time of day with an explicit offset.
 #[must_use]
 pub fn is_iso8601_datetime(s: &str) -> bool {
     DateTime::parse(s)

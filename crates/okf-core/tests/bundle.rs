@@ -156,7 +156,7 @@ fn okf_version_read_from_root_index() {
 
 #[test]
 fn a_filename_that_is_not_a_valid_concept_id_segment_still_loads() {
-    // §11 makes conformance a question of frontmatter, not filenames, and the
+    // Conformance is a question of frontmatter, not filenames, and the
     // reference's `path_to_concept_id` validates nothing. So a readable document
     // under an awkward name is a concept, not a parse error.
     let tmp = TempDir::new();
@@ -180,8 +180,8 @@ fn a_filename_that_is_not_a_valid_concept_id_segment_still_loads() {
     assert_eq!(ConceptId::parse(&id.to_string()).as_ref(), Ok(id));
     assert!(bundle.contains(&ConceptId::parse("tables/my notes").unwrap()));
 
-    // Still conformant: the name is only worth a warning, since §11 makes
-    // conformance a question of frontmatter.
+    // Still conformant: the name is only worth a warning, since
+    // conformance is a question of frontmatter.
     let report = validate_bundle(&bundle);
     assert!(report.is_conformant());
     assert!(

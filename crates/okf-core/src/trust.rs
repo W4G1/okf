@@ -1,25 +1,25 @@
 //! Trust and lifecycle frontmatter: `generated`, `verified`, `status`, and
-//! `stale_after` (§5.2 to §5.5).
+//! `stale_after`.
 //!
 //! These four keys let a consumer answer "how much should I trust this" and "is
 //! it still current" from frontmatter alone. All are optional, and their
 //! *absence* is meaningful rather than invalid: a concept with no trust
 //! frontmatter is [`TrustTier::Unverified`] and `status: stable`, and must
-//! never be rejected (§11).
+//! never be rejected.
 //!
 //! Two rules from the spec are encoded here rather than left to callers:
 //!
 //! - A bare `verified: { by, at }` mapping **must** be read as a one-element
-//!   list ([`Verification::list_from_value`], §5.2).
+//!   list ([`Verification::list_from_value`]).
 //! - The trust tier is *derived* from `verified`, never stored
-//!   ([`TrustTier::derive`], §5.3).
+//!   ([`TrustTier::derive`]).
 
 use crate::actor::Actor;
 use crate::date::{Date, DateTime, DateTimeField};
 use crate::yaml::Value;
 use std::fmt;
 
-/// How the current content was produced (§5.2): `generated: { by, at }`.
+/// How the current content was produced: `generated: { by, at }`.
 ///
 /// Distinct from [`Verification`] on purpose: who *wrote* a concept need not be
 /// who *confirmed* it.
@@ -61,7 +61,7 @@ impl fmt::Display for Generated {
     }
 }
 
-/// A single verification event (§5.2): `{ by, at }`.
+/// A single verification event: `{ by, at }`.
 ///
 /// Multiple entries capture independent checks, a human sign-off plus a
 /// nightly process, say. "How recently" is the latest [`Verification::at`].
@@ -103,7 +103,7 @@ impl Verification {
     /// Reads a whole `verified` value into a list of events.
     ///
     /// Consumers **MUST** treat a bare `{ by, at }` mapping as a one-element
-    /// list (§5.2, restated as a conformance rule in §11), so that shape is
+    /// list, so that shape is
     /// accepted here alongside the list form. Any other shape yields an empty
     /// list.
     pub fn list_from_value(value: &Value) -> Vec<Self> {
@@ -126,7 +126,7 @@ impl fmt::Display for Verification {
     }
 }
 
-/// Returns the verification with the latest parseable `at` (§5.2).
+/// Returns the verification with the latest parseable `at`.
 ///
 /// Events missing a verifier or a valid, parseable `at` cannot be
 /// ordered and are skipped; `None` means no event carries a usable timestamp.
@@ -140,7 +140,7 @@ pub fn latest_verification(events: &[Verification]) -> Option<&Verification> {
         .map(|(v, _)| v)
 }
 
-/// A concept's trust tier, derived from `verified` (§5.3).
+/// A concept's trust tier, derived from `verified`.
 ///
 /// Ordering is by increasing trust, so tiers can be compared directly
 /// (`tier >= TrustTier::MachineConfirmed`). Tiers are advisory signals, not
@@ -156,7 +156,7 @@ pub enum TrustTier {
 }
 
 impl TrustTier {
-    /// Derives the tier from a concept's verification events (§5.3).
+    /// Derives the tier from a concept's verification events.
     #[must_use]
     pub fn derive(events: &[Verification]) -> Self {
         let mut valid_events = events.iter().filter(|event| event.is_valid());
@@ -180,7 +180,7 @@ impl fmt::Display for TrustTier {
     }
 }
 
-/// A concept's lifecycle `status` (§5.4). An absent key means
+/// A concept's lifecycle `status`. An absent key means
 /// [`Status::Stable`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Status {
@@ -191,11 +191,11 @@ pub enum Status {
     /// Kept for links and history; no longer current.
     Deprecated,
     /// A producer-defined value outside the three the spec names. Consumers
-    /// must tolerate it (§11).
+    /// must tolerate it.
     Other(String),
 }
 
-/// The `status` values §5.4 defines.
+/// The `status` values the spec defines.
 pub const STATUS_VALUES: [&str; 3] = ["draft", "stable", "deprecated"];
 
 impl Status {
@@ -210,7 +210,7 @@ impl Status {
         })
     }
 
-    /// `true` for one of the three values §5.4 defines.
+    /// `true` for one of the three values the spec defines.
     #[must_use]
     pub const fn is_known(&self) -> bool {
         !matches!(self, Self::Other(_))
@@ -237,7 +237,7 @@ impl fmt::Display for Status {
 
 /// Whether a concept with this `stale_after` timestamp is stale at `now`.
 ///
-/// §5.5: "A concept is stale when `now >= stale_after`." An absent,
+/// Staleness rule: "A concept is stale when `now >= stale_after`." An absent,
 /// offset-less, or unparseable `stale_after` is never stale.
 #[must_use]
 pub fn is_stale_at(stale_after: Option<DateTime>, now: DateTime) -> bool {

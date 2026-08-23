@@ -136,7 +136,7 @@ fn regenerate_single_child_reuses_description() {
 
 #[test]
 fn an_empty_title_falls_back_to_the_filename() {
-    // §4.1: "If omitted, consumers MAY derive a title from the filename." The
+    // Spec: "If omitted, consumers MAY derive a title from the filename." The
     // reference's `fm.get("title") or child.stem` treats an empty title as
     // omitted, so an empty string must not become the link text.
     let tmp = TempDir::new();

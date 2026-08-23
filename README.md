@@ -22,7 +22,7 @@ This repository is a workspace of three crates:
 
 - [`okf-core`](https://crates.io/crates/okf-core): the library implementing the
   OKF specification (parser, model, link graph, index/log tooling).
-- [`okf-validator`](https://crates.io/crates/okf-validator): §11 conformance
+- [`okf-validator`](https://crates.io/crates/okf-validator): conformance
   validation and opinionated linting, built on `okf-core`.
 - [`okf`](https://crates.io/crates/okf): the `okf` command-line tool, which
   also re-exports the entire `okf-core` and `okf-validator` API, so depending
@@ -187,18 +187,18 @@ document is still a conformant v0.2 document.
 
 | Question                                 | Frontmatter                                        | Module          |
 |------------------------------------------|----------------------------------------------------|-----------------|
-| What was this created from? (provenance) | `sources`, `usage_window` (§5.1)                    | [`provenance`]  |
-| How much should I trust it? (trust)      | `generated`, `verified` (§5.2), trust tiers (§5.3)  | [`trust`]       |
-| Is it still true? (freshness)            | `stale_after` (§5.5)                                | [`trust`]       |
-| Is it the current version? (lifecycle)   | `status` (§5.4)                                     | [`trust`]       |
-| Was this number produced the way we said it must be? (attestation) | `runtime`, `parameters`, `computation`, `executor`, `attester` (§10) | [`computation`] |
+| What was this created from? (provenance) | `sources`, `usage_window`                          | [`provenance`]  |
+| How much should I trust it? (trust)      | `generated`, `verified`, trust tiers               | [`trust`]       |
+| Is it still true? (freshness)            | `stale_after`                                      | [`trust`]       |
+| Is it the current version? (lifecycle)   | `status`                                           | [`trust`]       |
+| Was this number produced the way we said it must be? (attestation) | `runtime`, `parameters`, `computation`, `executor`, `attester` | [`computation`] |
 
 Plus the actor convention shared by every identity field
-(`<producer>/<version>`, `human:<id>`, `process:<id>`, §7) in [`actor`], and
-per-claim attribution through markdown footnotes keyed to `sources[].id` (§5.1)
+(`<producer>/<version>`, `human:<id>`, `process:<id>`) in [`actor`], and
+per-claim attribution through markdown footnotes keyed to `sources[].id`
 in [`footnotes`].
 
-Two v0.1 constructs are superseded (§13.1) but still readable, since a v0.2
+Two v0.1 constructs are superseded but still readable, since a v0.2
 consumer is expected to handle v0.1 bundles:
 
 | v0.1               | v0.2                    | Fallback in okf-core                  |
@@ -211,13 +211,13 @@ incrementally, without ever failing conformance for using the old form.
 
 ### Attestation is recorded, not executed
 
-An `Attested Computation` concept (§10) carries a sanctioned way to compute a
+An `Attested Computation` concept carries a sanctioned way to compute a
 value: a `runtime`, typed `parameters`, the computation itself (inline under
 `# Computation` or in a file), an `executor` that produces a receipt, and a
 deterministic `attester` that turns a receipt into a verdict.
 
 okf-core models and checks that contract. It **never runs anything**: the
-receipt and verdict are runtime artifacts that §10.5 explicitly keeps out of the
+receipt and verdict are runtime artifacts that are kept out of the
 bundle. Executing computations and attesting receipts are consumer-side
 concerns.
 
@@ -226,20 +226,20 @@ concerns.
 | Module          | Responsibility                                                        |
 |-----------------|-----------------------------------------------------------------------|
 | [`yaml`]        | A YAML-*subset* `Value`/`Mapping`, parser, and emitter for frontmatter |
-| [`document`]    | `Document` = frontmatter + body; parse / serialize / validate (§4)    |
-| [`frontmatter`] | `Frontmatter`: typed accessors over an order-preserving mapping (§4.1)|
-| [`concept_id`]  | `ConceptId` to/from path conversion and segment rules (§2)            |
-| [`provenance`]  | `sources`, credibility signals, and footnote attribution (§5.1)       |
-| [`trust`]       | `generated`, `verified`, trust tiers, `status`, `stale_after` (§5.2 to §5.5) |
-| [`actor`]       | The `human:` / `process:` / `<producer>/<version>` convention (§7)    |
+| [`document`]    | `Document` = frontmatter + body; parse / serialize / validate         |
+| [`frontmatter`] | `Frontmatter`: typed accessors over an order-preserving mapping       |
+| [`concept_id`]  | `ConceptId` to/from path conversion and segment rules                 |
+| [`provenance`]  | `sources`, credibility signals, and footnote attribution              |
+| [`trust`]       | `generated`, `verified`, trust tiers, `status`, `stale_after`         |
+| [`actor`]       | The `human:` / `process:` / `<producer>/<version>` convention         |
 | [`date`]        | `Date`/`DateTime` parsing and comparison for the date-valued fields   |
-| [`computation`] | The Attested Computation contract and its `# Computation` block (§10) |
-| [`footnotes`]   | `[^label]` reference and definition scanning (§5.1)                   |
-| [`links`]       | Markdown link extraction, classification, path-valued fields (§6)     |
-| [`bundle`]      | `Bundle::load`: walk a tree, build the link and derivation graphs (§3, §5.1, §6) |
-| [`index`]       | Generate `index.md` directory listings (§8)                           |
-| [`log`]         | Parse / build `log.md` update histories (§9)                          |
-| [`validate`]    | §11 conformance checking with severity-tagged diagnostics             |
+| [`computation`] | The Attested Computation contract and its `# Computation` block      |
+| [`footnotes`]   | `[^label]` reference and definition scanning                          |
+| [`links`]       | Markdown link extraction, classification, path-valued fields          |
+| [`bundle`]      | `Bundle::load`: walk a tree, build the link and derivation graphs     |
+| [`index`]       | Generate `index.md` directory listings                                |
+| [`log`]         | Parse / build `log.md` update histories                               |
+| [`validate`]    | Conformance checking with severity-tagged diagnostics                 |
 | [`lint`]        | Opinionated bundle health checks beyond conformance                   |
 
 The core split mirrors the reference Python implementation's `bundle/` package
@@ -281,8 +281,8 @@ PyYAML reads back identically.
   ordered mapping and layers typed getters (`type_()`, `sources()`,
   `trust_tier()`, and so on) on top. This satisfies the spec's requirement that
   consumers preserve unknown keys when round-tripping.
-- **Signals are stored, verdicts are derived.** Trust tiers (§5.3) and source
-  credibility (§5.1) are computed on read, never stored, because a stored score
+- **Signals are stored, verdicts are derived.** Trust tiers and source
+  credibility are computed on read, never stored, because a stored score
   is subjective, unportable across consumers, and goes stale.
 - **Staleness is opt-in.** `validate_bundle` is deterministic and never consults
   the clock; `validate_bundle_at(&bundle, today)` adds the `stale_after`
@@ -292,7 +292,7 @@ PyYAML reads back identically.
   cross-links are retained as graph edges to non-existent concepts, and a
   malformed date is reported rather than dropped (`DateField` keeps the raw
   scalar alongside its parse).
-- **Validation rejects only what §11 rejects.** `Document::validate()` requires a
+- **Validation rejects only what the spec rejects.** `Document::validate()` requires a
   non-empty `type` and nothing more, matching the reference implementation.
   Everything else the spec asks of a producer is reported, never enforced:
   `Document::missing_recommended()` returns the unset recommended keys
@@ -312,7 +312,7 @@ PyYAML reads back identically.
   rather than silently dropped. On the way out a datetime-valued scalar is
   emitted quoted, because a bare one is not stable even under the reference's own
   round-trip: PyYAML re-dumps it as `2026-06-30 14:00:00+00:00`, losing the `T`
-  and `Z` that §5.2 asks for. A bare `YYYY-MM-DD` stays plain.
+  and `Z` that the spec asks for. A bare `YYYY-MM-DD` stays plain.
 
 ## License
 

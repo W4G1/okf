@@ -1,23 +1,23 @@
-//! Markdown link extraction, classification, and path-valued fields (§6).
+//! Markdown link extraction, classification, and path-valued fields.
 //!
 //! OKF relationships are expressed as ordinary markdown links, so this module
 //! provides a small, dependency-free scanner for inline `[text](dest)` links
-//! plus the link-classification rules from §6.1 (absolute bundle-relative vs.
+//! plus the link-classification rules (absolute bundle-relative vs.
 //! relative vs. external). It ignores links inside fenced code blocks and
 //! inline code spans, which are content rather than relationships.
 //!
-//! §6.2 extends the same path grammar to *frontmatter* fields (`resource`,
+//! The same path grammar extends to *frontmatter* fields (`resource`,
 //! `sources[].resource`, `computation`, `executor.resource`, and
 //! `attester.resource`), which are resolved by
 //! [`field_path_candidates`] rather than by [`Link::resolve`].
 //!
 //! It also still parses the v0.1 body `# Citations` list
-//! ([`extract_citations`]), which v0.2 supersedes with `sources` (§13.1) but
+//! ([`extract_citations`]), which v0.2 supersedes with `sources` but
 //! which consumers MAY keep reading for legacy documents.
 
 use crate::concept_id::ConceptId;
 
-/// How a link target is interpreted under §6.1.
+/// How a link target is interpreted.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LinkKind {
     /// Begins with `/`: resolved relative to the bundle root (recommended).
@@ -44,7 +44,7 @@ pub struct Link {
 }
 
 impl Link {
-    /// Classifies a raw target string per §6.
+    /// Classifies a raw target string.
     #[must_use]
     pub fn classify(target: &str) -> LinkKind {
         let t = target.trim();
@@ -67,7 +67,7 @@ impl Link {
     /// Returns `None` for external links, anchors, links to directories
     /// (targets ending in `/`), or targets that cannot form a valid concept id.
     /// The result is *not* guaranteed to exist in the bundle: broken links are
-    /// permitted by the spec (§6.1).
+    /// permitted by the spec.
     ///
     /// Where a target is percent-encoded this returns the literal reading; use
     /// [`Link::resolve_all`] to also consider the decoded one.
@@ -143,8 +143,8 @@ fn percent_decode(s: &str) -> Option<String> {
 /// A numbered entry under a legacy v0.1 `# Citations` heading.
 ///
 /// v0.2 supersedes the body citations list with the `sources` frontmatter field
-/// and footnote attribution (§5.1); consumers MAY still parse this form for
-/// v0.1 documents (§13.1).
+/// and footnote attribution; consumers MAY still parse this form for
+/// v0.1 documents.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Citation {
     /// The citation number (the `n` in `[n]`).
@@ -159,7 +159,7 @@ pub struct Citation {
 
 /// Whether a target names something outside the bundle.
 ///
-/// Any RFC-3986 scheme prefix counts, not just `http`. §4.1 calls `resource`
+/// Any RFC-3986 scheme prefix counts, not just `http`. The spec calls `resource`
 /// "a URI that uniquely identifies the underlying asset", and producers do use
 /// non-http schemes for warehouse assets (`bigquery:project.dataset.table`);
 /// treating those as relative paths would have a consumer looking for a file
@@ -235,7 +235,7 @@ fn strip_md(mut segs: Vec<String>) -> Option<Vec<String>> {
     Some(segs)
 }
 
-/// Normalizes a **path-valued frontmatter field** (§6.2) into the
+/// Normalizes a **path-valued frontmatter field** into the
 /// bundle-relative paths it might name, most likely first.
 ///
 /// `resource`, `sources[].resource`, `computation`, `executor.resource`, and
@@ -244,8 +244,8 @@ fn strip_md(mut segs: Vec<String>) -> Option<Vec<String>> {
 /// vector, since there is nothing in the bundle to resolve.
 ///
 /// A relative path yields **two** candidates, because the spec uses both
-/// readings: §6.2 calls `../computations/revenue.md` relative to the concept,
-/// while §6.3's `references/` convention is written from the bundle root
+/// readings: one reading treats `../computations/revenue.md` relative to the concept,
+/// while the `references/` convention is written from the bundle root
 /// (`executor.resource: references/skills/run-on-bq.md` on a concept that lives
 /// in `computations/`). Callers should take the first candidate that exists.
 ///
@@ -284,7 +284,7 @@ pub fn field_path_candidates(raw: &str, from: &ConceptId) -> Vec<String> {
 }
 
 /// The concept id a bundle-relative markdown path denotes, or `None` if the
-/// path is not a `.md` file or is not a valid id (§2).
+/// path is not a `.md` file or is not a valid id.
 #[must_use]
 pub fn concept_id_for_path(path: &str) -> Option<ConceptId> {
     let stem = path.strip_suffix(".md")?;
@@ -306,7 +306,7 @@ pub fn extract_links(body: &str) -> Vec<Link> {
 /// code blocks removed and inline code spans blanked out.
 ///
 /// Shared with [`footnotes`](crate::footnotes), which needs the same
-/// "prose only" view of the body to find attribution markers (§5.1).
+/// "prose only" view of the body to find attribution markers.
 pub(crate) fn code_free_lines(body: &str) -> Vec<(usize, String)> {
     let mut out = Vec::new();
     let mut fence: Option<char> = None;
@@ -467,7 +467,7 @@ fn strip_title(dest: &str) -> String {
     d.to_string()
 }
 
-/// Extracts numbered citation entries from the `# Citations` section (§8).
+/// Extracts numbered citation entries from the `# Citations` section.
 #[must_use]
 pub fn extract_citations(body: &str) -> Vec<Citation> {
     let mut out = Vec::new();

@@ -191,7 +191,7 @@ impl Parser {
     /// Reads a scalar that starts as `first` and may continue on the following
     /// lines, folding each line break into a single space.
     ///
-    /// YAML lets both plain and quoted scalars span lines (§6.5 line folding),
+    /// YAML lets both plain and quoted scalars span lines (line folding),
     /// and `PyYAML`'s `safe_dump` leans on it: any value longer than its 80-column
     /// line width comes out wrapped. The reference implementation dumps with
     /// `safe_dump`, so its own published bundles carry wrapped `description` and
@@ -845,7 +845,7 @@ impl FlowParser {
 /// whitespace, a flow indicator, or the end of the collection. OKF v0.2 relies
 /// on this: `{ by: human:ahormati, at: 2026-06-25T09:00:00Z }` is one mapping
 /// of two entries, not a parse error: the colons in `human:ahormati` and
-/// `09:00:00` are content (§5.2, §7).
+/// `09:00:00` are content.
 fn is_separator_colon(chars: &[char], i: usize) -> bool {
     chars
         .get(i + 1)

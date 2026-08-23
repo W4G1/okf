@@ -1,9 +1,9 @@
-//! Generation of `index.md` directory listings (§8).
+//! Generation of `index.md` directory listings.
 //!
 //! Index files support **progressive disclosure**: they let a human or agent
 //! see what a directory holds before opening individual documents. Grouping is
 //! by concept `type`, which is also how an `Attested Computation` becomes
-//! discoverable from an index (§10.5).
+//! discoverable from an index.
 //!
 //! This is a port of the reference `bundle/index.py`'s `regenerate_indexes` and
 //! `_build_index_text`. The reference synthesizes subdirectory descriptions
@@ -239,7 +239,7 @@ pub fn regenerate_indexes_with(
                     .file_stem()
                     .map(|s| s.to_string_lossy().to_string())
                     .unwrap_or_default();
-                // An empty `title` falls back to the filename, as §4.1 permits
+                // An empty `title` falls back to the filename, as the spec permits
                 // and the reference's `fm.get("title") or child.stem` does.
                 let title = doc
                     .frontmatter
@@ -331,7 +331,7 @@ fn write_index(
 /// The `okf_version` declaration to carry over when rewriting an `index.md`.
 ///
 /// A bundle-root `index.md` is the one place frontmatter is permitted in an
-/// index, and the only key it may hold is `okf_version` (§12). Regenerating the
+/// index, and the only key it may hold is `okf_version`. Regenerating the
 /// listing must not silently drop the bundle's declared version, so the key is
 /// read back and re-emitted; anything else in the block is discarded, since it
 /// does not belong there.

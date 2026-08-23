@@ -1,8 +1,8 @@
-//! Attested Computation concepts (§10).
+//! Attested Computation concepts.
 //!
 //! An Attested Computation carries not just what a value *means* but a
 //! sanctioned way to *compute* it, so a consumer can confirm an agent ran the
-//! blessed computation instead of improvising its own. Provenance (§5.1)
+//! blessed computation instead of improvising its own. Provenance
 //! answers "where did this claim come from"; attestation answers "was this
 //! number produced the way we said it must be."
 //!
@@ -29,7 +29,7 @@
 //! **This crate records and checks the contract; it never executes anything.**
 //! Running the computation, producing a receipt, and running the attester over
 //! that receipt are consumer-side concerns, and the runtime artifacts they
-//! produce are explicitly *not* stored in the bundle (§10.5). What
+//! produce are explicitly *not* stored in the bundle. What
 //! [`AttestedComputation`] gives you is the contract in typed form: the
 //! `runtime` that defines what `parameters` mean, the computation itself
 //! (inline or by path), and the executor/attester interfaces.
@@ -38,18 +38,18 @@ use crate::links;
 use crate::yaml::Value;
 use std::fmt;
 
-/// The `type` value that marks a concept as an Attested Computation (§10.1).
+/// The `type` value that marks a concept as an Attested Computation.
 pub const ATTESTED_COMPUTATION_TYPE: &str = "Attested Computation";
 
-/// The conventional body heading that introduces an inline computation (§4.2).
+/// The conventional body heading that introduces an inline computation.
 pub const COMPUTATION_HEADING: &str = "Computation";
 
-/// One typed, named hole an agent may fill (§10.2).
+/// One typed, named hole an agent may fill.
 ///
 /// Binding semantics follow `runtime`: the same entry is a SQL bind variable, a
 /// dbt var, or a Python argument depending on it. An agent may supply only
 /// *values* for declared parameters; it must not author or edit the
-/// computation (§10.3).
+/// computation.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Parameter {
     /// The parameter name.
@@ -100,7 +100,7 @@ impl fmt::Display for Parameter {
     }
 }
 
-/// How the computation is run (§10.2).
+/// How the computation is run.
 ///
 /// `resource` names run instructions or code that a runner (an agent, or
 /// deterministic consumer code) follows. `receipt` declares the fields a run
@@ -108,7 +108,7 @@ impl fmt::Display for Parameter {
 /// `job_id` and the SQL the job actually executed.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Executor {
-    /// Path (§6.2) to run instructions or code.
+    /// Path to run instructions or code.
     pub resource: Option<String>,
     /// The fields a run must return.
     pub receipt: Vec<String>,
@@ -131,13 +131,13 @@ impl Executor {
     }
 }
 
-/// The deterministic check (§10.2).
+/// The deterministic check.
 ///
 /// `resource` names code (no LLM) that takes a receipt and returns a verdict.
 /// It is meant to run consumer-side.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Attester {
-    /// Path (§6.2) to the attester code.
+    /// Path to the attester code.
     pub resource: Option<String>,
 }
 
@@ -151,7 +151,7 @@ impl Attester {
     }
 }
 
-/// A computation held in the body under `# Computation` (§10.3).
+/// A computation held in the body under `# Computation`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InlineComputation {
     /// The code, dedented, without the fence or indent.
@@ -165,7 +165,7 @@ pub struct InlineComputation {
     pub fenced: bool,
 }
 
-/// Where the sanctioned computation lives (§10.3).
+/// Where the sanctioned computation lives.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ComputationSource {
     /// A code block in the body under `# Computation`.
@@ -215,7 +215,7 @@ impl fmt::Display for ComputationSource {
 }
 
 /// The contract of an `Attested Computation` concept: its top-level frontmatter
-/// (§10.2) plus the computation itself (§10.3).
+/// plus the computation itself.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AttestedComputation {
     /// REQUIRED for this type: how to run the computation, and so how the
@@ -230,7 +230,7 @@ pub struct AttestedComputation {
     /// The deterministic check over a run's receipt.
     pub attester: Option<Attester>,
     /// `true` when the body carries a `# Computation` block *and* the
-    /// `computation` key names a file. §10.3 asks for one or the other, so this
+    /// `computation` key names a file. The spec asks for one or the other, so this
     /// flags a contract whose two halves may disagree.
     pub has_redundant_inline: bool,
 }
@@ -297,7 +297,7 @@ impl AttestedComputation {
     }
 }
 
-/// Extracts the code block under a `# Computation` heading (§10.3).
+/// Extracts the code block under a `# Computation` heading.
 ///
 /// The section runs from the heading to the next heading of the same or a
 /// higher level. Within it, the first fenced block wins; failing that, the
@@ -432,8 +432,8 @@ fn trim_blank_edges(mut lines: Vec<String>) -> Vec<String> {
     lines
 }
 
-/// Resolves a contract's path-valued fields to bundle-relative candidates
-/// (§6.2), as `(field, raw, candidates)`.
+/// Resolves a contract's path-valued fields to bundle-relative candidates,
+/// as `(field, raw, candidates)`.
 #[must_use]
 pub fn contract_path_candidates(
     contract: &AttestedComputation,

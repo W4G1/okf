@@ -1,18 +1,17 @@
-//! Loading and traversing an OKF *bundle*: a directory tree of markdown files
-//! (§3).
+//! Loading and traversing an OKF *bundle*: a directory tree of markdown files.
 //!
 //! [`Bundle::load`] walks a directory, parses every non-reserved `.md` file
 //! into a [`Concept`], records the reserved `index.md` / `log.md` files, and
 //! builds two graphs over the result:
 //!
-//! - the **cross-link graph** from markdown links (§6.1), with backlinks;
+//! - the **cross-link graph** from markdown links, with backlinks;
 //! - the **derivation graph** from `sources[].resource` entries that name
-//!   another concept (§5.1), which is how credibility propagates: "when a
+//!   another concept, which is how credibility propagates: "when a
 //!   `resource` points at another OKF concept, the derivation edge already
 //!   exists in the bundle graph, so a consumer MAY recurse into that source's
 //!   own `sources`."
 //!
-//! Loading is **permissive** by design (§11): files whose frontmatter cannot be
+//! Loading is **permissive** by design: files whose frontmatter cannot be
 //! parsed are collected into [`Bundle::parse_errors`] rather than aborting the
 //! load, and broken links are retained as edges to non-existent concepts.
 
@@ -30,7 +29,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// Reserved filenames with defined meaning at any level (§3.1).
+/// Reserved filenames with defined meaning at any level.
 pub const RESERVED_FILENAMES: [&str; 2] = ["index.md", "log.md"];
 
 /// A single concept within a bundle (one markdown document).
@@ -45,14 +44,14 @@ pub struct Concept {
 }
 
 impl Concept {
-    /// The concept's `type` (§4.1).
+    /// The concept's `type`.
     #[must_use]
     pub fn type_(&self) -> Option<Cow<'_, str>> {
         self.document.frontmatter.type_()
     }
 
     /// The concept's `title`, falling back to the final segment of its id when
-    /// none is given, as §4.1 permits.
+    /// none is given, as the spec permits.
     #[must_use]
     pub fn display_title(&self) -> String {
         self.document
@@ -61,44 +60,44 @@ impl Concept {
             .map_or_else(|| self.id.name().to_string(), std::borrow::Cow::into_owned)
     }
 
-    /// The trust tier derived from `verified` (§5.3).
+    /// The trust tier derived from `verified`.
     #[must_use]
     pub fn trust_tier(&self) -> TrustTier {
         self.document.frontmatter.trust_tier()
     }
 
-    /// The lifecycle `status`; absent means stable (§5.4).
+    /// The lifecycle `status`; absent means stable.
     #[must_use]
     pub fn status(&self) -> Status {
         self.document.frontmatter.status()
     }
 
-    /// Whether this concept is stale at `now`: `now >= stale_after` (§5.5).
+    /// Whether this concept is stale at `now`: `now >= stale_after`.
     #[must_use]
     pub fn is_stale_at(&self, now: DateTime) -> bool {
         self.document.frontmatter.is_stale_at(now)
     }
 
-    /// Whether `today >= stale_after` (§5.5).
+    /// Whether `today >= stale_after`.
     #[must_use]
     pub fn is_stale_on(&self, today: Date) -> bool {
         self.document.frontmatter.is_stale_on(today)
     }
 
-    /// The `sources` this concept derives from (§5.1).
+    /// The `sources` this concept derives from.
     #[must_use]
     pub fn sources(&self) -> Vec<Source> {
         self.document.frontmatter.sources()
     }
 
-    /// The Attested Computation contract, when this concept is one (§10).
+    /// The Attested Computation contract, when this concept is one.
     #[must_use]
     pub fn attested_computation(&self) -> Option<AttestedComputation> {
         self.document.attested_computation()
     }
 }
 
-/// A cross-link from one concept to another, after resolution (§6.1).
+/// A cross-link from one concept to another, after resolution.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResolvedLink {
     /// The concept the link points at.
@@ -112,7 +111,7 @@ pub struct ResolvedLink {
     pub raw: String,
 }
 
-/// A `sources` entry resolved against the bundle (§5.1).
+/// A `sources` entry resolved against the bundle.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResolvedSource {
     /// The entry as written in frontmatter.
@@ -135,8 +134,8 @@ pub struct Bundle {
     backlinks: HashMap<ConceptId, Vec<ConceptId>>,
     sources: HashMap<ConceptId, Vec<ResolvedSource>>,
     derived_by: HashMap<ConceptId, Vec<ConceptId>>,
-    /// The `okf_version` declared in the bundle-root `index.md` frontmatter
-    /// (§12), if any. Cached at load time so [`Bundle::okf_version`] can borrow
+    /// The `okf_version` declared in the bundle-root `index.md` frontmatter,
+    /// if any. Cached at load time so [`Bundle::okf_version`] can borrow
     /// instead of re-reading the file on every call.
     okf_version: Option<String>,
 }
@@ -191,8 +190,8 @@ impl Bundle {
         let (outbound, backlinks) = build_graph(&concepts, &index);
         let (sources, derived_by) = build_derivation_graph(&concepts, &index);
 
-        // Cache the `okf_version` from the bundle-root `index.md` frontmatter
-        // (§12), if any, so `Bundle::okf_version` does not re-read the file on
+        // Cache the `okf_version` from the bundle-root `index.md` frontmatter,
+        // if any, so `Bundle::okf_version` does not re-read the file on
         // every call.
         let okf_version = read_okf_version(&root);
 
@@ -247,13 +246,13 @@ impl Bundle {
         self.index.contains_key(id)
     }
 
-    /// Paths of all `index.md` files found (§6).
+    /// Paths of all `index.md` files found.
     #[must_use]
     pub fn index_files(&self) -> &[PathBuf] {
         &self.index_files
     }
 
-    /// Paths of all `log.md` files found (§7).
+    /// Paths of all `log.md` files found.
     #[must_use]
     pub fn log_files(&self) -> &[PathBuf] {
         &self.log_files
@@ -271,7 +270,7 @@ impl Bundle {
         self.outbound.get(id).map_or(&[], std::vec::Vec::as_slice)
     }
 
-    /// The ids of concepts that link to the given concept ("cited by" / §
+    /// The ids of concepts that link to the given concept ("cited by" /
     /// backlinks).
     #[must_use]
     pub fn backlinks(&self, id: &ConceptId) -> &[ConceptId] {
@@ -279,7 +278,7 @@ impl Bundle {
     }
 
     /// All broken internal links in the bundle, as `(source, raw_target)`
-    /// pairs. Broken links are permitted by the spec (§6.1), so this is
+    /// pairs. Broken links are permitted by the spec, so this is
     /// informational.
     #[must_use]
     pub fn broken_links(&self) -> Vec<(ConceptId, String)> {
@@ -295,7 +294,7 @@ impl Bundle {
     }
 
     /// The declared OKF version from the bundle-root `index.md` frontmatter, if
-    /// present (`okf_version`, §12). This is the only place frontmatter is
+    /// present (`okf_version`). This is the only place frontmatter is
     /// permitted in an `index.md`.
     ///
     /// Cached at load time, so this is cheap to call repeatedly. A consumer
@@ -318,7 +317,7 @@ impl Bundle {
     }
 
     /// The concepts this one derives from: the `sources[].resource` entries
-    /// that name another concept in this bundle (§5.1).
+    /// that name another concept in this bundle.
     ///
     /// Following these recursively is how a consumer lets credibility
     /// propagate; external leaf sources carry only their intrinsic signals.
@@ -344,9 +343,9 @@ impl Bundle {
             .filter(move |c| c.type_().as_deref() == Some(type_))
     }
 
-    /// Every `Attested Computation` concept in the bundle (§10.1).
+    /// Every `Attested Computation` concept in the bundle.
     ///
-    /// This is the discovery path §10.5 describes: a consumer reaches a
+    /// This is the discovery path: a consumer reaches a
     /// computation by type, or by following a link from a concept that uses it.
     pub fn attested_computations(&self) -> impl Iterator<Item = &Concept> {
         self.concepts_of_type(crate::computation::ATTESTED_COMPUTATION_TYPE)
@@ -354,7 +353,7 @@ impl Bundle {
 
     /// A tag index synthesized by scanning frontmatter, tag to concept ids.
     ///
-    /// §3.1: OKF does not specify a file format for aggregating documents by
+    /// OKF does not specify a file format for aggregating documents by
     /// tag, so "a consumer that wants a tag-browsing view can synthesize one at
     /// consumption time." This is that view.
     #[must_use]
@@ -368,7 +367,7 @@ impl Bundle {
         out
     }
 
-    /// Every concept that is stale at `now`: `now >= stale_after` (§5.5).
+    /// Every concept that is stale at `now`: `now >= stale_after`.
     #[must_use]
     pub fn stale_at(&self, now: DateTime) -> Vec<&Concept> {
         self.concepts
@@ -377,7 +376,7 @@ impl Bundle {
             .collect()
     }
 
-    /// Every concept that is stale on `today`: `today >= stale_after` (§5.5).
+    /// Every concept that is stale on `today`: `today >= stale_after`.
     #[must_use]
     pub fn stale_on(&self, today: Date) -> Vec<&Concept> {
         self.concepts
@@ -468,7 +467,7 @@ fn parse_chunk(root: &Path, chunk: &[PathBuf]) -> Result<Vec<FileOutcome>, Bundl
 
 /// Loads and classifies a single markdown file. `fs::read_to_string` failures
 /// propagate as [`BundleError::Io`]; frontmatter and concept-id failures are
-/// collected as [`FileOutcome::Error`] for the permissive-load path (§11).
+/// collected as [`FileOutcome::Error`] for the permissive-load path.
 fn parse_one(root: &Path, path: &Path) -> Result<FileOutcome, std::io::Error> {
     let filename = path
         .file_name()
@@ -495,7 +494,7 @@ fn parse_one(root: &Path, path: &Path) -> Result<FileOutcome, std::io::Error> {
     }
 }
 
-/// Reads `okf_version` from the bundle-root `index.md` frontmatter (§12), if
+/// Reads `okf_version` from the bundle-root `index.md` frontmatter, if
 /// the file exists and the key is present as a string scalar. Returns `None`
 /// for a missing file, an unparseable `index.md`, or a non-string value.
 fn read_okf_version(root: &Path) -> Option<String> {
@@ -537,7 +536,7 @@ fn build_graph(
     for c in concepts {
         let mut resolved = Vec::new();
         for link in c.document.links() {
-            // A percent-encoded target has two readings (§6.1); take whichever
+            // A percent-encoded target has two readings; take whichever
             // names a concept that is really there, else the literal one so the
             // link is still reported as broken rather than dropped.
             let candidates = link.resolve_all(&c.id);
@@ -569,7 +568,7 @@ fn build_graph(
 }
 
 /// Builds the derivation graph: every concept's `sources` entries, with the
-/// ones naming another concept in the bundle resolved to its id (§5.1).
+/// ones naming another concept in the bundle resolved to its id.
 fn build_derivation_graph(
     concepts: &[Concept],
     index: &HashMap<ConceptId, usize>,
@@ -610,7 +609,7 @@ fn build_derivation_graph(
 /// Resolves a raw path-valued reference to a concept that exists in the bundle.
 ///
 /// Both spellings are tried, with and without the `.md` suffix, and both
-/// readings of a relative path (§6.2). Requiring the target to exist keeps
+/// readings of a relative path. Requiring the target to exist keeps
 /// scope descriptors and external URLs from being mistaken for concepts.
 fn resolve_concept_reference(
     index: &HashMap<ConceptId, usize>,

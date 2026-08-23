@@ -1,6 +1,6 @@
 //! Typed, order-preserving access to a concept's YAML frontmatter.
 //!
-//! OKF frontmatter is an open mapping: a few well-known keys (§4.1 of the
+//! OKF frontmatter is an open mapping: a few well-known keys (defined by the
 //! [spec]) plus arbitrary producer-defined extensions that consumers MUST
 //! preserve when round-tripping. [`Frontmatter`] therefore stores the full
 //! [`Mapping`] verbatim and layers typed accessors on top, rather than
@@ -9,17 +9,17 @@
 //! v0.2 adds four families of well-known keys on top of the v0.1 core, all of
 //! them optional:
 //!
-//! | Family                    | Keys                                                     | Section |
-//! |---------------------------|----------------------------------------------------------|---------|
-//! | Core                      | `type`, `title`, `description`, `resource`, `tags`         | §4.1    |
-//! | Provenance                | `sources`, `usage_window`                                  | §5.1    |
-//! | Trust                     | `generated`, `verified`                                    | §5.2    |
-//! | Lifecycle                 | `status`, `stale_after`                                    | §5.4/5  |
-//! | Computation               | `runtime`, `parameters`, `computation`, `executor`, `attester` | §10.2 |
+//! | Family                    | Keys                                                     |
+//! |---------------------------|----------------------------------------------------------|
+//! | Core                      | `type`, `title`, `description`, `resource`, `tags`         |
+//! | Provenance                | `sources`, `usage_window`                                  |
+//! | Trust                     | `generated`, `verified`                                    |
+//! | Lifecycle                 | `status`, `stale_after`                                    |
+//! | Computation               | `runtime`, `parameters`, `computation`, `executor`, `attester` |
 //!
 //! Absence is meaningful but never fatal: [`Frontmatter::status`] defaults to
 //! `stable`, [`Frontmatter::trust_tier`] to `unverified`, and a concept
-//! carrying nothing but `type` is fully conformant (§11).
+//! carrying nothing but `type` is fully conformant.
 //!
 //! [spec]: https://github.com/GoogleCloudPlatform/open-knowledge-format/blob/main/SPEC.md
 
@@ -30,8 +30,8 @@ use crate::trust::{self, Generated, Status, TrustTier, Verification};
 use crate::yaml::{Mapping, Value};
 use std::borrow::Cow;
 
-/// The only frontmatter key OKF always requires (§4.1): a concept carrying
-/// nothing but `type` is fully conformant (§11).
+/// The only frontmatter key OKF always requires: a concept carrying
+/// nothing but `type` is fully conformant.
 ///
 /// This is what [`Document::validate`](crate::Document::validate) enforces, and
 /// it matches the reference implementation's `REQUIRED_FRONTMATTER_KEYS`. v0.1
@@ -43,44 +43,44 @@ pub const REQUIRED_FRONTMATTER_KEYS: [&str; 1] = ["type"];
 /// [`Document::missing_recommended`](crate::Document::missing_recommended)
 /// reports them.
 ///
-/// `title` and `description` are §4.1 recommendations; `generated` is §5.2's
-/// record of how the content was produced. §4.1 also recommends `resource` and
+/// `title` and `description` are recommended fields; `generated` is the
+/// record of how the content was produced. The spec also recommends `resource` and
 /// `tags`, which are deliberately left out here: `resource` is "absent for
 /// concepts that describe abstract ideas rather than physical resources", so
 /// flagging either would be noise rather than guidance.
 ///
-/// Leaving any of these unset is never a conformance failure (§11).
+/// Leaving any of these unset is never a conformance failure.
 pub const RECOMMENDED_FRONTMATTER_KEYS: [&str; 3] = ["title", "description", "generated"];
 
-/// Keys v0.2 retired but consumers may still encounter in v0.1 documents
-/// (§13.1). `timestamp` is superseded by `generated.at`.
+/// Keys v0.2 retired but consumers may still encounter in v0.1 documents.
+/// `timestamp` is superseded by `generated.at`.
 pub const LEGACY_FRONTMATTER_KEYS: [&str; 1] = ["timestamp"];
 
 /// Every frontmatter key the specification gives a meaning to, across all
-/// families. Anything else is a producer extension (§4.1).
+/// families. Anything else is a producer extension.
 pub const KNOWN_FRONTMATTER_KEYS: [&str; 17] = [
-    // Core (§4.1).
+    // Core.
     "type",
     "title",
     "description",
     "resource",
     "tags",
-    // Provenance (§5.1).
+    // Provenance.
     "sources",
     "usage_window",
-    // Trust (§5.2).
+    // Trust.
     "generated",
     "verified",
-    // Lifecycle (§5.4, §5.5).
+    // Lifecycle.
     "status",
     "stale_after",
-    // Attested Computation (§10.2).
+    // Attested Computation.
     "runtime",
     "parameters",
     "computation",
     "executor",
     "attester",
-    // Legacy (§13.1).
+    // Legacy.
     "timestamp",
 ];
 
@@ -88,7 +88,7 @@ pub const KNOWN_FRONTMATTER_KEYS: [&str; 17] = [
 /// `_PREFERRED_KEY_ORDER`): identity first, then lifecycle, trust, and
 /// provenance.
 ///
-/// Presentational only. §4.1 gives frontmatter no required key order, and a
+/// Presentational only. Frontmatter has no required key order, and a
 /// consumer must not depend on one; see [`Frontmatter::reorder_preferred`].
 pub const PREFERRED_KEY_ORDER: [&str; 11] = [
     "type",
@@ -186,7 +186,7 @@ impl Frontmatter {
         self.map = ordered;
     }
 
-    /// The **required** `type` field (§4.1). `None` if absent or not a scalar.
+    /// The **required** `type` field. `None` if absent or not a scalar.
     ///
     /// Non-string scalars (`type: 42`) are coerced to their display form, the
     /// way the reference's `str(fm.get("type"))` does, rather than read as
@@ -249,8 +249,8 @@ impl Frontmatter {
 
     /// The `verified` events: who or what has confirmed this content.
     ///
-    /// A bare `{ by, at }` mapping is returned as a one-element list, as §5.2
-    /// requires.
+    /// A bare `{ by, at }` mapping is returned as a one-element list, as the
+    /// spec requires.
     pub fn verified(&self) -> Vec<Verification> {
         self.map
             .get("verified")
@@ -258,22 +258,22 @@ impl Frontmatter {
             .unwrap_or_default()
     }
 
-    /// The verification with the latest parseable `at` (§5.2).
+    /// The verification with the latest parseable `at`.
     #[must_use]
     pub fn latest_verification(&self) -> Option<Verification> {
         let events = self.verified();
         trust::latest_verification(&events).cloned()
     }
 
-    /// The trust tier derived from `verified` (§5.3).
+    /// The trust tier derived from `verified`.
     #[must_use]
     pub fn trust_tier(&self) -> TrustTier {
         TrustTier::derive(&self.verified())
     }
 
-    /// When the content last meaningfully changed: `generated.at` (§5.2),
+    /// When the content last meaningfully changed: `generated.at`,
     /// falling back to a legacy v0.1 `timestamp` when `generated` is absent, as
-    /// §13.1 permits.
+    /// permitted.
     #[must_use]
     pub fn content_changed_at(&self) -> Option<DateTimeField> {
         self.generated()
@@ -281,7 +281,7 @@ impl Frontmatter {
             .or_else(|| self.timestamp().map(|s| DateTimeField::new(s.into_owned())))
     }
 
-    /// The legacy v0.1 `timestamp` field, superseded by `generated.at` (§13.1).
+    /// The legacy v0.1 `timestamp` field, superseded by `generated.at`.
     ///
     /// Prefer [`Frontmatter::content_changed_at`], which reads `generated.at`
     /// first and falls back to this.
@@ -290,20 +290,20 @@ impl Frontmatter {
         self.display_str("timestamp")
     }
 
-    /// The lifecycle `status`. An absent key is [`Status::Stable`] (§5.4).
+    /// The lifecycle `status`. An absent key is [`Status::Stable`].
     #[must_use]
     pub fn status(&self) -> Status {
         Status::parse(self.display_str("status").as_deref())
     }
 
-    /// The `stale_after` timestamp, on and after which the content is stale (§5.5).
+    /// The `stale_after` timestamp, on and after which the content is stale.
     #[must_use]
     pub fn stale_after(&self) -> Option<DateTimeField> {
         self.display_str("stale_after")
             .map(|s| DateTimeField::new(s.into_owned()))
     }
 
-    /// Whether the concept is stale at `now`: `now >= stale_after` (§5.5).
+    /// Whether the concept is stale at `now`: `now >= stale_after`.
     /// A concept with no (or an unreadable / offset-less) `stale_after` is never stale.
     #[must_use]
     pub fn is_stale_at(&self, now: DateTime) -> bool {
@@ -316,14 +316,14 @@ impl Frontmatter {
         trust::is_stale_at(stale_after.datetime, now)
     }
 
-    /// Whether the concept is stale on `today`: `today >= stale_after` (§5.5).
+    /// Whether the concept is stale on `today`: `today >= stale_after`.
     /// Evaluates staleness at midnight UTC on `today`.
     #[must_use]
     pub fn is_stale_on(&self, today: Date) -> bool {
         self.is_stale_at(today.to_utc_datetime())
     }
 
-    /// `true` when `type` is `Attested Computation` (§10.1).
+    /// `true` when `type` is `Attested Computation`.
     #[must_use]
     pub fn is_attested_computation(&self) -> bool {
         self.type_().as_deref() == Some(ATTESTED_COMPUTATION_TYPE)
@@ -345,7 +345,7 @@ impl Frontmatter {
     }
 
     /// The `computation` path, when the computation lives in a file rather than
-    /// a body block (§10.3).
+    /// a body block.
     #[must_use]
     pub fn computation(&self) -> Option<Cow<'_, str>> {
         self.display_str("computation")
@@ -361,11 +361,11 @@ impl Frontmatter {
         self.map.get("attester").and_then(Attester::from_value)
     }
 
-    /// The path-valued frontmatter fields present (§6.2), as
+    /// The path-valued frontmatter fields present, as
     /// `(field name, raw value)`.
     ///
     /// `sources[].resource` is deliberately excluded: it may be a scope
-    /// descriptor rather than a path (§5.1). Use
+    /// descriptor rather than a path. Use
     /// [`Source::resource_kind`](crate::provenance::Source::resource_kind) to
     /// filter those yourself.
     #[must_use]
@@ -396,7 +396,7 @@ impl Frontmatter {
     }
 
     /// Returns the keys present that are not well-known OKF fields, i.e. the
-    /// producer-defined extension keys consumers must preserve (§4.1).
+    /// producer-defined extension keys consumers must preserve.
     #[must_use]
     pub fn extension_keys(&self) -> Vec<&str> {
         self.map
@@ -405,7 +405,7 @@ impl Frontmatter {
             .collect()
     }
 
-    /// Returns the legacy v0.1 keys present that v0.2 supersedes (§13.1).
+    /// Returns the legacy v0.1 keys present that v0.2 supersedes.
     #[must_use]
     pub fn legacy_keys(&self) -> Vec<&str> {
         self.map

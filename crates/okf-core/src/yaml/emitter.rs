@@ -9,7 +9,7 @@ use std::fmt::Write as _;
 
 const INDENT_STEP: usize = 2;
 
-/// YAML indicators a plain scalar must not begin with (`yaml.org/1.2 §4.2.2`).
+/// YAML indicators a plain scalar must not begin with (`yaml.org/1.2 section 4.2.2`).
 const INDICATORS: &[char] = &[
     '-', '?', ':', ',', '[', ']', '{', '}', '#', '&', '*', '!', '|', '>', '\'', '"', '%', '@', '`',
     ' ',

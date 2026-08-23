@@ -7,8 +7,8 @@
 //! Apache-2.0 Python source; see the NOTICE file.
 //!
 //! On top of parsing, [`Document`] exposes the v0.2 body conventions that pair
-//! with frontmatter: footnote attribution keyed to `sources[].id` (§5.1) and
-//! the `# Computation` block of an Attested Computation (§10.3).
+//! with frontmatter: footnote attribution keyed to `sources[].id` and
+//! the `# Computation` block of an Attested Computation.
 
 use crate::computation::{AttestedComputation, InlineComputation};
 use crate::error::DocumentError;
@@ -119,7 +119,7 @@ impl Document {
         format!("{FRONTMATTER_DELIM}\n{fm_text}\n{FRONTMATTER_DELIM}\n\n{body}")
     }
 
-    /// Validates the document against §11: the frontmatter must carry a
+    /// Validates the document: the frontmatter must carry a
     /// non-empty `type`, and nothing else is required.
     ///
     /// That single check is the whole of document-level validation in v0.2, and
@@ -154,16 +154,16 @@ impl Document {
 
     /// The [recommended](RECOMMENDED_FRONTMATTER_KEYS) frontmatter keys this
     /// document leaves unset, plus `runtime` when the concept is an Attested
-    /// Computation, which §10.2 requires it to carry.
+    /// Computation, which the spec requires it to carry.
     ///
     /// None of these is a conformance failure, so [`Document::validate`]
-    /// ignores them: §11 forbids rejecting a concept for a missing optional
+    /// ignores them: the spec forbids rejecting a concept for a missing optional
     /// field. This is the checklist a *producer* wants before publishing, and
     /// it is what `validate_bundle` (in the okf-validator crate) reports as
     /// warnings. An empty result means the document is fully filled in.
     ///
     /// `generated` counts as set when a legacy v0.1 `timestamp` stands in for
-    /// it, since §13.1 lets consumers read one for the other.
+    /// it, since consumers may read one for the other.
     #[must_use]
     pub fn missing_recommended(&self) -> Vec<&'static str> {
         let mut missing: Vec<&'static str> = RECOMMENDED_FRONTMATTER_KEYS
@@ -189,7 +189,7 @@ impl Document {
             .is_some_and(|value| !value.is_empty_value())
     }
 
-    /// Extracts all markdown links found in the body (§6.1).
+    /// Extracts all markdown links found in the body.
     #[must_use]
     pub fn links(&self) -> Vec<Link> {
         links::extract_links(&self.body)
@@ -198,7 +198,7 @@ impl Document {
     /// The non-blank lines under a top-level `# heading` in the body, up to the
     /// next top-level heading.
     ///
-    /// §4.2 gives `# Schema`, `# Examples`, and `# Computation` conventional
+    /// The spec gives `# Schema`, `# Examples`, and `# Computation` conventional
     /// meaning without attaching required behaviour, so this is the primitive a
     /// consumer needs to read any of them. A port of the reference's
     /// `_section_content_lines`, including its details: `heading` is matched in
@@ -225,20 +225,20 @@ impl Document {
         lines
     }
 
-    /// Extracts the body's `[^label]` attribution markers (§5.1).
+    /// Extracts the body's `[^label]` attribution markers.
     #[must_use]
     pub fn footnote_refs(&self) -> Vec<FootnoteRef> {
         footnotes::extract_refs(&self.body)
     }
 
-    /// Extracts the body's `[^label]: text` footnote definitions (§5.1).
+    /// Extracts the body's `[^label]: text` footnote definitions.
     #[must_use]
     pub fn footnote_definitions(&self) -> Vec<FootnoteDef> {
         footnotes::extract_definitions(&self.body)
     }
 
     /// Joins the body's footnotes to the `sources` entries they name, giving
-    /// per-claim attribution (§5.1).
+    /// per-claim attribution.
     ///
     /// Labels that match no source are still returned, with
     /// [`Attribution::source`] set to `None`.
@@ -247,14 +247,14 @@ impl Document {
         provenance::attributions(&self.frontmatter.sources(), &self.body)
     }
 
-    /// The `# Computation` code block from the body, if there is one (§10.3).
+    /// The `# Computation` code block from the body, if there is one.
     #[must_use]
     pub fn inline_computation(&self) -> Option<InlineComputation> {
         crate::computation::extract_inline_computation(&self.body)
     }
 
-    /// The Attested Computation contract: the computation frontmatter (§10.2)
-    /// resolved against the body's `# Computation` block (§10.3).
+    /// The Attested Computation contract: the computation frontmatter
+    /// resolved against the body's `# Computation` block.
     ///
     /// Returns `None` unless `type` is `Attested Computation`; call
     /// [`AttestedComputation::from_parts`] directly to read the same keys off a
@@ -268,16 +268,16 @@ impl Document {
 
     /// Extracts numbered entries from a legacy v0.1 `# Citations` section.
     ///
-    /// v0.2 supersedes this with `sources` and footnote attribution (§5.1);
+    /// v0.2 supersedes this with `sources` and footnote attribution;
     /// [`Document::attributions`] is the v0.2 equivalent. Consumers MAY keep
-    /// reading `# Citations` for v0.1 documents (§13.1).
+    /// reading `# Citations` for v0.1 documents.
     #[must_use]
     pub fn citations(&self) -> Vec<Citation> {
         links::extract_citations(&self.body)
     }
 
     /// `true` when the body carries a legacy `# Citations` section, which a
-    /// v0.2 producer should have migrated to `sources` (§13.1).
+    /// v0.2 producer should have migrated to `sources`.
     #[must_use]
     pub fn has_legacy_citations(&self) -> bool {
         !self.citations().is_empty()

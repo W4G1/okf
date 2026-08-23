@@ -62,7 +62,7 @@ fn validate_rejects_missing_type() {
 
 #[test]
 fn validate_accepts_type_only() {
-    // §11: `type` is the only always-required key.
+    // `type` is the only always-required key.
     assert!(with_frontmatter("type: X").validate().is_ok());
 }
 
@@ -75,7 +75,7 @@ fn an_empty_type_does_not_count_as_present() {
 fn missing_recommended_is_the_producer_checklist_not_a_rejection() {
     let sparse = with_frontmatter("type: X\ntitle: Y");
     assert_eq!(sparse.missing_recommended(), ["description", "generated"]);
-    // Every one of them is optional, so the document still conforms (§11).
+    // Every one of them is optional, so the document still conforms.
     assert!(sparse.validate().is_ok());
 
     let full = with_frontmatter(
@@ -87,7 +87,7 @@ fn missing_recommended_is_the_producer_checklist_not_a_rejection() {
 
 #[test]
 fn a_legacy_timestamp_stands_in_for_generated() {
-    // §13.1: consumers MAY fall back to a v0.1 `timestamp` when `generated` is
+    // Consumers MAY fall back to a v0.1 `timestamp` when `generated` is
     // absent, so a v0.1 document has nothing left on the checklist.
     let doc =
         with_frontmatter("type: X\ntitle: Y\ndescription: Z\ntimestamp: 2026-05-27T00:00:00+00:00");
@@ -105,7 +105,7 @@ fn an_attested_computation_should_carry_a_runtime() {
          generated: { by: human:ahormati, at: 2026-06-20T22:53:05Z }",
     );
     assert_eq!(without.missing_recommended(), ["runtime"]);
-    // §10.2's `runtime` is a SHOULD like the rest of the families (§11).
+    // `runtime` is a SHOULD like the rest of the families.
     assert!(without.validate().is_ok());
 
     let with = with_frontmatter(
@@ -135,7 +135,7 @@ fn a_bare_verified_mapping_is_read_as_a_one_element_list() {
 
 #[test]
 fn trust_tiers_derive_from_the_verifying_actors() {
-    // The tier strings are part of the interchange vocabulary (§5.3), so assert
+    // The tier strings are part of the interchange vocabulary, so assert
     // on them verbatim, not just on the enum.
     let tier = |frontmatter: &str| with_frontmatter(frontmatter).frontmatter.trust_tier();
 
@@ -173,7 +173,7 @@ fn staleness_compares_stale_after_against_a_given_day() {
     assert!(!stale("type: X\nstale_after: '2026-09-24T00:00:00Z'"));
     assert!(!stale("type: X"));
     assert!(!stale("type: X\nstale_after: not-a-date"));
-    // Bare dates or datetimes with no offset are ignored per OKF v0.2 §5
+    // Bare dates or datetimes with no offset are ignored
     assert!(!stale("type: X\nstale_after: 2026-09-23"));
     assert!(!stale("type: X\nstale_after: '2026-09-23T00:00:00'"));
 }
@@ -238,7 +238,7 @@ fn reorder_preferred_matches_the_reference_key_order() {
 
 #[test]
 fn section_reads_the_lines_under_a_conventional_heading() {
-    // §4.2's conventional headings carry no required behaviour, so this is the
+    // Conventional headings carry no required behaviour, so this is the
     // primitive for reading them. Ported from the reference's
     // `_section_content_lines`, whose details this locks in.
     let doc = Document::parse(
@@ -272,7 +272,7 @@ fn section_reads_the_lines_under_a_conventional_heading() {
 
 #[test]
 fn a_non_string_type_is_coerced_not_dropped() {
-    // §4.1 calls `type` "a short string", so `type: 42` is a producer
+    // The spec calls `type` "a short string", so `type: 42` is a producer
     // deviation, but the typed accessors coerce non-string scalars to their
     // display form the way the reference's `str(fm.get("type"))` does, rather
     // than returning `None` and leaving a `validate()`-passing concept

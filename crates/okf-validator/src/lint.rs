@@ -1,4 +1,4 @@
-//! Opinionated bundle health checks, beyond §11 conformance.
+//! Opinionated bundle health checks, beyond conformance.
 //!
 //! [`validate_bundle`](crate::validate_bundle) enforces only the spec's hard
 //! requirements and reports soft guidance as warnings. [`lint_bundle`] goes
@@ -143,7 +143,7 @@ fn is_concept_link(raw: &str) -> bool {
     }
     let before_anchor = t.split('#').next().unwrap_or(t);
     let basename = before_anchor.rsplit('/').next().unwrap_or(before_anchor);
-    // OKF reserves the lowercase `index.md` and `log.md` filenames (§3.1), so a
+    // OKF reserves the lowercase `index.md` and `log.md` filenames, so a
     // case-sensitive comparison is correct here, not a missing-extension bug.
     #[allow(clippy::case_sensitive_file_extension_comparisons)]
     {

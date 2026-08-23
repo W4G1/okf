@@ -4,7 +4,7 @@
 //! implementation of the [Open Knowledge Format (OKF) v0.2][spec]. This crate
 //! judges bundles; okf-core models them.
 //!
-//! - [`validate`] checks §11 conformance: [`validate_bundle`] reports only
+//! - [`validate`] checks conformance: [`validate_bundle`] reports only
 //!   true spec violations as [`Severity::Error`], with optional-family
 //!   problems surfaced as warnings and infos, never as rejections.
 //! - [`lint`] is the opinionated companion: [`lint_bundle`] goes beyond
