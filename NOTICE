@@ -13,7 +13,7 @@ by Google LLC, which is distributed under the Apache License, Version 2.0:
 
     Open Knowledge Format (OKF)
     Copyright Google LLC
-    https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf
+    https://github.com/GoogleCloudPlatform/open-knowledge-format
 
 Portions of this crate, specifically the concept-document parser/serializer,
 the concept-id/path conventions, the frontmatter key ordering, and the

@@ -3,7 +3,7 @@
 # okf
 
 A **pure-Rust, zero-dependency** implementation of the [Open Knowledge Format
-(OKF) v0.2](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md)
+(OKF) v0.2](https://github.com/GoogleCloudPlatform/open-knowledge-format/blob/main/SPEC.md)
 specification, Google's open, human- and agent-friendly format for representing *knowledge*
 as a directory of markdown files with YAML metadata.
 
@@ -306,7 +306,7 @@ PyYAML reads back identically.
 ## License
 
 Licensed under the **Apache License, Version 2.0**, the same license as the
-upstream [OKF project](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf).
+upstream [OKF project](https://github.com/GoogleCloudPlatform/open-knowledge-format).
 This crate is a derivative work: its document parser, concept-id conventions,
 and index generator are ports of the OKF reference implementation. See
 [`LICENSE`](LICENSE) for the full terms and [`NOTICE`](NOTICE) for attribution.

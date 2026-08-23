@@ -21,7 +21,7 @@
 //! `stable`, [`Frontmatter::trust_tier`] to `unverified`, and a concept
 //! carrying nothing but `type` is fully conformant (§11).
 //!
-//! [spec]: https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md
+//! [spec]: https://github.com/GoogleCloudPlatform/open-knowledge-format/blob/main/SPEC.md
 
 use crate::computation::{Attester, Executor, Parameter, ATTESTED_COMPUTATION_TYPE};
 use crate::date::{Date, DateField, DateTimeField};

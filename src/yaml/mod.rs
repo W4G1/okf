@@ -45,7 +45,7 @@
 //! which is how both the specification and the reference write `stale_after`,
 //! `last_modified`, and `usage_window`.
 //!
-//! [spec]: https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md
+//! [spec]: https://github.com/GoogleCloudPlatform/open-knowledge-format/blob/main/SPEC.md
 
 mod emitter;
 mod parser;

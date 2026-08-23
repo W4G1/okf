@@ -82,7 +82,7 @@
 //! assert_eq!(doc.frontmatter.status().to_string(), "stable");
 //! ```
 //!
-//! [spec]: https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md
+//! [spec]: https://github.com/GoogleCloudPlatform/open-knowledge-format/blob/main/SPEC.md
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
