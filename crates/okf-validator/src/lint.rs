@@ -913,7 +913,7 @@ fn check_whitespace(cx: &mut Cx, doc: &Document) {
         }
         if line.trim().is_empty() {
             consecutive_blank += 1;
-            if consecutive_blank > 1 {
+            if consecutive_blank > 2 {
                 excess_blank = true;
             }
         } else {
@@ -927,7 +927,7 @@ fn check_whitespace(cx: &mut Cx, doc: &Document) {
             .chars()
             .filter(|&c| c == '\n')
             .count()
-            > 1;
+            > 2;
 
     if trailing_count > 0 {
         cx.info(
