@@ -2,10 +2,7 @@
 
 # okf
 
-A **pure-Rust, zero-dependency** implementation of the [Open Knowledge Format
-(OKF) v0.2](https://github.com/GoogleCloudPlatform/open-knowledge-format/blob/main/SPEC.md)
-specification, Google's open, human- and agent-friendly format for representing *knowledge*
-as a directory of markdown files with YAML metadata.
+A **pure-Rust, zero-dependency** implementation and CLI toolkit for the [Open Knowledge Format (OKF) v0.2](https://github.com/GoogleCloudPlatform/open-knowledge-format/blob/main/SPEC.md) specification: Google's open, human- and agent-friendly format for representing knowledge as a directory of Markdown files with YAML frontmatter.
 
 [![crates.io](https://img.shields.io/crates/v/okf.svg?label=okf)](https://crates.io/crates/okf)
 [![crates.io](https://img.shields.io/crates/v/okf-core.svg?label=okf-core)](https://crates.io/crates/okf-core)
@@ -16,147 +13,475 @@ as a directory of markdown files with YAML metadata.
 
 </div>
 
-## Installation
+---
 
-This repository is a workspace of three crates:
+## Table of Contents
 
-- [`okf`](https://crates.io/crates/okf): the `okf` command-line tool, which
-  also re-exports the entire `okf-core` and `okf-validator` API, so depending
-  on `okf` alone gives you everything.
-- [`okf-core`](https://crates.io/crates/okf-core): the library implementing the
-  OKF specification (parser, model, link graph, index/log tooling).
-- [`okf-validator`](https://crates.io/crates/okf-validator): conformance
-  validation and opinionated linting, built on `okf-core`.
+- [What is OKF?](#what-is-okf)
+- [Hands-on quickstart (60 seconds)](#hands-on-quickstart-60-seconds)
+  - [1. Install the CLI](#1-install-the-cli)
+  - [2. Initialize a new bundle](#2-initialize-a-new-bundle)
+  - [3. Create concepts](#3-create-concepts)
+  - [4. Check conformance and auto-fix issues](#4-check-conformance-and-auto-fix-issues)
+  - [5. Inspect trust and visualize the graph](#5-inspect-trust-and-visualize-the-graph)
+- [Anatomy of an OKF bundle](#anatomy-of-an-okf-bundle)
+  - [Directory structure](#directory-structure)
+  - [Concept document example](#concept-document-example)
+  - [Attested computation example](#attested-computation-example)
+- [Core concepts](#core-concepts)
+  - [Trust tiers](#trust-tiers)
+  - [Freshness and staleness](#freshness-and-staleness)
+  - [Provenance and footnote attribution](#provenance-and-footnote-attribution)
+  - [Attested computations](#attested-computations)
+- [CLI reference and workflows](#cli-reference-and-workflows)
+  - [Scaffolding: init and new](#scaffolding-init-and-new)
+  - [Quality gate: validate and lint](#quality-gate-validate-and-lint)
+  - [Auditing trust: trust and info](#auditing-trust-trust-and-info)
+  - [Link graph and discovery: links and graph](#link-graph-and-discovery-links-and-graph)
+  - [Semantic diffs: diff](#semantic-diffs-diff)
+  - [Formatting and indexing: fmt, index, and parse](#formatting-and-indexing-fmt-index-and-parse)
+- [CI/CD integration](#cicd-integration)
+- [Using as a Rust library](#using-as-a-rust-library)
+  - [1. Loading and validating a bundle](#1-loading-and-validating-a-bundle)
+  - [2. Inspecting attested computations](#2-inspecting-attested-computations)
+- [Workspace crates](#workspace-crates)
+- [Design choices](#design-choices)
+- [Mapping to the spec](#mapping-to-the-spec)
+- [License](#license)
 
-Install the CLI from [crates.io](https://crates.io/crates/okf):
+---
+
+## What is OKF?
+
+The **Open Knowledge Format (OKF)** is a specification from Google for representing written knowledge as a directory of Markdown files with structured YAML frontmatter.
+
+An OKF bundle is plain text in a folder. There is no database, no external service, and no schema registry. If you can read a text file, you can read OKF.
+
+- **Concepts**: Individual Markdown documents (`.md`), each containing one piece of knowledge with YAML frontmatter.
+- **Bundles**: A directory tree of related concepts. An `index.md` file acts as the directory listing, and `log.md` records revision history.
+- **Trust & verification**: Frontmatter tracks who authored a concept (`generated: { by, at }`) and who or what verified it (`verified: [{ by, at }]`). Trust tiers (`unverified`, `machine-confirmed`, `human-reviewed`) are derived dynamically from these events.
+- **Freshness & lifecycle**: Concepts define status (`draft`, `stable`, `deprecated`) and explicit expiration dates (`stale_after`).
+- **Provenance**: Sources list where knowledge originated, who wrote it, and when it changed, with footnote citations linking claims directly to source IDs.
+- **Attested computations**: Executable contracts specifying parameters, runtimes (SQL, Python, dbt), execution receipts, and deterministic verification attesters.
+
+The `okf` crate is a pure-Rust implementation, validator, linter, and CLI toolkit for working with OKF v0.2 bundles.
+
+---
+
+## Hands-on quickstart (60 seconds)
+
+### 1. Install the CLI
+
+Install `okf` from crates.io:
 
 ```sh
 cargo install okf
-
-# Run the cli
-okf --version    # okf 0.2.4 (OKF spec v0.2)
 ```
 
-Or add it as a library dependency to your project:
+*(Or install as a Cargo plugin via `cargo install cargo-okf`, which lets you run `cargo okf <command>`)*
+
+### 2. Initialize a new bundle
+
+Create an OKF bundle with a root `index.md`, audit `log.md`, and an initial concept:
+
+```sh
+okf init company_knowledge --title "Company policies and operations"
+cd company_knowledge
+```
+
+### 3. Create concepts
+
+Scaffold new concepts with standardized frontmatter:
+
+```sh
+# Create a policy concept
+okf new policies/travel_expenses --type Policy --title "Travel and expense policy" --description "Rules and reimbursement rates for business travel."
+
+# Create an Attested Computation contract
+okf new computations/mileage_calc --attested --title "Mileage reimbursement calculator"
+```
+
+### 4. Check conformance and auto-fix issues
+
+Run `validate` and `lint` to audit your bundle:
+
+```sh
+# Validate strict OKF v0.2 conformance
+okf validate .
+
+# Run opinionated hygiene checks and automatically remediate fixable issues
+okf lint . --fix
+```
+
+### 5. Inspect trust and visualize the graph
+
+```sh
+# View trust tiers and staleness status
+okf trust .
+
+# Generate a Mermaid graph of concept relationships (renders directly in GitHub Markdown)
+okf graph . --format mermaid
+```
+
+---
+
+## Anatomy of an OKF bundle
+
+### Directory structure
+
+A typical OKF bundle repository looks like this:
+
+```text
+company_knowledge/
+├── index.md                      # Root table of contents (declares okf_version: "0.2")
+├── log.md                        # Audit log of changes grouped by ISO-8601 date
+├── policies/
+│   ├── index.md                  # Subdirectory index (auto-generated)
+│   ├── travel_expenses.md        # Concept document (Policy)
+│   └── paid_time_off.md          # Concept document (Policy)
+├── computations/
+│   ├── index.md                  # Subdirectory index (auto-generated)
+│   └── mileage_calc.md           # Attested Computation concept
+└── references/
+    ├── skills/submit_expense.md  # Execution instructions
+    └── attesters/verify_rate.py  # Deterministic verifier
+```
+
+### Concept document example
+
+`policies/travel_expenses.md`:
+
+```markdown
+---
+type: Policy
+title: Travel and expense policy
+description: Rules and standard per-mile reimbursement rates for employee travel.
+tags: [hr, finance, travel, expenses]
+status: stable
+generated:
+  by: reference_agent/gemini-3.7-flash
+  at: 2026-06-20T22:53:05Z
+verified:
+  by: human:sarah_hr
+  at: 2026-06-25T09:00:00Z
+stale_after: 2026-12-31T00:00:00Z
+sources:
+  - id: mileage-guide
+    resource: https://example.com/finance/mileage-guide
+    title: Standard mileage reimbursement guidelines
+---
+
+# Travel and expense policy
+
+Employees traveling on company business are reimbursed for personal vehicle usage at standard approved rates.[^mileage-guide]
+
+Total reimbursement is calculated using the [Mileage reimbursement calculator](../computations/mileage_calc.md).
+
+[^mileage-guide]: Standard mileage reimbursement guidelines
+```
+
+### Attested computation example
+
+`computations/mileage_calc.md`:
+
+````markdown
+---
+type: Attested Computation
+title: Mileage reimbursement calculator
+description: Sanctioned computation to calculate employee vehicle travel reimbursement.
+status: stable
+runtime: python
+parameters:
+  - { name: miles, type: number, required: true }
+  - { name: rate_per_mile, type: number, required: false }
+executor:
+  resource: references/skills/submit_expense.md
+  receipt: [report_id, calculated_amount, status]
+attester:
+  resource: references/attesters/verify_rate.py
+generated:
+  by: human:alex_finance
+  at: 2026-06-15T10:00:00Z
+verified:
+  by: process:ci-nightly
+  at: 2026-06-20T00:00:00Z
+---
+
+# Mileage reimbursement calculator
+
+# Computation
+
+```python
+def calculate_reimbursement(miles: float, rate_per_mile: float = 0.67) -> float:
+    return round(miles * rate_per_mile, 2)
+```
+````
+
+---
+
+## Core concepts
+
+### Trust tiers
+
+In a corpus where both humans and AI agents write documents, trust is critical. OKF derives trust tiers dynamically from verification events rather than storing a subjective score:
+
+| Trust tier | Meaning | Verification condition |
+|------------|---------|------------------------|
+| **`human-reviewed`** | Highest confidence. Verified by a human. | At least one `verified.by` starts with `human:` (e.g., `human:alice`). |
+| **`machine-confirmed`** | Moderate confidence. Checked by automated process or test suite. | Verified by a process (e.g., `process:nightly-ci` or `agent/v1`), with no human review. |
+| **`unverified`** | Baseline draft or unreviewed agent output. | No `verified` entries present. |
+
+### Freshness and staleness
+
+Knowledge decays over time. The `stale_after: YYYY-MM-DD` field gives documents an explicit expiration date.
+
+- `okf trust .` flags stale concepts in terminal output.
+- `okf validate . --today 2026-07-01` allows pinning a date in CI for deterministic staleness checks.
+
+### Provenance and footnote attribution
+
+OKF documents record origin and credibility signals under `sources`:
+
+```yaml
+sources:
+  - id: mileage-guide
+    resource: https://example.com/finance/mileage-guide
+    title: Standard Mileage Reimbursement Guidelines
+    author: human:finance_team
+    last_modified: 2026-04-01T00:00:00Z
+    usage_count: 1200
+```
+
+Inline claims reference sources via standard Markdown footnotes keyed to `sources[].id` (e.g., `According to company guidelines...[^mileage-guide]`).
+
+### Attested computations
+
+An `Attested Computation` defines a contract for executing deterministic calculations:
+1. **`runtime`**: Environment (e.g., `python`, `bigquery`, `dbt`, `snowflake`).
+2. **`parameters`**: Typed arguments required for execution.
+3. **`# Computation`**: The code or query (inline or referenced).
+4. **`executor`**: Resource that executes the logic and returns a receipt.
+5. **`attester`**: Deterministic script that verifies the receipt output.
+
+> **Note**: `okf` parses and validates attestation contracts; executing computation and attestation is a consumer-side runtime responsibility.
+
+---
+
+## CLI reference and workflows
+
+```text
+okf <command> [options] [arguments]
+```
+
+### Scaffolding: init and new
+
+```sh
+# Initialize a new bundle in the current directory
+okf init . --title "Company policies"
+
+# Initialize a bare bundle without sample concept
+okf init ./company_knowledge --bare
+
+# Create a new concept with title and description
+okf new policies/travel_expenses --type Policy --title "Travel and expense policy" --description "Rules and reimbursement rates for business travel"
+
+# Create an Attested Computation concept
+okf new computations/mileage_calc --attested --title "Mileage reimbursement calculator"
+```
+
+### Quality gate: validate and lint
+
+`okf validate` verifies strict OKF v0.2 specification conformance (exits with non-zero code on errors):
+
+```sh
+# Conformance check
+okf validate ./company_knowledge
+
+# Check conformance against a specific evaluation date
+okf validate ./company_knowledge --today 2026-12-01
+
+# Automatically fix conformant issues (e.g., migrate legacy v0.1 fields)
+okf validate ./company_knowledge --fix
+```
+
+`okf lint` evaluates 28 opinionated hygiene rules (missing headings, broken links, orphan concepts, key ordering, whitespace issues):
+
+```sh
+# Lint bundle
+okf lint ./company_knowledge
+
+# Automatically apply fixes across all files (adds titles, headings, formats keys, fixes whitespace)
+okf lint ./company_knowledge --fix
+```
+
+### Auditing trust: trust and info
+
+```sh
+# View per-concept trust tier, verification history, and staleness
+okf trust ./company_knowledge
+```
+
+*Example Output:*
+```text
+policies/travel_expenses [stable] human-reviewed
+  generated: reference_agent/gemini-3.7-flash at 2026-06-20T22:53:05Z
+  verified:  human:sarah_hr at 2026-06-25T09:00:00Z
+  stale_after: 2026-12-31
+  source:    [mileage-guide] Standard mileage reimbursement guidelines
+computations/mileage_calc [stable] machine-confirmed
+  generated: human:alex_finance at 2026-06-15T10:00:00Z
+  verified:  process:ci-nightly at 2026-06-20T00:00:00Z
+
+2 concept(s):
+     1  human-reviewed
+     1  machine-confirmed
+```
+
+```sh
+# Summarize bundle statistics, types, and health
+okf info ./company_knowledge
+```
+
+### Link graph and discovery: links and graph
+
+```sh
+# Inspect all internal and broken cross-links
+okf links ./company_knowledge
+
+# Check only for broken links (fails in CI if broken links exist)
+okf links ./company_knowledge --broken --check
+
+# Export cross-links in JSON format
+okf links ./company_knowledge --format json
+
+# Render link graph as Mermaid (ideal for GitHub READMEs or PR summaries)
+okf graph ./company_knowledge --format mermaid --sources
+
+# Export full dependency graph as JSON
+okf graph ./company_knowledge --format json
+```
+
+### Semantic diffs: diff
+
+Perform semantic comparison between two OKF bundles (or two git worktrees):
+
+```sh
+okf diff ./bundle_v1 ./bundle_v2
+```
+
+*Example Output:*
+```text
+added (1):
+  + policies/paid_time_off
+removed (0):
+renamed (1):
+  ~ policies/old_travel -> policies/travel_expenses
+content (1):
+  ~ policies/travel_expenses (body)
+trust (1):
+  policies/travel_expenses: tier unverified -> human-reviewed
+added links (1):
+  + policies/travel_expenses -> computations/mileage_calc
+```
+
+### Formatting and indexing: fmt, index, and parse
+
+```sh
+# Format frontmatter and body in place across all markdown files
+okf fmt ./company_knowledge -w
+
+# Regenerate all index.md table-of-contents files across the directory tree
+okf index ./company_knowledge
+
+# Inspect AST and parsed frontmatter structure of a single document
+okf parse ./company_knowledge/policies/travel_expenses.md
+```
+
+---
+
+## CI/CD integration
+
+Add `okf` to your GitHub Actions workflow to automatically check every pull request:
+
+`.github/workflows/okf.yml`:
+
+```yaml
+name: Bundle CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  validate:
+    name: Conformance and lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install okf
+        run: cargo install okf
+
+      - name: Validate OKF conformance
+        run: okf validate ./company_knowledge
+
+      - name: Check broken links
+        run: okf links ./company_knowledge --broken --check
+
+      - name: Lint bundle
+        run: okf lint ./company_knowledge
+```
+
+---
+
+## Using as a Rust library
+
+Add `okf` or `okf-core` to your `Cargo.toml`:
 
 ```sh
 cargo add okf
 ```
 
-## What OKF is
-
-OKF stands for **Open Knowledge Format**, an open, human- and agent-friendly format from Google for representing knowledge as a directory of markdown files.
-
-The format itself is plain markdown files with a YAML header, in a folder.
-Nothing to install, no schema registry, no database. If you can read a text file,
-you can read OKF.
-
-- **Concepts**: one piece of written knowledge about one thing in a markdown file.
-- **Bundles**: a folder of related concepts. `index.md` is its table of contents,
-  and `log.md` the changelog.
-- **Provenance**: `sources` lists where a concept came from, who wrote it, how often it is used, and when it last changed. OKF stores
-  those facts and leaves the conclusion to you, so there is no trust score.
-- **Trust**: `generated` indicates who wrote a concept and when. `verified` says who or what checked it afterwards and when. A concept nobody checked is unverified, one a machine
-  checked is machine-confirmed, and one a person checked is human-reviewed.
-- **Lifecycle**: `status` marks a concept draft, stable or deprecated, and
-  `stale_after` is the date it goes stale and has to be checked again.
-- **Attestation**: a concept can also define exactly *how* a value must be
-  calculated, so an agent cannot make up its own version. An `Attested Computation`
-  names the runtime and its parameters, what a successful run has to report,
-  and the code that checks that report.
-
-## Usage
-
-### As a CLI
-
-```text
-okf init         [dir]       Initialize a new OKF bundle (--title, --bare)
-okf new          <path>      Create a new concept document (--type, --title, --attested)
-okf validate     <bundle>    Check a bundle against OKF v0.2 conformance (--fix)
-okf lint         <bundle>    Opinionated bundle health and hygiene checks (--fix)
-okf info         <bundle>    Summarize a bundle (concepts, types, trust, links)
-okf trust        <bundle>    Report trust tier, status, and staleness per concept
-okf links        <bundle>    Inspect internal, broken, and external cross-links
-okf computations <bundle>    List Attested Computation contracts
-okf index        <bundle>    (Re)generate every index.md in the bundle
-okf graph        <bundle>    Print the cross-link graph (--format text|mermaid|json)
-okf parse        <file>      Parse one concept document and print its structure
-okf fmt          <path>      Normalize document(s) by parse + re-serialize (-w writes)
-okf diff         <a> <b>     OKF-semantics diff between two bundles
-```
-
-`okf validate` exits non-zero when a bundle is not conformant, so it drops
-straight into CI:
-
-```sh
-okf validate ./bundles/finance
-okf validate ./bundles/finance --today 2026-07-01   # pin staleness for reproducible runs
-okf graph ./bundles/finance --format mermaid --sources  # renders inline in GitHub
-```
-
-`okf lint` is the opinionated companion: it goes beyond strict conformance and
-flags the hygiene issues a continuously-authored corpus drifts into. Every
-finding is tagged with a stable rule code so CI can pin or silence
-individual checks. It exits non-zero on warnings, leaving infos advisory:
-
-```sh
-okf lint ./bundles/finance
-okf lint ./bundles/finance --today 2026-07-01
-```
-
-`okf trust` gives the per-concept view the trust families exist for:
-
-```text
-computations/profit [stable] machine-confirmed STALE
-  generated: reference_agent/gemini-2.5-pro at 2026-06-14T14:00:00Z
-  verified:  process:finance-nightly at 2026-06-12T08:00:00Z
-  stale_after: 2026-06-15
-  source:    [cost-alloc] Cost allocation standard
-computations/revenue [stable] human-reviewed
-  generated: reference_agent/gemini-2.5-pro at 2026-06-28T14:00:00Z
-  verified:  human:ahormati at 2026-06-25T09:00:00Z
-  stale_after: 2026-12-31
-```
-
-### As a library
+### 1. Loading and validating a bundle
 
 ```rust,no_run
-use okf::{Bundle, validate_bundle, ConceptId, Date, TrustTier};
+use okf::{Bundle, ConceptId, Date, TrustTier, validate_bundle};
 
-let bundle = Bundle::load("./my_bundle")?;
-println!("{} concepts", bundle.len());
+// Load bundle from disk
+let bundle = Bundle::load("./company_knowledge")?;
+println!("Loaded {} concepts", bundle.len());
 
 // Conformance check
 let report = validate_bundle(&bundle);
 if report.is_conformant() {
-    println!("conformant with OKF v{}", okf::OKF_VERSION);
+    println!("Conformant with OKF v{}", okf::OKF_VERSION);
 }
 
-// Traverse the cross-link graph
-let id = ConceptId::parse("tables/orders")?;
-for link in bundle.links_from(&id) {
-    println!("{} -> {} (exists: {})", id, link.target, link.exists);
+// Traverse cross-links and backlinks
+let policy_id = ConceptId::parse("policies/travel_expenses")?;
+for link in bundle.links_from(&policy_id) {
+    println!("{} -> {} (exists: {})", policy_id, link.target, link.exists);
 }
-for backlink in bundle.backlinks(&id) {
-    println!("cited by {backlink}");
+for backlink in bundle.backlinks(&policy_id) {
+    println!("Referenced by backlink: {backlink}");
 }
 
-// Trust and freshness
+// Check trust and staleness
 let today = Date::today_utc().unwrap();
 for concept in bundle.concepts() {
     if concept.trust_tier() < TrustTier::HumanReviewed && concept.is_stale_on(today) {
-        println!("{} needs review", concept.id);
+        println!("Warning: {} is stale or unreviewed", concept.id);
     }
-}
-
-// Provenance: recurse into sources that are themselves concepts
-for source in bundle.derived_from(&id) {
-    println!("{id} derives from {source}");
 }
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-Reading an Attested Computation contract:
+### 2. Inspecting attested computations
 
 ```rust
 use okf::Document;
@@ -164,208 +489,71 @@ use okf::Document;
 let doc = Document::parse(
     "---\n\
      type: Attested Computation\n\
-     runtime: bigquery\n\
+     runtime: python\n\
      parameters:\n\
-     \x20 - { name: year, type: integer, required: true }\n\
+     \x20 - { name: miles, type: number, required: true }\n\
      executor:\n\
-     \x20 resource: references/skills/run-on-bq.md\n\
-     \x20 receipt: [job_id, executed_sql, result]\n\
+     \x20 resource: references/skills/submit_expense.md\n\
+     \x20 receipt: [report_id, calculated_amount, status]\n\
      ---\n\n# Computation\n\n\
-     \x20   SELECT SUM(amount) FROM finance.recognized_revenue WHERE fiscal_year = @year\n",
+     \x20   def calculate_reimbursement(miles: float, rate_per_mile: float = 0.67) -> float:\n\
+     \x20       return round(miles * rate_per_mile, 2)\n",
 )?;
 
 let contract = doc.attested_computation().unwrap();
-assert_eq!(contract.runtime.as_deref(), Some("bigquery"));
+assert_eq!(contract.runtime.as_deref(), Some("python"));
 assert_eq!(contract.required_parameters().count(), 1);
-assert!(contract.computation.code().unwrap().starts_with("SELECT SUM(amount)"));
+assert!(contract.computation.code().unwrap().contains("calculate_reimbursement"));
 # Ok::<(), okf::DocumentError>(())
 ```
 
-## Migrating from v0.1 to v0.2
+---
 
-v0.2 assumes a corpus that is continuously written and maintained by agents, and
-makes the questions such a corpus raises answerable from frontmatter. Every new
-key is optional, and *absence is meaningful rather than invalid*, so a v0.1
-document is still a conformant v0.2 document.
+## Workspace crates
 
-| Question                                 | Frontmatter                                        | Module          |
-|------------------------------------------|----------------------------------------------------|-----------------|
-| What was this created from? (provenance) | `sources`, `usage_window`                          | [`provenance`]  |
-| How much should I trust it? (trust)      | `generated`, `verified`, trust tiers               | [`trust`]       |
-| Is it still true? (freshness)            | `stale_after`                                      | [`trust`]       |
-| Is it the current version? (lifecycle)   | `status`                                           | [`trust`]       |
-| Was this number produced the way we said it must be? (attestation) | `runtime`, `parameters`, `computation`, `executor`, `attester` | [`computation`] |
+This repository is structured as a zero-dependency Rust workspace:
 
-Plus the actor convention shared by every identity field
-(`<producer>/<version>`, `human:<id>`, `process:<id>`) in [`actor`], and
-per-claim attribution through markdown footnotes keyed to `sources[].id`
-in [`footnotes`].
+| Crate | Description | Documentation |
+|-------|-------------|---------------|
+| [`okf`](https://crates.io/crates/okf) | CLI binary and re-exports of all core and validator APIs. | [![docs.rs](https://img.shields.io/docsrs/okf)](https://docs.rs/okf) |
+| [`okf-core`](https://crates.io/crates/okf-core) | Pure-Rust OKF engine (YAML subset parser, AST, link graphs, diff, fix engine). | [![docs.rs](https://img.shields.io/docsrs/okf-core)](https://docs.rs/okf-core) |
+| [`okf-validator`](https://crates.io/crates/okf-validator) | Conformance validator and 28 opinionated linting rules. | [![docs.rs](https://img.shields.io/docsrs/okf-validator)](https://docs.rs/okf-validator) |
+| [`cargo-okf`](https://crates.io/crates/cargo-okf) | Cargo plugin wrapper allowing `cargo okf <cmd>`. | [![docs.rs](https://img.shields.io/docsrs/cargo-okf)](https://docs.rs/cargo-okf) |
 
-Two v0.1 constructs are superseded but still readable, since a v0.2
-consumer is expected to handle v0.1 bundles:
-
-| v0.1               | v0.2                    | Fallback in okf-core                  |
-|--------------------|-------------------------|-----------------------------------------|
-| `timestamp`        | `generated: { by, at }` | `Frontmatter::content_changed_at`       |
-| body `# Citations` | `sources` + footnotes   | `Document::citations` still parses it   |
-
-`okf validate` reports both as warnings so a bundle can be migrated
-incrementally, without ever failing conformance for using the old form.
-
-### Attestation is recorded, not executed
-
-An `Attested Computation` concept carries a sanctioned way to compute a
-value: a `runtime`, typed `parameters`, the computation itself (inline under
-`# Computation` or in a file), an `executor` that produces a receipt, and a
-deterministic `attester` that turns a receipt into a verdict.
-
-okf-core models and checks that contract. It **never runs anything**: the
-receipt and verdict are runtime artifacts that are kept out of the
-bundle. Executing computations and attesting receipts are consumer-side
-concerns.
-
-## Library overview
-
-| Module          | Responsibility                                                         |
-|-----------------|------------------------------------------------------------------------|
-| [`yaml`]        | A YAML-*subset* `Value`/`Mapping`, parser, and emitter for frontmatter |
-| [`document`]    | `Document` = frontmatter + body; parse / serialize / validate          |
-| [`frontmatter`] | `Frontmatter`: typed accessors over an order-preserving mapping        |
-| [`concept_id`]  | `ConceptId` to/from path conversion and segment rules                  |
-| [`provenance`]  | `sources`, credibility signals, and footnote attribution               |
-| [`trust`]       | `generated`, `verified`, trust tiers, `status`, `stale_after`          |
-| [`actor`]       | The `human:` / `process:` / `<producer>/<version>` convention          |
-| [`date`]        | `Date`/`DateTime` parsing and comparison for the date-valued fields    |
-| [`computation`] | The Attested Computation contract and its `# Computation` block        |
-| [`footnotes`]   | `[^label]` reference and definition scanning                           |
-| [`links`]       | Markdown link extraction, classification, path-valued fields           |
-| [`bundle`]      | `Bundle::load`: walk a tree, build the link and derivation graphs      |
-| [`scaffold`]    | Scaffold new bundles (`init_bundle`) and concepts (`create_concept`)   |
-| [`index`]       | Generate `index.md` directory listings                                 |
-| [`log`]         | Parse / build `log.md` update histories                                |
-| [`fix`]         | Automated remediation and migration engine                             |
-| [`validate`]    | Conformance checking with severity-tagged diagnostics                  |
-| [`lint`]        | Opinionated bundle health checks beyond conformance                    |
-
-The core split mirrors the reference Python implementation's `bundle/` package
-(`document.py`, `index.py`, `paths.py`, `synthesizer.py`) so behaviour stays
-compatible: the document parser, validator, and index generator are faithful
-ports, verified by tests adapted from the reference test suite. Frontmatter can
-also be reordered into the key order the reference writes
-(`Frontmatter::reorder_preferred`, `PREFERRED_KEY_ORDER`).
-
-Compatibility is checked against the reference's four published bundles
-(`acme_retail`, `crypto_bitcoin`, `ga4`, `stackoverflow`): all 53 concepts load,
-every one is conformant, and each document's frontmatter re-serializes to a value
-PyYAML reads back identically.
-
-## Mapping to the spec
-
-| Spec section                | Implemented by                                            |
-|-----------------------------|-----------------------------------------------------------|
-| §2 Terminology / concept id | [`concept_id::ConceptId`]                                 |
-| §3 Bundle structure         | [`bundle::Bundle`], [`bundle::RESERVED_FILENAMES`]        |
-| §4 Concept documents        | [`document::Document`], [`frontmatter::Frontmatter`]      |
-| §5.1 Provenance             | [`provenance::Source`], [`provenance::attributions`]      |
-| §5.2 Trust                  | [`trust::Generated`], [`trust::Verification`]             |
-| §5.3 Trust tiers            | [`trust::TrustTier`]                                      |
-| §5.4 / §5.5 Lifecycle       | [`trust::Status`], [`trust::is_stale_on`]                 |
-| §6 Cross-linking and paths  | [`links`], [`links::field_path_candidates`]               |
-| §7 Actor convention         | [`actor::Actor`]                                          |
-| §8 Index files              | [`index::regenerate_indexes`]                             |
-| §9 Log files                | [`log::Log`]                                              |
-| §10 Attested computations   | [`computation::AttestedComputation`]                      |
-| §11 Conformance             | [`validate::validate_bundle`]                             |
-| §12 Versioning              | [`bundle::Bundle::okf_version`], [`OKF_VERSION`]          |
-| §13 Changes from v0.1       | [`frontmatter::LEGACY_FRONTMATTER_KEYS`]                  |
+---
 
 ## Design choices
 
-- **Frontmatter preserves everything.** Rather than deserializing into a fixed
-  struct (which would drop producer-defined keys), `Frontmatter` keeps the full
-  ordered mapping and layers typed getters (`type_()`, `sources()`,
-  `trust_tier()`, and so on) on top. This satisfies the spec's requirement that
-  consumers preserve unknown keys when round-tripping.
-- **Signals are stored, verdicts are derived.** Trust tiers and source
-  credibility are computed on read, never stored, because a stored score
-  is subjective, unportable across consumers, and goes stale.
-- **Staleness is opt-in.** `validate_bundle` is deterministic and never consults
-  the clock; `validate_bundle_at(&bundle, today)` adds the `stale_after`
-  comparison. The CLI passes the system date, or `--today YYYY-MM-DD`.
-- **Permissive loading.** `Bundle::load` never aborts on a bad concept file; it
-  collects parse failures in `parse_errors()` and keeps going. Broken
-  cross-links are retained as graph edges to non-existent concepts, and a
-  malformed date is reported rather than dropped (`DateField` keeps the raw
-  scalar alongside its parse).
-- **Validation rejects only what the spec rejects.** `Document::validate()` requires a
-  non-empty `type` and nothing more, matching the reference implementation.
-  Everything else the spec asks of a producer is reported, never enforced:
-  `Document::missing_recommended()` returns the unset recommended keys
-  (`title`, `description`, `generated`, plus `runtime` on an Attested
-  Computation), and `validate_bundle` surfaces them as warnings.
-- **A documented YAML subset.** Real OKF frontmatter is scalars, lists, and
-  shallow maps. The parser handles block/flow collections, quoted/plain
-  scalars, `|`/`>` block scalars, and comments; it rejects (with a clear error)
-  the YAML features that never appear in frontmatter: anchors, tags, multiple
-  documents. Colons inside flow scalars are content, not separators, so
-  `{ by: human:ahormati, at: 2026-06-25T09:00:00Z }` parses as v0.2 intends.
-  Scalars may also span lines, folding each break into a space, because PyYAML
-  wraps any value past 80 columns and the reference publishes bundles that way.
-- **Timestamps stay strings.** YAML's implicit resolver would type a bare
-  `2026-06-30T14:00:00Z` as a datetime; okf-core keeps it as text with the
-  parse alongside (`DateTimeField`), so a malformed date can be *reported*
-  rather than silently dropped. On the way out a datetime-valued scalar is
-  emitted quoted, because a bare one is not stable even under the reference's own
-  round-trip: PyYAML re-dumps it as `2026-06-30 14:00:00+00:00`, losing the `T`
-  and `Z` that the spec asks for. A bare `YYYY-MM-DD` stays plain.
+- **Zero third-party dependencies:** `okf-core` and `okf-validator` use only Rust standard library components (`std`). No external YAML parsers, no external regex crates, no heavy runtime.
+- **Full frontmatter preservation:** Rather than deserializing into rigid structs (which would drop custom or extension keys), `Frontmatter` maintains an order-preserving map and layers typed accessors on top. Unknown keys survive round-trips untouched.
+- **Computed, not stored, trust signals:** Trust tiers and credibility signals are derived at query time from verified actors. Storing a subjective trust number is fragile and non-portable.
+- **Permissive and resilient loading:** `Bundle::load` never crashes on a single broken file; parse errors and broken links are collected as diagnostic graph items so you can inspect and fix them.
+- **Deterministic by default:** Staleness checks are opt-in (`--today`) so validation remains reproducible across different execution environments.
+
+---
+
+## Mapping to the spec
+
+| Spec section | Responsibility | Module |
+|--------------|----------------|--------|
+| §2 Terminology / Concept ID | Identifier normalization & path resolution | [`concept_id::ConceptId`](https://docs.rs/okf/latest/okf/concept_id/struct.ConceptId.html) |
+| §3 Bundle structure | Directory traversal & reserved files | [`bundle::Bundle`](https://docs.rs/okf/latest/okf/bundle/struct.Bundle.html) |
+| §4 Concept documents | Document AST, YAML frontmatter, body | [`document::Document`](https://docs.rs/okf/latest/okf/document/struct.Document.html), [`frontmatter::Frontmatter`](https://docs.rs/okf/latest/okf/frontmatter/struct.Frontmatter.html) |
+| §5.1 Provenance | Sources, credibility signals, footnotes | [`provenance::Source`](https://docs.rs/okf/latest/okf/provenance/struct.Source.html), [`provenance::attributions`](https://docs.rs/okf/latest/okf/provenance/fn.attributions.html) |
+| §5.2 Trust | `generated`, `verified` actors & timestamps | [`trust::Generated`](https://docs.rs/okf/latest/okf/trust/struct.Generated.html), [`trust::Verification`](https://docs.rs/okf/latest/okf/trust/struct.Verification.html) |
+| §5.3 Trust tiers | `unverified`, `machine-confirmed`, `human-reviewed` | [`trust::TrustTier`](https://docs.rs/okf/latest/okf/trust/enum.TrustTier.html) |
+| §5.4 / §5.5 Lifecycle | `status: draft\|stable\|deprecated`, `stale_after` | [`trust::Status`](https://docs.rs/okf/latest/okf/trust/enum.Status.html), [`trust::is_stale_on`](https://docs.rs/okf/latest/okf/trust/fn.is_stale_on.html) |
+| §6 Cross-linking and paths | Relative link parsing, targets, and backlinks | [`links`](https://docs.rs/okf/latest/okf/links/) |
+| §7 Actor convention | `human:<id>`, `process:<id>`, `<producer>/<ver>` | [`actor::Actor`](https://docs.rs/okf/latest/okf/actor/struct.Actor.html) |
+| §8 Index files | Auto-generation of directory `index.md` listings | [`index::regenerate_indexes`](https://docs.rs/okf/latest/okf/index/fn.regenerate_indexes.html) |
+| §9 Log files | Parsing and formatting `log.md` histories | [`log::Log`](https://docs.rs/okf/latest/okf/log/struct.Log.html) |
+| §10 Attested computations | Contract models, parameters, receipts, attesters | [`computation::AttestedComputation`](https://docs.rs/okf/latest/okf/computation/struct.AttestedComputation.html) |
+| §11 Conformance | Conformance testing engine & diagnostic reporting | [`validate::validate_bundle`](https://docs.rs/okf/latest/okf/validate/fn.validate_bundle.html) |
+
+---
 
 ## License
 
-Licensed under the **Apache License, Version 2.0**, the same license as the
-upstream [OKF project](https://github.com/GoogleCloudPlatform/open-knowledge-format).
-okf-core is a derivative work: its document parser, concept-id conventions,
-and index generator are ports of the OKF reference implementation. See
-[`LICENSE`](LICENSE) for the full terms and [`NOTICE`](NOTICE) for attribution.
+Licensed under the **Apache License, Version 2.0**, matching the upstream [Open Knowledge Format](https://github.com/GoogleCloudPlatform/open-knowledge-format) project. See [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE) for details.
 
-This is an independent implementation and is not affiliated with or endorsed by
-Google.
-
-[`yaml`]: https://docs.rs/okf/latest/okf/yaml/
-[`document`]: https://docs.rs/okf/latest/okf/document/
-[`frontmatter`]: https://docs.rs/okf/latest/okf/frontmatter/
-[`concept_id`]: https://docs.rs/okf/latest/okf/concept_id/
-[`provenance`]: https://docs.rs/okf/latest/okf/provenance/
-[`trust`]: https://docs.rs/okf/latest/okf/trust/
-[`actor`]: https://docs.rs/okf/latest/okf/actor/
-[`date`]: https://docs.rs/okf/latest/okf/date/
-[`computation`]: https://docs.rs/okf/latest/okf/computation/
-[`footnotes`]: https://docs.rs/okf/latest/okf/footnotes/
-[`links`]: https://docs.rs/okf/latest/okf/links/
-[`bundle`]: https://docs.rs/okf/latest/okf/bundle/
-[`scaffold`]: https://docs.rs/okf/latest/okf/scaffold/
-[`index`]: https://docs.rs/okf/latest/okf/index/
-[`log`]: https://docs.rs/okf/latest/okf/log/
-[`fix`]: https://docs.rs/okf/latest/okf/fix/
-[`lint`]: https://docs.rs/okf/latest/okf/lint/
-[`validate`]: https://docs.rs/okf/latest/okf/validate/
-[`concept_id::ConceptId`]: https://docs.rs/okf/latest/okf/concept_id/struct.ConceptId.html
-[`bundle::Bundle`]: https://docs.rs/okf/latest/okf/bundle/struct.Bundle.html
-[`bundle::Bundle::okf_version`]: https://docs.rs/okf/latest/okf/bundle/struct.Bundle.html#method.okf_version
-[`bundle::RESERVED_FILENAMES`]: https://docs.rs/okf/latest/okf/bundle/constant.RESERVED_FILENAMES.html
-[`document::Document`]: https://docs.rs/okf/latest/okf/document/struct.Document.html
-[`frontmatter::Frontmatter`]: https://docs.rs/okf/latest/okf/frontmatter/struct.Frontmatter.html
-[`frontmatter::LEGACY_FRONTMATTER_KEYS`]: https://docs.rs/okf/latest/okf/frontmatter/constant.LEGACY_FRONTMATTER_KEYS.html
-[`provenance::Source`]: https://docs.rs/okf/latest/okf/provenance/struct.Source.html
-[`provenance::attributions`]: https://docs.rs/okf/latest/okf/provenance/fn.attributions.html
-[`trust::Generated`]: https://docs.rs/okf/latest/okf/trust/struct.Generated.html
-[`trust::Verification`]: https://docs.rs/okf/latest/okf/trust/struct.Verification.html
-[`trust::TrustTier`]: https://docs.rs/okf/latest/okf/trust/enum.TrustTier.html
-[`trust::Status`]: https://docs.rs/okf/latest/okf/trust/enum.Status.html
-[`trust::is_stale_on`]: https://docs.rs/okf/latest/okf/trust/fn.is_stale_on.html
-[`links::field_path_candidates`]: https://docs.rs/okf/latest/okf/links/fn.field_path_candidates.html
-[`actor::Actor`]: https://docs.rs/okf/latest/okf/actor/struct.Actor.html
-[`index::regenerate_indexes`]: https://docs.rs/okf/latest/okf/index/fn.regenerate_indexes.html
-[`log::Log`]: https://docs.rs/okf/latest/okf/log/struct.Log.html
-[`computation::AttestedComputation`]: https://docs.rs/okf/latest/okf/computation/struct.AttestedComputation.html
-[`validate::validate_bundle`]: https://docs.rs/okf/latest/okf/validate/fn.validate_bundle.html
-[`OKF_VERSION`]: https://docs.rs/okf/latest/okf/constant.OKF_VERSION.html
+*Disclaimer: This is an independent open-source implementation and is not affiliated with or endorsed by Google.*
