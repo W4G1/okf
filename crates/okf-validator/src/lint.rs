@@ -905,7 +905,7 @@ fn check_whitespace(cx: &mut Cx, doc: &Document) {
     let mut consecutive_blank = 0;
 
     for (i, line) in doc.body.lines().enumerate() {
-        if line.ends_with(' ') || line.ends_with('\t') {
+        if line.ends_with(char::is_whitespace) {
             trailing_count += 1;
             if first_trailing_line == 0 {
                 first_trailing_line = i + 1;
@@ -921,6 +921,14 @@ fn check_whitespace(cx: &mut Cx, doc: &Document) {
         }
     }
 
+    let body_trimmed = doc.body.trim_end_matches(['\n', '\r']);
+    let has_trailing_blank_lines = doc.body.len() > body_trimmed.len() + 1
+        && doc.body[body_trimmed.len()..]
+            .chars()
+            .filter(|&c| c == '\n')
+            .count()
+            > 1;
+
     if trailing_count > 0 {
         cx.info(
             "L28",
@@ -928,7 +936,7 @@ fn check_whitespace(cx: &mut Cx, doc: &Document) {
                 "trailing whitespace found on {trailing_count} line(s) in markdown body (first at line {first_trailing_line})"
             ),
         );
-    } else if excess_blank {
+    } else if excess_blank || has_trailing_blank_lines {
         cx.info(
             "L28",
             "excess consecutive blank lines found in markdown body",

@@ -286,10 +286,10 @@ fn cleans_trailing_whitespace_and_excess_blank_lines() {
             .any(|f| matches!(f.kind, RemediationKind::CleanedWhitespace))
     );
 
-    // Case 3: Trailing spaces on empty line in between paragraphs
+    // Case 3: "sometext     \n   \n   \n     " -> becomes "sometext\n"
     let doc3 = Document::new(
         okf_core::Frontmatter::new(),
-        "# Title\n    \nsometext    \n",
+        "# Title\n\nsometext     \n   \n   \n     ",
     );
     let (fixed3, fixes3) = remediate_document(&doc3, None, &FixOptions::default());
     assert_eq!(fixed3.body, "# Title\n\nsometext\n");
@@ -299,15 +299,35 @@ fn cleans_trailing_whitespace_and_excess_blank_lines() {
             .any(|f| matches!(f.kind, RemediationKind::CleanedWhitespace))
     );
 
-    // Case 4: Excess blank lines (4 blank lines)
-    let doc4 = Document::new(
+    // Case 4: Trailing tabs "sometext\t\t\n"
+    let doc4 = Document::new(okf_core::Frontmatter::new(), "# Title\n\nsometext\t\t\n");
+    let (fixed4, fixes4) = remediate_document(&doc4, None, &FixOptions::default());
+    assert_eq!(fixed4.body, "# Title\n\nsometext\n");
+    assert!(
+        fixes4
+            .iter()
+            .any(|f| matches!(f.kind, RemediationKind::CleanedWhitespace))
+    );
+
+    // Case 5: Excess blank lines (4 blank lines)
+    let doc5 = Document::new(
         okf_core::Frontmatter::new(),
         "# Title\n\n\n\n\n\nsometext\n",
     );
-    let (fixed4, fixes4) = remediate_document(&doc4, None, &FixOptions::default());
-    assert_eq!(fixed4.body, "# Title\n\n\nsometext\n");
+    let (fixed5, fixes5) = remediate_document(&doc5, None, &FixOptions::default());
+    assert_eq!(fixed5.body, "# Title\n\n\nsometext\n");
     assert!(
-        fixes4
+        fixes5
+            .iter()
+            .any(|f| matches!(f.kind, RemediationKind::CleanedWhitespace))
+    );
+
+    // Case 6: Trailing blank lines at end of body "sometext\n\n\n\n"
+    let doc6 = Document::new(okf_core::Frontmatter::new(), "# Title\n\nsometext\n\n\n\n");
+    let (fixed6, fixes6) = remediate_document(&doc6, None, &FixOptions::default());
+    assert_eq!(fixed6.body, "# Title\n\nsometext\n");
+    assert!(
+        fixes6
             .iter()
             .any(|f| matches!(f.kind, RemediationKind::CleanedWhitespace))
     );

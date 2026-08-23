@@ -713,30 +713,46 @@ fn l27_duplicate_log_date() {
 #[test]
 fn l28_trailing_and_excess_whitespace() {
     let tmp = TempDir::new();
-    // Test case 1: trailing whitespace on line "sometext    \n"
+    // Test case 1: trailing whitespace on line "sometext   \n"
     tmp.write(
         "t1.md",
-        "---\ntype: Concept\ntitle: T1\ndescription: d\ngenerated:\n  by: ref/x\n  at: 2026-01-01T00:00:00Z\n---\n\n# T1\n\nsometext    \n",
+        "---\ntype: Concept\ntitle: T1\ndescription: d\ngenerated:\n  by: ref/x\n  at: 2026-01-01T00:00:00Z\n---\n\n# T1\n\nsometext   \n",
     );
-    // Test case 2: trailing whitespace and trailing whitespace-only line "sometext    \n    "
+    // Test case 2: trailing whitespace and trailing whitespace-only lines "sometext     \n   \n   \n     "
     tmp.write(
         "t2.md",
-        "---\ntype: Concept\ntitle: T2\ndescription: d\ngenerated:\n  by: ref/x\n  at: 2026-01-01T00:00:00Z\n---\n\n# T2\n\nsometext    \n    ",
+        "---\ntype: Concept\ntitle: T2\ndescription: d\ngenerated:\n  by: ref/x\n  at: 2026-01-01T00:00:00Z\n---\n\n# T2\n\nsometext     \n   \n   \n     ",
     );
-    // Test case 3: excess consecutive blank lines
+    // Test case 3: trailing tabs "sometext\t\t\n"
     tmp.write(
         "t3.md",
-        "---\ntype: Concept\ntitle: T3\ndescription: d\ngenerated:\n  by: ref/x\n  at: 2026-01-01T00:00:00Z\n---\n\n# T3\n\n\n\n\nsometext\n",
+        "---\ntype: Concept\ntitle: T3\ndescription: d\ngenerated:\n  by: ref/x\n  at: 2026-01-01T00:00:00Z\n---\n\n# T3\n\nsometext\t\t\n",
+    );
+    // Test case 4: excess consecutive blank lines in middle of body
+    tmp.write(
+        "t4.md",
+        "---\ntype: Concept\ntitle: T4\ndescription: d\ngenerated:\n  by: ref/x\n  at: 2026-01-01T00:00:00Z\n---\n\n# T4\n\n\n\n\nsometext\n",
+    );
+    // Test case 5: trailing blank lines at end of body
+    tmp.write(
+        "t5.md",
+        "---\ntype: Concept\ntitle: T5\ndescription: d\ngenerated:\n  by: ref/x\n  at: 2026-01-01T00:00:00Z\n---\n\n# T5\n\nsometext\n\n\n\n",
     );
     tmp.write(
         "index.md",
-        "# Concepts\n\n* [T1](t1.md)\n* [T2](t2.md)\n* [T3](t3.md)\n",
+        "# Concepts\n\n* [T1](t1.md)\n* [T2](t2.md)\n* [T3](t3.md)\n* [T4](t4.md)\n* [T5](t5.md)\n",
     );
 
     let bundle = Bundle::load(tmp.path()).unwrap();
     let report = lint_bundle(&bundle);
-    assert!(
-        has(&report, "L28"),
-        "expected L28 for trailing whitespace and excess blank lines"
+    let l28_diagnostics: Vec<_> = report
+        .diagnostics
+        .iter()
+        .filter(|d| d.message.starts_with("[L28]"))
+        .collect();
+    assert_eq!(
+        l28_diagnostics.len(),
+        5,
+        "Every whitespace variant should trigger L28: {l28_diagnostics:#?}"
     );
 }
