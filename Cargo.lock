@@ -4,14 +4,14 @@ version = 4
 
 [[package]]
 name = "cargo-okf"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "okf",
 ]
 
 [[package]]
 name = "okf"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "okf-core",
  "okf-validator",
@@ -23,7 +23,7 @@ version = "0.0.0"
 
 [[package]]
 name = "okf-core"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "okf-validator",
 ]
@@ -42,7 +42,7 @@ version = "0.0.0"
 
 [[package]]
 name = "okf-validator"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "okf-core",
 ]

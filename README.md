@@ -34,7 +34,7 @@ Install the CLI from [crates.io](https://crates.io/crates/okf):
 cargo install okf
 
 # Run the cli
-okf --version    # okf 0.2.3 (OKF spec v0.2)
+okf --version    # okf 0.2.4 (OKF spec v0.2)
 ```
 
 Or add it as a library dependency to your project:
