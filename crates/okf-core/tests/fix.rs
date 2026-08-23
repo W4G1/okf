@@ -309,13 +309,13 @@ fn cleans_trailing_whitespace_and_excess_blank_lines() {
             .any(|f| matches!(f.kind, RemediationKind::CleanedWhitespace))
     );
 
-    // Case 5: Excess blank lines (4 blank lines)
+    // Case 5: Excess blank lines between paragraphs ("sometext\n\n\n\nmore\n" -> becomes "sometext\n\nmore\n")
     let doc5 = Document::new(
         okf_core::Frontmatter::new(),
-        "# Title\n\n\n\n\n\nsometext\n",
+        "# Title\n\nsometext\n\n\n\nmore\n",
     );
     let (fixed5, fixes5) = remediate_document(&doc5, None, &FixOptions::default());
-    assert_eq!(fixed5.body, "# Title\n\n\nsometext\n");
+    assert_eq!(fixed5.body, "# Title\n\nsometext\n\nmore\n");
     assert!(
         fixes5
             .iter()

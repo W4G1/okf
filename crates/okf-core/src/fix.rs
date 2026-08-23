@@ -488,7 +488,7 @@ fn clean_body_whitespace(body: &str) -> (String, bool) {
 
         if trimmed_end.is_empty() {
             consecutive_empty += 1;
-            if consecutive_empty > 2 {
+            if consecutive_empty > 1 {
                 continue;
             }
             out_lines.push(String::new());
