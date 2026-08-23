@@ -44,4 +44,5 @@
 pub struct ReadmeExamples;
 
 pub use okf_core::*;
+#[cfg(feature = "validator")]
 pub use okf_validator::*;

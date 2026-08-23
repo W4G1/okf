@@ -14,7 +14,14 @@ categories = ["command-line-utilities", "parser-implementations", "data-structur
 
 [dependencies]
 okf-core.workspace = true
-okf-validator.workspace = true
+okf-validator = { workspace = true, optional = true }
+
+[features]
+default = ["validator"]
+# Conformance validation and linting: the validate and lint modules, and the
+# okf validate / okf lint subcommands. On by default; opt out with
+# default-features = false for a parse-only dependency.
+validator = ["dep:okf-validator"]
 
 # The lib target re-exports all of okf-core, so `cargo add okf` keeps working
 # as a library dependency (`use okf::Bundle;`) while `cargo install okf` still
@@ -27,3 +34,6 @@ path = "src/lib.rs"
 [[bin]]
 name = "okf"
 path = "src/main.rs"
+# The CLI's validate and lint subcommands need the validator, so building the
+# binary without it is refused up front rather than failing mid-compile.
+required-features = ["validator"]
