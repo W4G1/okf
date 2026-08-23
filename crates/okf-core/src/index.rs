@@ -228,7 +228,7 @@ pub fn regenerate_indexes_with(
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_default();
-            if name == INDEX_FILE {
+            if crate::bundle::RESERVED_FILENAMES.contains(&name.as_str()) {
                 continue;
             }
             if child.is_file() && child.extension().is_some_and(|e| e == "md") {

@@ -505,6 +505,33 @@ fn l16_ignores_absolute_links_pointing_elsewhere() {
 }
 
 #[test]
+fn l16_ignores_reserved_files_in_index() {
+    let tmp = TempDir::new();
+    tmp.write(
+        "a.md",
+        "---\ntype: Metric\ntitle: A\ndescription: d\n\
+         generated: { by: ref/x, at: 2026-06-20T22:53:05Z }\n\
+         verified: { by: human:a, at: 2026-06-25T09:00:00Z }\n\
+         ---\n\n# Definition\n\nProse.\n",
+    );
+    tmp.write(
+        "log.md",
+        "# Update Log\n\n## 2026-06-25\n* **Creation**: Init.\n",
+    );
+    tmp.write(
+        "index.md",
+        "# Metric\n\n* [A](a.md)\n\n# Other\n\n* [log](log.md)\n",
+    );
+    let bundle = Bundle::load(tmp.path()).unwrap();
+    let report = lint_bundle(&bundle);
+    assert!(
+        !has(&report, "L16"),
+        "index listing log.md should not trigger L16: {:#?}",
+        report.diagnostics
+    );
+}
+
+#[test]
 fn l17_broken_link() {
     let tmp = TempDir::new();
     tmp.write(

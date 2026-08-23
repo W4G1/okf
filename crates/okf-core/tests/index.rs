@@ -248,3 +248,29 @@ fn nested_indexes_do_not_keep_root_version_frontmatter() {
     assert!(!nested.contains("okf_version"), "{nested}");
     assert!(!nested.contains("title: Wrong"), "{nested}");
 }
+
+#[test]
+fn regenerate_skips_reserved_log_file() {
+    let tmp = TempDir::new();
+    tmp.write(
+        "log.md",
+        "# Update Log\n\n## 2026-08-18\n* **Creation**: Initialized.\n",
+    );
+    write_doc(
+        &tmp,
+        "overview.md",
+        "Overview",
+        "Overview",
+        "Main overview.",
+    );
+
+    regenerate_indexes(tmp.path()).unwrap();
+
+    let root_index = tmp.read("index.md");
+    assert!(
+        root_index.contains("[Overview](overview.md)"),
+        "{root_index}"
+    );
+    assert!(!root_index.contains("log.md"), "{root_index}");
+    assert!(!root_index.contains("# Other"), "{root_index}");
+}

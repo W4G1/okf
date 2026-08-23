@@ -167,6 +167,9 @@ fn is_concept_link(raw: &str) -> bool {
     }
     let before_anchor = t.split('#').next().unwrap_or(t);
     let basename = before_anchor.rsplit('/').next().unwrap_or(before_anchor);
+    if okf_core::bundle::RESERVED_FILENAMES.contains(&basename) {
+        return false;
+    }
     // OKF reserves the lowercase `index.md` and `log.md` filenames, so a
     // case-sensitive comparison is correct here, not a missing-extension bug.
     #[allow(clippy::case_sensitive_file_extension_comparisons)]
