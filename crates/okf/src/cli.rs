@@ -1,28 +1,33 @@
 //! `okf`: a command-line tool for the Open Knowledge Format.
 //!
 //! Subcommands:
+//! ```text
+//!   init         [dir]      Initialize a new OKF bundle (--title, --bare).
+//!   new          <path>     Create a new concept document (--type, --title, --attested).
 //!   validate     <bundle>   Check a bundle against OKF v0.2 conformance.
 //!   info         <bundle>   Print a summary of a bundle.
 //!   trust        <bundle>   Report trust tier, status, and staleness per concept.
+//!   links        <bundle>   Inspect internal, broken, and external cross-links.
 //!   computations <bundle>   List Attested Computation contracts.
 //!   index        <bundle>   (Re)generate every index.md in a bundle.
 //!   graph        <bundle>   Print the cross-link graph (text, mermaid, or json).
 //!   parse        <file>     Parse one concept document and print its structure.
-//!   fmt          <file>     Normalize a document by parse + re-serialize.
+//!   fmt          <path>     Normalize document(s) by parse + re-serialize (-w writes).
 //!   lint         <bundle>   Opinionated bundle health checks.
 //!   diff         <a> <b>    OKF-semantics diff between two bundles.
+//! ```
 //!
 //! Argument parsing is hand-rolled to keep the crate dependency-free.
 
 #![warn(clippy::pedantic, clippy::nursery)]
 
 use crate::{
-    Bundle, Date, Document, Severity, TrustTier, Value, bundle_diff, lint_bundle_at,
-    validate_bundle_at,
+    Bundle, BundleInitOptions, ConceptOptions, Date, Document, Link, Severity, TrustTier, Value,
+    bundle_diff, create_concept, init_bundle, lint_bundle_at, validate_bundle_at,
 };
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 // Exit codes follow the sysexits.h convention so CI can tell apart a missing
@@ -77,9 +82,12 @@ pub fn run(args: &[String]) -> ExitCode {
     let rest = &args[1..];
 
     let result = match cmd {
+        "init" => cmd_init(rest),
+        "new" => cmd_new(rest),
         "validate" => cmd_validate(rest),
         "info" => cmd_info(rest),
         "trust" => cmd_trust(rest),
+        "links" => cmd_links(rest),
         "computations" => cmd_computations(rest),
         "index" => cmd_index(rest),
         "graph" => cmd_graph(rest),
@@ -121,14 +129,17 @@ USAGE:
     okf <command> [args]
 
 COMMANDS:
+    init         [dir]       Initialize a new OKF bundle (--title, --bare)
+    new          <path>      Create a new concept document (--type, --title, --attested)
     validate     <bundle>    Check a bundle against OKF v0.2 conformance
     info         <bundle>    Summarize a bundle (concepts, types, trust, links)
     trust        <bundle>    Report trust tier, status, and staleness per concept
+    links        <bundle>    Inspect internal, broken, and external cross-links
     computations <bundle>    List Attested Computation contracts
     index        <bundle>    (Re)generate every index.md in the bundle
     graph        <bundle>    Print the cross-link graph (--format text|mermaid|json)
     parse        <file>      Parse one concept document and print its structure
-    fmt          <file>      Normalize a document by parse + re-serialize (-w writes)
+    fmt          <path>      Normalize document(s) by parse + re-serialize (-w writes)
     lint         <bundle>    Opinionated bundle health checks
     diff         <a> <b>     OKF-semantics diff between two bundles
 
@@ -139,7 +150,16 @@ OPTIONS:
 
 /// Flags that consume the argument after them, so it is not mistaken for a
 /// positional path.
-const VALUED_FLAGS: [&str; 2] = ["--today", "--format"];
+const VALUED_FLAGS: [&str; 8] = [
+    "--today",
+    "--format",
+    "--type",
+    "--title",
+    "--description",
+    "--author",
+    "--sample-name",
+    "--status",
+];
 
 /// Returns the first positional argument, or an error. Everything after a `--`
 /// separator is treated as positional (so paths beginning with `-` work).
@@ -949,19 +969,371 @@ fn scalar(value: &Value) -> String {
 }
 
 fn cmd_fmt(args: &[String]) -> Result<ExitCode, CliError> {
-    let path = positional(args, "<file>")?;
+    let path = positional(args, "<path>")?;
     let write = has_flag(args, "-w") || has_flag(args, "--write");
-    let text = std::fs::read_to_string(path).map_err(|e| CliError::no_input(e.to_string()))?;
-    let doc = Document::parse(&text).map_err(|e| CliError::data(e.to_string()))?;
-    let out = doc.serialize();
+    let target_path = Path::new(path);
 
-    if write {
-        std::fs::write(Path::new(path), &out).map_err(|e| CliError::no_input(e.to_string()))?;
-        println!("formatted {path}");
+    if !target_path.exists() {
+        return Err(CliError::no_input(format!(
+            "No such file or directory: {path}"
+        )));
+    }
+
+    if target_path.is_dir() {
+        let mut md_files = Vec::new();
+        collect_markdown_files(target_path, &mut md_files)?;
+        md_files.sort();
+
+        if md_files.is_empty() {
+            println!("no markdown files found in {}", target_path.display());
+            return Ok(ExitCode::SUCCESS);
+        }
+
+        let mut formatted_count = 0;
+        let mut error_count = 0;
+
+        for file_path in &md_files {
+            let text = match std::fs::read_to_string(file_path) {
+                Ok(t) => t,
+                Err(e) => {
+                    eprintln!("error reading {}: {e}", file_path.display());
+                    error_count += 1;
+                    continue;
+                }
+            };
+            let doc = match Document::parse(&text) {
+                Ok(d) => d,
+                Err(e) => {
+                    eprintln!("error parsing {}: {e}", file_path.display());
+                    error_count += 1;
+                    continue;
+                }
+            };
+            let out = doc.serialize();
+            if write {
+                if let Err(e) = std::fs::write(file_path, &out) {
+                    eprintln!("error writing {}: {e}", file_path.display());
+                    error_count += 1;
+                    continue;
+                }
+                println!("formatted {}", file_path.display());
+            } else {
+                println!("--- {} ---", file_path.display());
+                print!("{out}");
+            }
+            formatted_count += 1;
+        }
+
+        if write {
+            println!(
+                "\n{formatted_count} file(s) formatted in {}.",
+                target_path.display()
+            );
+        }
+
+        if error_count > 0 {
+            Ok(ExitCode::from(EX_DATAERR))
+        } else {
+            Ok(ExitCode::SUCCESS)
+        }
     } else {
-        print!("{out}");
+        let text = std::fs::read_to_string(path).map_err(|e| CliError::no_input(e.to_string()))?;
+        let doc = Document::parse(&text).map_err(|e| CliError::data(e.to_string()))?;
+        let out = doc.serialize();
+
+        if write {
+            std::fs::write(target_path, &out).map_err(|e| CliError::no_input(e.to_string()))?;
+            println!("formatted {path}");
+        } else {
+            print!("{out}");
+        }
+        Ok(ExitCode::SUCCESS)
+    }
+}
+
+fn collect_markdown_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), CliError> {
+    let entries = std::fs::read_dir(dir).map_err(|e| CliError::no_input(e.to_string()))?;
+    for entry in entries {
+        let entry = entry.map_err(|e| CliError::no_input(e.to_string()))?;
+        let path = entry.path();
+        if path.is_dir() {
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if !name.starts_with('.') && name != "target" && name != "node_modules" {
+                collect_markdown_files(&path, files)?;
+            }
+        } else if path.extension().and_then(|e| e.to_str()) == Some("md") {
+            files.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn cmd_init(args: &[String]) -> Result<ExitCode, CliError> {
+    let pos = positionals(args);
+    let dir = pos.first().copied().unwrap_or(".");
+    let title = flag_value(args, "--title").unwrap_or("Knowledge Base");
+    let bare = has_flag(args, "--bare") || has_flag(args, "--no-sample");
+    let sample_name = flag_value(args, "--sample-name").unwrap_or("overview");
+    let author = flag_value(args, "--author").map(ToString::to_string);
+    let force = has_flag(args, "-f") || has_flag(args, "--force");
+
+    let options = BundleInitOptions {
+        title: title.to_string(),
+        create_sample: !bare,
+        sample_name: sample_name.to_string(),
+        author,
+        force,
+    };
+
+    let created = init_bundle(dir, &options)
+        .map_err(|e| CliError::data(format!("could not initialize bundle: {e}")))?;
+
+    println!("initialized OKF bundle at {dir}");
+    for p in &created {
+        println!("  created {}", p.display());
     }
     Ok(ExitCode::SUCCESS)
+}
+
+fn cmd_new(args: &[String]) -> Result<ExitCode, CliError> {
+    let pos = positionals(args);
+    if pos.is_empty() {
+        return Err(CliError::usage(
+            "missing concept path (usage: okf new <path> or okf new <bundle> <concept-id>)",
+        ));
+    }
+    let target_path = if pos.len() >= 2 {
+        Path::new(pos[0]).join(pos[1])
+    } else {
+        PathBuf::from(pos[0])
+    };
+
+    let type_ = flag_value(args, "--type").unwrap_or("Concept");
+    let title = flag_value(args, "--title").map(ToString::to_string);
+    let description = flag_value(args, "--description").map(ToString::to_string);
+    let author = flag_value(args, "--author").map(ToString::to_string);
+    let status = match flag_value(args, "--status") {
+        Some("stable") => crate::Status::Stable,
+        Some("deprecated") => crate::Status::Deprecated,
+        Some("draft") | None => crate::Status::Draft,
+        Some(other) => crate::Status::Other(other.to_string()),
+    };
+    let attested = has_flag(args, "--attested");
+    let force = has_flag(args, "-f") || has_flag(args, "--force");
+
+    let options = ConceptOptions {
+        type_: type_.to_string(),
+        title,
+        description,
+        status,
+        author,
+        attested,
+        tags: Vec::new(),
+        force,
+    };
+
+    let created = create_concept(&target_path, &options)
+        .map_err(|e| CliError::data(format!("could not create concept: {e}")))?;
+
+    println!("created concept at {}", created.display());
+    Ok(ExitCode::SUCCESS)
+}
+
+fn cmd_links(args: &[String]) -> Result<ExitCode, CliError> {
+    let path = positional(args, "<bundle>")?;
+    let bundle = load(path)?;
+    let broken_only = has_flag(args, "--broken");
+    let check = has_flag(args, "--check");
+    let show_external = has_flag(args, "--all") || has_flag(args, "--external");
+    let format = flag_value(args, "--format").unwrap_or("text");
+
+    match format {
+        "text" => Ok(print_links_text(&bundle, broken_only, show_external, check)),
+        "json" => Ok(print_links_json(&bundle, broken_only, show_external, check)),
+        other => Err(CliError::usage(format!(
+            "unknown --format: {other} (expected text|json)"
+        ))),
+    }
+}
+
+fn print_links_text(
+    bundle: &Bundle,
+    broken_only: bool,
+    show_external: bool,
+    check: bool,
+) -> ExitCode {
+    let broken = bundle.broken_links();
+
+    if broken_only {
+        if broken.is_empty() {
+            println!(
+                "✓ no broken links found ({} concept(s) checked)",
+                bundle.len()
+            );
+            return ExitCode::SUCCESS;
+        }
+        println!("broken links ({}):\n", broken.len());
+        for (source, raw) in &broken {
+            println!("  {source} -> {raw}");
+        }
+        return if check {
+            ExitCode::from(EX_DATAERR)
+        } else {
+            ExitCode::SUCCESS
+        };
+    }
+
+    let mut total_internal = 0;
+    let mut total_external = 0;
+
+    for c in bundle.concepts() {
+        let links = bundle.links_from(&c.id);
+        let doc_links = c.document.links();
+        let external_links: Vec<&Link> = doc_links
+            .iter()
+            .filter(|l| l.kind == crate::LinkKind::External)
+            .collect();
+
+        if links.is_empty() && (!show_external || external_links.is_empty()) {
+            continue;
+        }
+
+        println!("{}", c.id);
+        for link in links {
+            total_internal += 1;
+            if link.exists {
+                println!("  -> {} [ok]", link.target);
+            } else {
+                println!("  -x {} [broken: {}]", link.target, link.raw);
+            }
+        }
+        if show_external {
+            for ext in external_links {
+                total_external += 1;
+                println!("  => {} [external]", ext.target);
+            }
+        }
+    }
+
+    let broken_count = broken.len();
+    if show_external {
+        println!(
+            "\n{} internal link(s) ({} broken), {} external link(s) across {} concept(s).",
+            total_internal,
+            broken_count,
+            total_external,
+            bundle.len()
+        );
+    } else {
+        println!(
+            "\n{} internal link(s) ({} broken) across {} concept(s).",
+            total_internal,
+            broken_count,
+            bundle.len()
+        );
+    }
+
+    if check && broken_count > 0 {
+        ExitCode::from(EX_DATAERR)
+    } else {
+        ExitCode::SUCCESS
+    }
+}
+
+fn print_links_json(
+    bundle: &Bundle,
+    broken_only: bool,
+    show_external: bool,
+    check: bool,
+) -> ExitCode {
+    let broken = bundle.broken_links();
+    let broken_count = broken.len();
+
+    let mut out = String::new();
+    out.push_str("{\n");
+    let _ = writeln!(out, "  \"concepts_count\": {},", bundle.len());
+    let _ = writeln!(out, "  \"broken_count\": {broken_count},");
+    out.push_str("  \"concepts\": [\n");
+
+    let concepts = bundle.concepts();
+    let mut first_c = true;
+    for c in concepts {
+        let links = bundle.links_from(&c.id);
+        let doc_links = c.document.links();
+        let ext_links: Vec<&Link> = doc_links
+            .iter()
+            .filter(|l| l.kind == crate::LinkKind::External)
+            .collect();
+
+        if broken_only && !links.iter().any(|l| !l.exists) {
+            continue;
+        }
+
+        if !first_c {
+            out.push_str(",\n");
+        }
+        first_c = false;
+
+        let _ = writeln!(out, "    {{");
+        let _ = writeln!(out, "      \"id\": {},", json_str(&c.id.to_string()));
+        out.push_str("      \"links\": [");
+
+        let mut first_l = true;
+        for l in links {
+            if broken_only && l.exists {
+                continue;
+            }
+            if !first_l {
+                out.push(',');
+            }
+            first_l = false;
+            out.push('\n');
+            let _ = writeln!(out, "        {{");
+            let _ = writeln!(
+                out,
+                "          \"target\": {},",
+                json_str(&l.target.to_string())
+            );
+            let _ = writeln!(out, "          \"raw\": {},", json_str(&l.raw));
+            let _ = writeln!(out, "          \"exists\": {},", l.exists);
+            let _ = writeln!(out, "          \"kind\": \"internal\",");
+            let _ = writeln!(out, "          \"text\": {}", json_str(&l.text));
+            out.push_str("        }");
+        }
+
+        if show_external && !broken_only {
+            for ext in ext_links {
+                if !first_l {
+                    out.push(',');
+                }
+                first_l = false;
+                out.push('\n');
+                let _ = writeln!(out, "        {{");
+                let _ = writeln!(out, "          \"target\": {},", json_str(&ext.target));
+                let _ = writeln!(out, "          \"raw\": {},", json_str(&ext.target));
+                let _ = writeln!(out, "          \"exists\": true,");
+                let _ = writeln!(out, "          \"kind\": \"external\",");
+                let _ = writeln!(out, "          \"text\": {}", json_str(&ext.text));
+                out.push_str("        }");
+            }
+        }
+
+        if first_l {
+            out.push_str("]\n");
+        } else {
+            out.push('\n');
+            out.push_str("      ]\n");
+        }
+        out.push_str("    }");
+    }
+    out.push_str("\n  ]\n}\n");
+    print!("{out}");
+
+    if check && broken_count > 0 {
+        ExitCode::from(EX_DATAERR)
+    } else {
+        ExitCode::SUCCESS
+    }
 }
 
 fn cmd_diff(args: &[String]) -> Result<ExitCode, CliError> {

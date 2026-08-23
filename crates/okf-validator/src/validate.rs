@@ -515,9 +515,7 @@ fn check_legacy(cx: &mut Context, doc: &Document) {
         }
     }
     if doc.has_legacy_citations() {
-        cx.warn(
-            "the body `# Citations` list is superseded by the `sources` frontmatter field",
-        );
+        cx.warn("the body `# Citations` list is superseded by the `sources` frontmatter field");
     }
 }
 
@@ -553,7 +551,9 @@ fn check_computation(cx: &mut Context, doc: &Document) {
     };
 
     if contract.runtime.is_none() {
-        cx.warn("`runtime` is required on an `Attested Computation`; it defines what `parameters` mean");
+        cx.warn(
+            "`runtime` is required on an `Attested Computation`; it defines what `parameters` mean",
+        );
     }
     match &contract.computation {
         ComputationSource::Missing => cx.warn(
@@ -578,9 +578,7 @@ fn check_computation(cx: &mut Context, doc: &Document) {
         None => cx.warn("missing `executor`: nothing says how to run the computation"),
         Some(executor) => {
             if executor.resource.is_none() {
-                cx.warn(
-                    "`executor.resource` is missing; it names the run instructions or code",
-                );
+                cx.warn("`executor.resource` is missing; it names the run instructions or code");
             }
             if executor.receipt.is_empty() {
                 cx.warn(

@@ -13,24 +13,35 @@
 //! is why `okf lint` is a separate command rather than a stricter
 //! `okf validate`.
 //!
-//! | Code | Severity | Finding                                                   |
-//! |------|----------|-----------------------------------------------------------|
-//! | L1   | warning  | missing `title`                                           |
-//! | L2   | warning  | missing `description`                                     |
-//! | L3   | warning  | missing `generated` (and no legacy `timestamp`)           |
-//! | L4   | info     | no `verified` events, trust tier is `unverified`          |
-//! | L5   | warning  | legacy v0.1 `timestamp` present                           |
-//! | L6   | warning  | legacy v0.1 body `# Citations` list present               |
-//! | L7   | warning  | body is empty                                             |
-//! | L8   | warning  | body has no top-level `#` heading                         |
-//! | L9   | warning  | latest `verified.at` predates `generated.at`              |
-//! | L10  | warning  | links to a `status: deprecated` concept                   |
-//! | L11  | warning  | past `stale_after` (with `--today`)                       |
-//! | L12  | info     | `status: draft`                                           |
-//! | L13  | info     | self-link                                                 |
-//! | L14  | warning  | `title` shared with another concept                       |
-//! | L15  | warning  | orphan: no inbound links and not listed in any `index.md` |
-//! | L16  | warning  | an existing `index.md` is out of sync with its directory  |
+//! | Code | Severity | Finding                                                            |
+//! |------|----------|--------------------------------------------------------------------|
+//! | L1   | warning  | missing `title`                                                    |
+//! | L2   | warning  | missing `description`                                              |
+//! | L3   | warning  | missing `generated` (and no legacy `timestamp`)                    |
+//! | L4   | info     | no `verified` events, trust tier is `unverified`                   |
+//! | L5   | warning  | legacy v0.1 `timestamp` present                                    |
+//! | L6   | warning  | legacy v0.1 body `# Citations` list present                        |
+//! | L7   | warning  | body is empty                                                      |
+//! | L8   | warning  | body has no top-level `#` heading                                  |
+//! | L9   | warning  | latest `verified.at` predates `generated.at`                       |
+//! | L10  | warning  | links to a `status: deprecated` concept                            |
+//! | L11  | warning  | past `stale_after` (with `--today`)                                |
+//! | L12  | info     | `status: draft`                                                    |
+//! | L13  | info     | self-link                                                          |
+//! | L14  | warning  | `title` shared with another concept                                |
+//! | L15  | warning  | orphan: no inbound links and not listed in any `index.md`          |
+//! | L16  | warning  | an existing `index.md` is out of sync with its directory           |
+//! | L17  | warning  | broken link to a concept that does not exist                       |
+//! | L18  | info     | frontmatter keys not in canonical preferred order                  |
+//! | L19  | warning  | heading hierarchy drift (heading levels skipped or multiple `#`)   |
+//! | L20  | warning  | empty / stub section heading with no content                       |
+//! | L21  | info     | source declared in frontmatter but never cited with footnote       |
+//! | L22  | warning  | circular concept derivation in sources graph                       |
+//! | L23  | info     | non-standard actor identity in generated, verified, or author      |
+//! | L24  | warning  | timestamp in generated, verified, or sources is in the future      |
+//! | L25  | warning  | `executor`, `attester`, or `computation` resource missing on disk  |
+//! | L26  | warning  | `# Computation` code block missing language tag                    |
+//! | L27  | warning  | duplicate date heading in `log.md`                                 |
 
 use crate::validate::{Diagnostic, Report, Severity};
 use okf_core::bundle::Bundle;
@@ -81,11 +92,22 @@ pub fn lint_bundle_at(bundle: &Bundle, today: Option<Date>) -> Report {
         check_staleness(&mut cx, fm, today);
         check_draft_status(&mut cx, fm);
         check_self_link(&mut cx, bundle);
+        check_broken_links(&mut cx, bundle);
         check_duplicate_title(&mut cx, fm, &title_counts);
+        check_key_order(&mut cx, fm);
+        check_heading_hierarchy(&mut cx, doc);
+        check_empty_headings(&mut cx, doc);
+        check_unused_sources(&mut cx, doc);
+        check_non_standard_actor(&mut cx, fm);
+        check_future_timestamps(&mut cx, fm, today);
+        check_attestation_resources(&mut cx, bundle, doc);
+        check_computation_block_formatting(&mut cx, doc);
     }
 
     check_orphans(bundle, &indexed, &mut report);
     check_stale_indexes(bundle, &mut report);
+    check_circular_derivation(bundle, &mut report);
+    check_duplicate_log_dates(bundle, &mut report);
 
     report
 }
@@ -368,6 +390,20 @@ fn check_self_link(cx: &mut Cx, bundle: &Bundle) {
     }
 }
 
+fn check_broken_links(cx: &mut Cx, bundle: &Bundle) {
+    for link in bundle.links_from(&cx.id) {
+        if !link.exists {
+            cx.warn(
+                "L17",
+                format!(
+                    "broken link to `{}` (target concept does not exist)",
+                    link.raw
+                ),
+            );
+        }
+    }
+}
+
 fn check_duplicate_title(cx: &mut Cx, fm: &Frontmatter, counts: &HashMap<String, usize>) {
     let Some(title) = fm.title() else {
         return;
@@ -467,5 +503,381 @@ fn check_stale_indexes(bundle: &Bundle, report: &mut Report) {
                 parts.join("; ")
             ),
         });
+    }
+}
+
+fn check_key_order(cx: &mut Cx, fm: &Frontmatter) {
+    let keys: Vec<&str> = fm.as_mapping().keys().collect();
+    if keys.len() < 2 {
+        return;
+    }
+    let mut last_rank = None;
+    for key in keys {
+        if let Some(rank) = okf_core::frontmatter::PREFERRED_KEY_ORDER
+            .iter()
+            .position(|&k| k == key)
+        {
+            if let Some(prev) = last_rank
+                && rank < prev
+            {
+                cx.info(
+                    "L18",
+                    "frontmatter keys are not in canonical order (run `okf fmt` to normalize)",
+                );
+                return;
+            }
+            last_rank = Some(rank);
+        }
+    }
+}
+
+struct MarkdownHeading<'a> {
+    level: usize,
+    text: &'a str,
+    line_num: usize,
+}
+
+fn parse_heading_line(line: &str) -> Option<(usize, &str)> {
+    let t = line.trim_start();
+    if !t.starts_with('#') {
+        return None;
+    }
+    let count = t.chars().take_while(|&c| c == '#').count();
+    if (1..=6).contains(&count) && t[count..].starts_with(' ') {
+        Some((count, t[count..].trim()))
+    } else {
+        None
+    }
+}
+
+fn parse_markdown_headings(body: &str) -> Vec<MarkdownHeading<'_>> {
+    let mut headings = Vec::new();
+    let mut in_code_block = false;
+
+    for (i, line) in body.lines().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            in_code_block = !in_code_block;
+            continue;
+        }
+        if in_code_block {
+            continue;
+        }
+        if let Some((level, text)) = parse_heading_line(trimmed) {
+            headings.push(MarkdownHeading {
+                level,
+                text,
+                line_num: i + 1,
+            });
+        }
+    }
+    headings
+}
+
+fn check_heading_hierarchy(cx: &mut Cx, doc: &Document) {
+    let headings = parse_markdown_headings(&doc.body);
+    if headings.is_empty() {
+        return;
+    }
+
+    let is_attested = doc.frontmatter.is_attested_computation();
+    let mut h1_count = 0;
+    let mut prev_level = 0;
+
+    for h in &headings {
+        if h.level == 1 {
+            h1_count += 1;
+            if h1_count > 1 && !(is_attested && h1_count == 2 && h.text == "Computation") {
+                cx.warn(
+                    "L19",
+                    format!(
+                        "multiple top-level `#` headings found (heading `{}` at line {})",
+                        h.text, h.line_num
+                    ),
+                );
+            }
+        }
+
+        if prev_level > 0 && h.level > prev_level + 1 {
+            cx.warn(
+                "L19",
+                format!(
+                    "heading level skipped: `{}` jumps from h{prev_level} to h{}",
+                    h.text, h.level
+                ),
+            );
+        }
+        prev_level = h.level;
+    }
+}
+
+fn check_empty_headings(cx: &mut Cx, doc: &Document) {
+    let lines: Vec<&str> = doc.body.lines().collect();
+    let mut in_code_block = false;
+
+    let mut headings_with_line: Vec<(usize, usize, &str)> = Vec::new();
+    for (i, line) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            in_code_block = !in_code_block;
+            continue;
+        }
+        if in_code_block {
+            continue;
+        }
+        if let Some((level, text)) = parse_heading_line(trimmed) {
+            headings_with_line.push((i, level, text));
+        }
+    }
+
+    for (k, &(line_idx, level, text)) in headings_with_line.iter().enumerate() {
+        let next_heading = headings_with_line
+            .get(k + 1)
+            .map(|&(next_idx, next_level, _)| (next_idx, next_level));
+
+        let content_end = match next_heading {
+            Some((next_idx, next_level)) => {
+                if next_level > level {
+                    continue;
+                }
+                next_idx
+            }
+            None => lines.len(),
+        };
+
+        let has_content = (line_idx + 1..content_end).any(|idx| {
+            let l = lines[idx].trim();
+            !l.is_empty() && !l.starts_with("<!--")
+        });
+
+        if !has_content {
+            cx.warn("L20", format!("heading `{text}` has no content"));
+        }
+    }
+}
+
+fn check_unused_sources(cx: &mut Cx, doc: &Document) {
+    let sources = doc.frontmatter.sources();
+    if sources.is_empty() {
+        return;
+    }
+    let attributions = doc.attributions();
+    for source in sources {
+        if let Some(id) = &source.id {
+            let is_cited = attributions.iter().any(|a| a.label == *id)
+                || doc.body.contains(&format!("[^{id}]"));
+            if !is_cited {
+                cx.info(
+                    "L21",
+                    format!(
+                        "source `{id}` is declared in frontmatter but never cited with footnote `[^{id}]`",
+                    ),
+                );
+            }
+        }
+    }
+}
+
+fn check_circular_derivation(bundle: &Bundle, report: &mut Report) {
+    let mut warned: BTreeSet<ConceptId> = BTreeSet::new();
+
+    for concept in bundle.concepts() {
+        if warned.contains(&concept.id) {
+            continue;
+        }
+        let mut path = Vec::new();
+        let mut visited = BTreeSet::new();
+
+        if find_derivation_cycle(bundle, &concept.id, &mut path, &mut visited) {
+            for id in &path {
+                warned.insert(id.clone());
+            }
+            let cycle_str: Vec<String> = path.iter().map(ToString::to_string).collect();
+            report.diagnostics.push(Diagnostic {
+                severity: Severity::Warning,
+                path: Some(concept.path.clone()),
+                concept: Some(concept.id.clone()),
+                message: format!(
+                    "[L22] circular concept derivation: {}",
+                    cycle_str.join(" ~> ")
+                ),
+            });
+        }
+    }
+}
+
+fn find_derivation_cycle(
+    bundle: &Bundle,
+    current: &ConceptId,
+    path: &mut Vec<ConceptId>,
+    visited: &mut BTreeSet<ConceptId>,
+) -> bool {
+    path.push(current.clone());
+    visited.insert(current.clone());
+
+    for next in bundle.derived_from(current) {
+        if path.first() == Some(next) || path.contains(next) {
+            path.push((*next).clone());
+            return true;
+        }
+        if !visited.contains(next) && find_derivation_cycle(bundle, next, path, visited) {
+            return true;
+        }
+    }
+
+    path.pop();
+    false
+}
+
+fn check_non_standard_actor(cx: &mut Cx, fm: &Frontmatter) {
+    if let Some(generated) = fm.generated()
+        && let Some(by) = &generated.by
+        && matches!(by.kind(), okf_core::ActorKind::Other)
+    {
+        cx.info(
+            "L23",
+            format!(
+                "actor `{by}` in `generated.by` does not follow the standard `human:<id>`, `process:<id>`, or `<producer>/<version>` convention"
+            ),
+        );
+    }
+    for verification in fm.verified() {
+        if let Some(by) = &verification.by
+            && matches!(by.kind(), okf_core::ActorKind::Other)
+        {
+            cx.info(
+                "L23",
+                format!(
+                    "actor `{by}` in `verified.by` does not follow the standard `human:<id>`, `process:<id>`, or `<producer>/<version>` convention"
+                ),
+            );
+        }
+    }
+    for source in fm.sources() {
+        if let Some(author) = &source.author
+            && matches!(author.kind(), okf_core::ActorKind::Other)
+        {
+            cx.info(
+                "L23",
+                format!(
+                    "author `{author}` in `sources.author` does not follow the standard `human:<id>`, `process:<id>`, or `<producer>/<version>` convention"
+                ),
+            );
+        }
+    }
+}
+
+fn check_future_timestamps(cx: &mut Cx, fm: &Frontmatter, today: Option<Date>) {
+    let check_date = today.or_else(Date::today_utc);
+    let Some(check_date) = check_date else {
+        return;
+    };
+    let threshold_seconds = (check_date.days_since_epoch() + 1) * 86_400;
+
+    if let Some(generated) = fm.generated()
+        && let Some(dt) = generated.at.as_ref().and_then(|a| a.datetime)
+        && dt.to_utc_seconds() > threshold_seconds
+    {
+        cx.warn(
+            "L24",
+            format!("`generated.at` timestamp `{dt}` is in the future"),
+        );
+    }
+    for verification in fm.verified() {
+        if let Some(dt) = verification.at.as_ref().and_then(|a| a.datetime)
+            && dt.to_utc_seconds() > threshold_seconds
+        {
+            cx.warn(
+                "L24",
+                format!("`verified.at` timestamp `{dt}` is in the future"),
+            );
+        }
+    }
+    for source in fm.sources() {
+        if let Some(dt) = source.last_modified.as_ref().and_then(|a| a.datetime)
+            && dt.to_utc_seconds() > threshold_seconds
+        {
+            cx.warn(
+                "L24",
+                format!("`sources.last_modified` timestamp `{dt}` is in the future"),
+            );
+        }
+    }
+}
+
+fn check_attestation_resources(cx: &mut Cx, bundle: &Bundle, doc: &Document) {
+    let Some(contract) = doc.attested_computation() else {
+        return;
+    };
+    if let Some(executor) = &contract.executor
+        && let Some(res) = &executor.resource
+        && !res.starts_with("http://")
+        && !res.starts_with("https://")
+        && bundle.resolve_path_field(&cx.id, res).is_none()
+    {
+        cx.warn(
+            "L25",
+            format!("`executor.resource` points to `{res}` which does not exist on disk"),
+        );
+    }
+    if let Some(attester) = &contract.attester
+        && let Some(res) = &attester.resource
+        && !res.starts_with("http://")
+        && !res.starts_with("https://")
+        && bundle.resolve_path_field(&cx.id, res).is_none()
+    {
+        cx.warn(
+            "L25",
+            format!("`attester.resource` points to `{res}` which does not exist on disk"),
+        );
+    }
+    if let okf_core::computation::ComputationSource::File(path) = &contract.computation
+        && !path.starts_with("http://")
+        && !path.starts_with("https://")
+        && bundle.resolve_path_field(&cx.id, path).is_none()
+    {
+        cx.warn(
+            "L25",
+            format!("`computation` file `{path}` does not exist on disk"),
+        );
+    }
+}
+
+fn check_computation_block_formatting(cx: &mut Cx, doc: &Document) {
+    let Some(contract) = doc.attested_computation() else {
+        return;
+    };
+    if let okf_core::computation::ComputationSource::Inline(inline) = &contract.computation
+        && inline.language.is_none()
+    {
+        cx.warn(
+            "L26",
+            "`# Computation` code block is missing a syntax language tag (e.g. ` ```python ` or ` ```sql `)",
+        );
+    }
+}
+
+fn check_duplicate_log_dates(bundle: &Bundle, report: &mut Report) {
+    for log_path in bundle.log_files() {
+        let Ok(text) = fs::read_to_string(log_path) else {
+            continue;
+        };
+        let log = okf_core::log::Log::parse(&text);
+        let mut seen = HashMap::new();
+        for day in &log.days {
+            *seen.entry(day.date.clone()).or_insert(0) += 1;
+        }
+        for (date, count) in seen {
+            if count > 1 {
+                report.diagnostics.push(Diagnostic {
+                    severity: Severity::Warning,
+                    path: Some(log_path.clone()),
+                    concept: None,
+                    message: format!(
+                        "[L27] log.md contains duplicate date heading `## {date}` (entries should be grouped under a single heading)"
+                    ),
+                });
+            }
+        }
     }
 }

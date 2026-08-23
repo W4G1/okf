@@ -503,3 +503,209 @@ fn l16_ignores_absolute_links_pointing_elsewhere() {
         report.diagnostics
     );
 }
+
+#[test]
+fn l17_broken_link() {
+    let tmp = TempDir::new();
+    tmp.write(
+        "a.md",
+        "---\ntype: Metric\ntitle: A\ndescription: d\n\
+         generated: { by: ref/x, at: 2026-06-20T22:53:05Z }\n\
+         verified: { by: human:a, at: 2026-06-25T09:00:00Z }\n\
+         ---\n\n# Definition\n\nLink to [nonexistent](ghost.md).\n",
+    );
+    tmp.write("index.md", "# Metric\n\n* [A](a.md)\n");
+    let bundle = Bundle::load(tmp.path()).unwrap();
+    let report = lint_bundle(&bundle);
+    assert!(
+        has(&report, "L17"),
+        "broken link to ghost.md should trigger L17 warning: {:#?}",
+        report.diagnostics
+    );
+}
+
+#[test]
+fn l18_key_order() {
+    let tmp = TempDir::new();
+    // description before title is non-canonical order
+    tmp.write(
+        "metric.md",
+        "---\ntype: Metric\ndescription: Recognized revenue.\ntitle: Revenue\n\
+         generated: { by: ref/x, at: 2026-06-20T22:53:05Z }\n\
+         verified: { by: human:a, at: 2026-06-25T09:00:00Z }\n\
+         ---\n\n# Definition\n\nProse.\n",
+    );
+    tmp.write("index.md", "# Metric\n\n* [Revenue](metric.md)\n");
+    let bundle = Bundle::load(tmp.path()).unwrap();
+    let report = lint_bundle(&bundle);
+    assert!(
+        has(&report, "L18"),
+        "expected L18 for non-canonical key order"
+    );
+}
+
+#[test]
+fn l19_heading_hierarchy() {
+    let tmp = TempDir::new();
+    // Skips from h1 to h3
+    tmp.write(
+        "metric.md",
+        "---\ntype: Metric\ntitle: Revenue\ndescription: Recognized revenue.\n\
+         generated: { by: ref/x, at: 2026-06-20T22:53:05Z }\n\
+         verified: { by: human:a, at: 2026-06-25T09:00:00Z }\n\
+         ---\n\n# Definition\n\n### Skipped to H3\n\nProse.\n",
+    );
+    tmp.write("index.md", "# Metric\n\n* [Revenue](metric.md)\n");
+    let bundle = Bundle::load(tmp.path()).unwrap();
+    let report = lint_bundle(&bundle);
+    assert!(has(&report, "L19"), "expected L19 for heading level skip");
+}
+
+#[test]
+fn l20_empty_heading() {
+    let tmp = TempDir::new();
+    // Heading with no content
+    tmp.write(
+        "metric.md",
+        "---\ntype: Metric\ntitle: Revenue\ndescription: Recognized revenue.\n\
+         generated: { by: ref/x, at: 2026-06-20T22:53:05Z }\n\
+         verified: { by: human:a, at: 2026-06-25T09:00:00Z }\n\
+         ---\n\n# Definition\n\n## Empty Section\n\n## Next Section\n\nProse.\n",
+    );
+    tmp.write("index.md", "# Metric\n\n* [Revenue](metric.md)\n");
+    let bundle = Bundle::load(tmp.path()).unwrap();
+    let report = lint_bundle(&bundle);
+    assert!(has(&report, "L20"), "expected L20 for empty heading stub");
+}
+
+#[test]
+fn l21_unused_source() {
+    let tmp = TempDir::new();
+    tmp.write(
+        "metric.md",
+        "---\ntype: Metric\ntitle: Revenue\ndescription: Recognized revenue.\n\
+         generated: { by: ref/x, at: 2026-06-20T22:53:05Z }\n\
+         verified: { by: human:a, at: 2026-06-25T09:00:00Z }\n\
+         sources:\n  - { id: sec-10k, resource: 'https://sec.gov' }\n\
+         ---\n\n# Definition\n\nProse with no footnote.\n",
+    );
+    tmp.write("index.md", "# Metric\n\n* [Revenue](metric.md)\n");
+    let bundle = Bundle::load(tmp.path()).unwrap();
+    let report = lint_bundle(&bundle);
+    assert!(has(&report, "L21"), "expected L21 for uncited source");
+}
+
+#[test]
+fn l22_circular_derivation() {
+    let tmp = TempDir::new();
+    tmp.write(
+        "a.md",
+        "---\ntype: Metric\ntitle: A\ndescription: d\n\
+         generated: { by: ref/x, at: 2026-06-20T22:53:05Z }\n\
+         verified: { by: human:a, at: 2026-06-25T09:00:00Z }\n\
+         sources:\n  - { resource: b.md }\n\
+         ---\n\n# Definition\n\nSee [B](b.md).\n",
+    );
+    tmp.write(
+        "b.md",
+        "---\ntype: Metric\ntitle: B\ndescription: d\n\
+         generated: { by: ref/x, at: 2026-06-20T22:53:05Z }\n\
+         verified: { by: human:a, at: 2026-06-25T09:00:00Z }\n\
+         sources:\n  - { resource: a.md }\n\
+         ---\n\n# Definition\n\nSee [A](a.md).\n",
+    );
+    tmp.write("index.md", "# Metric\n\n* [A](a.md)\n* [B](b.md)\n");
+    let bundle = Bundle::load(tmp.path()).unwrap();
+    let report = lint_bundle(&bundle);
+    assert!(has(&report, "L22"), "expected L22 for circular derivation");
+}
+
+#[test]
+fn l23_non_standard_actor() {
+    let tmp = TempDir::new();
+    tmp.write(
+        "metric.md",
+        "---\ntype: Metric\ntitle: Revenue\ndescription: d\n\
+         generated: { by: 'Alice Baker', at: 2026-06-20T22:53:05Z }\n\
+         verified: { by: human:ahormati, at: 2026-06-25T09:00:00Z }\n\
+         ---\n\n# Definition\n\nProse.\n",
+    );
+    tmp.write("index.md", "# Metric\n\n* [Revenue](metric.md)\n");
+    let bundle = Bundle::load(tmp.path()).unwrap();
+    let report = lint_bundle(&bundle);
+    assert!(has(&report, "L23"), "expected L23 for non-standard actor");
+}
+
+#[test]
+fn l24_future_timestamp() {
+    let tmp = TempDir::new();
+    tmp.write(
+        "metric.md",
+        "---\ntype: Metric\ntitle: Revenue\ndescription: d\n\
+         generated: { by: ref/x, at: 2099-01-01T00:00:00Z }\n\
+         verified: { by: human:a, at: 2026-06-25T09:00:00Z }\n\
+         ---\n\n# Definition\n\nProse.\n",
+    );
+    tmp.write("index.md", "# Metric\n\n* [Revenue](metric.md)\n");
+    let bundle = Bundle::load(tmp.path()).unwrap();
+    let today = Date::parse("2026-07-01").unwrap();
+    let report = lint_bundle_at(&bundle, Some(today));
+    assert!(has(&report, "L24"), "expected L24 for future timestamp");
+}
+
+#[test]
+fn l25_missing_attestation_resource() {
+    let tmp = TempDir::new();
+    tmp.write(
+        "comp.md",
+        "---\ntype: Attested Computation\ntitle: Calc\ndescription: d\n\
+         generated: { by: ref/x, at: 2026-06-20T22:53:05Z }\n\
+         verified: { by: human:a, at: 2026-06-25T09:00:00Z }\n\
+         runtime: python\n\
+         parameters:\n  - { name: x, type: string }\n\
+         executor:\n  resource: non_existent_script.py\n  receipt: [res]\n\
+         attester:\n  resource: non_existent_verifier.py\n\
+         ---\n\n# Calc\n\n# Computation\n\n```python\nx = 1\n```\n",
+    );
+    tmp.write("index.md", "# Attested Computation\n\n* [Calc](comp.md)\n");
+    let bundle = Bundle::load(tmp.path()).unwrap();
+    let report = lint_bundle(&bundle);
+    assert!(
+        has(&report, "L25"),
+        "expected L25 for missing resource on disk"
+    );
+}
+
+#[test]
+fn l26_unlabeled_computation_block() {
+    let tmp = TempDir::new();
+    tmp.write(
+        "comp.md",
+        "---\ntype: Attested Computation\ntitle: Calc\ndescription: d\n\
+         generated: { by: ref/x, at: 2026-06-20T22:53:05Z }\n\
+         verified: { by: human:a, at: 2026-06-25T09:00:00Z }\n\
+         runtime: python\n\
+         parameters:\n  - { name: x, type: string }\n\
+         executor:\n  resource: 'https://example.com/exec'\n  receipt: [res]\n\
+         attester:\n  resource: 'https://example.com/attest'\n\
+         ---\n\n# Calc\n\n# Computation\n\n```\nx = 1\n```\n",
+    );
+    tmp.write("index.md", "# Attested Computation\n\n* [Calc](comp.md)\n");
+    let bundle = Bundle::load(tmp.path()).unwrap();
+    let report = lint_bundle(&bundle);
+    assert!(has(&report, "L26"), "expected L26 for unlabeled code block");
+}
+
+#[test]
+fn l27_duplicate_log_date() {
+    let tmp = TempDir::new();
+    tmp.write("metric.md", MIN_CONCEPT);
+    tmp.write("index.md", "# Metric\n\n* [Revenue](metric.md)\n");
+    tmp.write(
+        "log.md",
+        "# Update Log\n\n## 2026-05-22\n* **Update**: First.\n\n## 2026-05-22\n* **Update**: Duplicate date.\n",
+    );
+    let bundle = Bundle::load(tmp.path()).unwrap();
+    let report = lint_bundle(&bundle);
+    assert!(has(&report, "L27"), "expected L27 for duplicate log date");
+}

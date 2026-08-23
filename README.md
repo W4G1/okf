@@ -20,13 +20,13 @@ as a directory of markdown files with YAML metadata.
 
 This repository is a workspace of three crates:
 
+- [`okf`](https://crates.io/crates/okf): the `okf` command-line tool, which
+  also re-exports the entire `okf-core` and `okf-validator` API, so depending
+  on `okf` alone gives you everything.
 - [`okf-core`](https://crates.io/crates/okf-core): the library implementing the
   OKF specification (parser, model, link graph, index/log tooling).
 - [`okf-validator`](https://crates.io/crates/okf-validator): conformance
   validation and opinionated linting, built on `okf-core`.
-- [`okf`](https://crates.io/crates/okf): the `okf` command-line tool, which
-  also re-exports the entire `okf-core` and `okf-validator` API, so depending
-  on `okf` alone gives you everything.
 
 Install the CLI from [crates.io](https://crates.io/crates/okf):
 
@@ -70,15 +70,18 @@ you can read OKF.
 ### As a CLI
 
 ```text
+okf init         [dir]       Initialize a new OKF bundle (--title, --bare)
+okf new          <path>      Create a new concept document (--type, --title, --attested)
 okf validate     <bundle>    Check a bundle against OKF v0.2 conformance
 okf lint         <bundle>    Opinionated bundle health and hygiene checks
 okf info         <bundle>    Summarize a bundle (concepts, types, trust, links)
 okf trust        <bundle>    Report trust tier, status, and staleness per concept
+okf links        <bundle>    Inspect internal, broken, and external cross-links
 okf computations <bundle>    List Attested Computation contracts
 okf index        <bundle>    (Re)generate every index.md in the bundle
 okf graph        <bundle>    Print the cross-link graph (--format text|mermaid|json)
 okf parse        <file>      Parse one concept document and print its structure
-okf fmt          <file>      Normalize a document by parse + re-serialize (-w writes)
+okf fmt          <path>      Normalize document(s) by parse + re-serialize (-w writes)
 okf diff         <a> <b>     OKF-semantics diff between two bundles
 ```
 
@@ -223,24 +226,25 @@ concerns.
 
 ## Library overview
 
-| Module          | Responsibility                                                        |
-|-----------------|-----------------------------------------------------------------------|
+| Module          | Responsibility                                                         |
+|-----------------|------------------------------------------------------------------------|
 | [`yaml`]        | A YAML-*subset* `Value`/`Mapping`, parser, and emitter for frontmatter |
-| [`document`]    | `Document` = frontmatter + body; parse / serialize / validate         |
-| [`frontmatter`] | `Frontmatter`: typed accessors over an order-preserving mapping       |
-| [`concept_id`]  | `ConceptId` to/from path conversion and segment rules                 |
-| [`provenance`]  | `sources`, credibility signals, and footnote attribution              |
-| [`trust`]       | `generated`, `verified`, trust tiers, `status`, `stale_after`         |
-| [`actor`]       | The `human:` / `process:` / `<producer>/<version>` convention         |
-| [`date`]        | `Date`/`DateTime` parsing and comparison for the date-valued fields   |
-| [`computation`] | The Attested Computation contract and its `# Computation` block      |
-| [`footnotes`]   | `[^label]` reference and definition scanning                          |
-| [`links`]       | Markdown link extraction, classification, path-valued fields          |
-| [`bundle`]      | `Bundle::load`: walk a tree, build the link and derivation graphs     |
-| [`index`]       | Generate `index.md` directory listings                                |
-| [`log`]         | Parse / build `log.md` update histories                               |
-| [`validate`]    | Conformance checking with severity-tagged diagnostics                 |
-| [`lint`]        | Opinionated bundle health checks beyond conformance                   |
+| [`document`]    | `Document` = frontmatter + body; parse / serialize / validate          |
+| [`frontmatter`] | `Frontmatter`: typed accessors over an order-preserving mapping        |
+| [`concept_id`]  | `ConceptId` to/from path conversion and segment rules                  |
+| [`provenance`]  | `sources`, credibility signals, and footnote attribution               |
+| [`trust`]       | `generated`, `verified`, trust tiers, `status`, `stale_after`          |
+| [`actor`]       | The `human:` / `process:` / `<producer>/<version>` convention          |
+| [`date`]        | `Date`/`DateTime` parsing and comparison for the date-valued fields    |
+| [`computation`] | The Attested Computation contract and its `# Computation` block        |
+| [`footnotes`]   | `[^label]` reference and definition scanning                           |
+| [`links`]       | Markdown link extraction, classification, path-valued fields           |
+| [`bundle`]      | `Bundle::load`: walk a tree, build the link and derivation graphs      |
+| [`scaffold`]    | Scaffold new bundles (`init_bundle`) and concepts (`create_concept`)  |
+| [`index`]       | Generate `index.md` directory listings                                 |
+| [`log`]         | Parse / build `log.md` update histories                                |
+| [`validate`]    | Conformance checking with severity-tagged diagnostics                  |
+| [`lint`]        | Opinionated bundle health checks beyond conformance                    |
 
 The core split mirrors the reference Python implementation's `bundle/` package
 (`document.py`, `index.py`, `paths.py`, `synthesizer.py`) so behaviour stays
@@ -337,6 +341,7 @@ Google.
 [`footnotes`]: https://docs.rs/okf/latest/okf/footnotes/
 [`links`]: https://docs.rs/okf/latest/okf/links/
 [`bundle`]: https://docs.rs/okf/latest/okf/bundle/
+[`scaffold`]: https://docs.rs/okf/latest/okf/scaffold/
 [`index`]: https://docs.rs/okf/latest/okf/index/
 [`log`]: https://docs.rs/okf/latest/okf/log/
 [`lint`]: https://docs.rs/okf/latest/okf/lint/

@@ -106,6 +106,7 @@ pub mod index;
 pub mod links;
 pub mod log;
 pub mod provenance;
+pub mod scaffold;
 pub mod trust;
 pub mod yaml;
 
@@ -151,6 +152,10 @@ pub use links::{Citation, Link, LinkKind};
 pub use log::Log;
 #[doc(inline)]
 pub use provenance::{Attribution, ResourceKind, Source, UsageWindow};
+#[doc(inline)]
+pub use scaffold::{
+    BundleInitOptions, ConceptOptions, create_concept, default_author, init_bundle,
+};
 #[doc(inline)]
 pub use trust::{Generated, Status, TrustTier, Verification};
 #[doc(inline)]
