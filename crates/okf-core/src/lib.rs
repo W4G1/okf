@@ -100,6 +100,7 @@ pub mod date;
 pub mod diff;
 pub mod document;
 pub mod error;
+pub mod fix;
 pub mod footnotes;
 pub mod frontmatter;
 pub mod index;
@@ -139,6 +140,11 @@ pub use diff::{BundleDiff, FrontmatterChange, Rename, TrustChange, bundle_diff};
 pub use document::Document;
 #[doc(inline)]
 pub use error::{BundleError, DocumentError};
+#[doc(inline)]
+pub use fix::{
+    BundleFixReport, FileFixReport, FixOptions, Remediation, RemediationKind, remediate_bundle,
+    remediate_document, remediate_file, remediate_log,
+};
 #[doc(inline)]
 pub use footnotes::{FootnoteDef, FootnoteRef};
 #[doc(inline)]

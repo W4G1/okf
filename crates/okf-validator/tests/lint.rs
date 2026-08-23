@@ -709,3 +709,34 @@ fn l27_duplicate_log_date() {
     let report = lint_bundle(&bundle);
     assert!(has(&report, "L27"), "expected L27 for duplicate log date");
 }
+
+#[test]
+fn l28_trailing_and_excess_whitespace() {
+    let tmp = TempDir::new();
+    // Test case 1: trailing whitespace on line "sometext    \n"
+    tmp.write(
+        "t1.md",
+        "---\ntype: Concept\ntitle: T1\ndescription: d\ngenerated:\n  by: ref/x\n  at: 2026-01-01T00:00:00Z\n---\n\n# T1\n\nsometext    \n",
+    );
+    // Test case 2: trailing whitespace and trailing whitespace-only line "sometext    \n    "
+    tmp.write(
+        "t2.md",
+        "---\ntype: Concept\ntitle: T2\ndescription: d\ngenerated:\n  by: ref/x\n  at: 2026-01-01T00:00:00Z\n---\n\n# T2\n\nsometext    \n    ",
+    );
+    // Test case 3: excess consecutive blank lines
+    tmp.write(
+        "t3.md",
+        "---\ntype: Concept\ntitle: T3\ndescription: d\ngenerated:\n  by: ref/x\n  at: 2026-01-01T00:00:00Z\n---\n\n# T3\n\n\n\n\nsometext\n",
+    );
+    tmp.write(
+        "index.md",
+        "# Concepts\n\n* [T1](t1.md)\n* [T2](t2.md)\n* [T3](t3.md)\n",
+    );
+
+    let bundle = Bundle::load(tmp.path()).unwrap();
+    let report = lint_bundle(&bundle);
+    assert!(
+        has(&report, "L28"),
+        "expected L28 for trailing whitespace and excess blank lines"
+    );
+}

@@ -52,7 +52,7 @@ impl std::fmt::Display for Severity {
 }
 
 /// A single finding about a bundle.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Diagnostic {
     /// How serious the finding is.
     pub severity: Severity,
@@ -62,6 +62,8 @@ pub struct Diagnostic {
     pub concept: Option<ConceptId>,
     /// A human-readable message.
     pub message: String,
+    /// Whether this finding can be automatically remediated with `okf fix`.
+    pub fixable: bool,
 }
 
 impl std::fmt::Display for Diagnostic {
@@ -111,6 +113,12 @@ impl Report {
     #[must_use]
     pub fn warning_count(&self) -> usize {
         self.of(Severity::Warning).count()
+    }
+
+    /// Count of findings that can be automatically fixed with `okf fix`.
+    #[must_use]
+    pub fn fixable_count(&self) -> usize {
+        self.diagnostics.iter().filter(|d| d.fixable).count()
     }
 }
 
@@ -195,13 +203,18 @@ struct Context<'a> {
 }
 
 impl Context<'_> {
-    fn push(&mut self, severity: Severity, message: impl Into<String>) {
+    fn push_fixable(&mut self, severity: Severity, message: impl Into<String>, fixable: bool) {
         self.report.diagnostics.push(Diagnostic {
             severity,
             path: Some(self.path.clone()),
             concept: Some(self.id.clone()),
             message: message.into(),
+            fixable,
         });
+    }
+
+    fn push(&mut self, severity: Severity, message: impl Into<String>) {
+        self.push_fixable(severity, message, false);
     }
 
     fn error(&mut self, message: impl Into<String>) {
@@ -212,12 +225,33 @@ impl Context<'_> {
         self.push(Severity::Warning, message);
     }
 
+    fn warn_fixable(&mut self, message: impl Into<String>) {
+        self.push_fixable(Severity::Warning, message, true);
+    }
+
     fn info(&mut self, message: impl Into<String>) {
         self.push(Severity::Info, message);
     }
 }
 
 impl Report {
+    fn add_fixable(
+        &mut self,
+        severity: Severity,
+        path: Option<PathBuf>,
+        concept: Option<ConceptId>,
+        message: String,
+        fixable: bool,
+    ) {
+        self.diagnostics.push(Diagnostic {
+            severity,
+            path,
+            concept,
+            message,
+            fixable,
+        });
+    }
+
     fn add(
         &mut self,
         severity: Severity,
@@ -225,12 +259,7 @@ impl Report {
         concept: Option<ConceptId>,
         message: String,
     ) {
-        self.diagnostics.push(Diagnostic {
-            severity,
-            path,
-            concept,
-            message,
-        });
+        self.add_fixable(severity, path, concept, message, false);
     }
 
     fn error(&mut self, path: Option<PathBuf>, concept: Option<ConceptId>, message: String) {
@@ -257,7 +286,12 @@ fn check_recommended(cx: &mut Context, doc: &Document) {
         if field == "runtime" {
             continue;
         }
-        cx.warn(format!("missing recommended frontmatter field `{field}`"));
+        let fixable = field == "title" || field == "generated";
+        cx.push_fixable(
+            Severity::Warning,
+            format!("missing recommended frontmatter field `{field}`"),
+            fixable,
+        );
     }
 }
 
@@ -509,13 +543,15 @@ fn check_legacy(cx: &mut Context, doc: &Document) {
     let fm = &doc.frontmatter;
     if !is_blank(fm, "timestamp") {
         if is_blank(fm, "generated") {
-            cx.warn("`timestamp` is superseded by `generated: { by, at }`");
+            cx.warn_fixable("`timestamp` is superseded by `generated: { by, at }`");
         } else {
-            cx.warn("`timestamp` is redundant alongside `generated` and should be removed");
+            cx.warn_fixable("`timestamp` is redundant alongside `generated` and should be removed");
         }
     }
     if doc.has_legacy_citations() {
-        cx.warn("the body `# Citations` list is superseded by the `sources` frontmatter field");
+        cx.warn_fixable(
+            "the body `# Citations` list is superseded by the `sources` frontmatter field",
+        );
     }
 }
 

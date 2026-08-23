@@ -160,6 +160,11 @@ impl Frontmatter {
         self.map.insert(key, value);
     }
 
+    /// Removes a key from frontmatter, returning the removed value if present.
+    pub fn remove(&mut self, key: &str) -> Option<Value> {
+        self.map.remove(key)
+    }
+
     /// Reorders the keys into [`PREFERRED_KEY_ORDER`], leaving every other key
     /// after them in its current relative order.
     ///

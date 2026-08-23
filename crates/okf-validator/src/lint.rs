@@ -42,6 +42,7 @@
 //! | L25  | warning  | `executor`, `attester`, or `computation` resource missing on disk  |
 //! | L26  | warning  | `# Computation` code block missing language tag                    |
 //! | L27  | warning  | duplicate date heading in `log.md`                                 |
+//! | L28  | info     | trailing whitespace or excess blank lines in markdown body         |
 
 use crate::validate::{Diagnostic, Report, Severity};
 use okf_core::bundle::Bundle;
@@ -102,6 +103,7 @@ pub fn lint_bundle_at(bundle: &Bundle, today: Option<Date>) -> Report {
         check_future_timestamps(&mut cx, fm, today);
         check_attestation_resources(&mut cx, bundle, doc);
         check_computation_block_formatting(&mut cx, doc);
+        check_whitespace(&mut cx, doc);
     }
 
     check_orphans(bundle, &indexed, &mut report);
@@ -228,13 +230,23 @@ impl Cx<'_> {
     }
 
     fn push(&mut self, severity: Severity, code: &'static str, message: impl Into<String>) {
+        let fixable = is_fixable_lint(code);
         self.report.diagnostics.push(Diagnostic {
             severity,
             path: Some(self.path.clone()),
             concept: Some(self.id.clone()),
             message: format!("[{code}] {}", message.into()),
+            fixable,
         });
     }
+}
+
+/// Whether a lint finding can be automatically remediated by `okf fix`.
+const fn is_fixable_lint(code: &str) -> bool {
+    matches!(
+        code.as_bytes(),
+        b"L1" | b"L3" | b"L5" | b"L6" | b"L8" | b"L16" | b"L18" | b"L26" | b"L27" | b"L28"
+    )
 }
 
 fn check_missing_title(cx: &mut Cx, fm: &Frontmatter) {
@@ -428,6 +440,7 @@ fn check_orphans(bundle: &Bundle, indexed: &BTreeSet<ConceptId>, report: &mut Re
                 message: "[L15] orphan concept: no other concept links to it and no \
                           `index.md` lists it"
                     .to_string(),
+                fixable: false,
             });
         }
     }
@@ -502,6 +515,7 @@ fn check_stale_indexes(bundle: &Bundle, report: &mut Report) {
                 "[L16] index.md is out of sync with its directory ({})",
                 parts.join("; ")
             ),
+            fixable: true,
         });
     }
 }
@@ -701,6 +715,7 @@ fn check_circular_derivation(bundle: &Bundle, report: &mut Report) {
                     "[L22] circular concept derivation: {}",
                     cycle_str.join(" ~> ")
                 ),
+                fixable: false,
             });
         }
     }
@@ -876,8 +891,47 @@ fn check_duplicate_log_dates(bundle: &Bundle, report: &mut Report) {
                     message: format!(
                         "[L27] log.md contains duplicate date heading `## {date}` (entries should be grouped under a single heading)"
                     ),
+                    fixable: true,
                 });
             }
         }
+    }
+}
+
+fn check_whitespace(cx: &mut Cx, doc: &Document) {
+    let mut trailing_count = 0;
+    let mut first_trailing_line = 0;
+    let mut excess_blank = false;
+    let mut consecutive_blank = 0;
+
+    for (i, line) in doc.body.lines().enumerate() {
+        if line.ends_with(' ') || line.ends_with('\t') {
+            trailing_count += 1;
+            if first_trailing_line == 0 {
+                first_trailing_line = i + 1;
+            }
+        }
+        if line.trim().is_empty() {
+            consecutive_blank += 1;
+            if consecutive_blank > 2 {
+                excess_blank = true;
+            }
+        } else {
+            consecutive_blank = 0;
+        }
+    }
+
+    if trailing_count > 0 {
+        cx.info(
+            "L28",
+            format!(
+                "trailing whitespace found on {trailing_count} line(s) in markdown body (first at line {first_trailing_line})"
+            ),
+        );
+    } else if excess_blank {
+        cx.info(
+            "L28",
+            "excess consecutive blank lines found in markdown body",
+        );
     }
 }

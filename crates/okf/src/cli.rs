@@ -22,8 +22,9 @@
 #![warn(clippy::pedantic, clippy::nursery)]
 
 use crate::{
-    Bundle, BundleInitOptions, ConceptOptions, Date, Document, Link, Severity, TrustTier, Value,
-    bundle_diff, create_concept, init_bundle, lint_bundle_at, validate_bundle_at,
+    Bundle, BundleInitOptions, ConceptOptions, Date, Document, FixOptions, Link, Severity,
+    TrustTier, Value, bundle_diff, create_concept, init_bundle, lint_bundle_at, remediate_bundle,
+    validate_bundle_at,
 };
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -131,7 +132,7 @@ USAGE:
 COMMANDS:
     init         [dir]       Initialize a new OKF bundle (--title, --bare)
     new          <path>      Create a new concept document (--type, --title, --attested)
-    validate     <bundle>    Check a bundle against OKF v0.2 conformance
+    validate     <bundle>    Check a bundle against OKF v0.2 conformance (--fix)
     info         <bundle>    Summarize a bundle (concepts, types, trust, links)
     trust        <bundle>    Report trust tier, status, and staleness per concept
     links        <bundle>    Inspect internal, broken, and external cross-links
@@ -140,7 +141,7 @@ COMMANDS:
     graph        <bundle>    Print the cross-link graph (--format text|mermaid|json)
     parse        <file>      Parse one concept document and print its structure
     fmt          <path>      Normalize document(s) by parse + re-serialize (-w writes)
-    lint         <bundle>    Opinionated bundle health checks
+    lint         <bundle>    Opinionated bundle health checks (--fix)
     diff         <a> <b>     OKF-semantics diff between two bundles
 
 OPTIONS:
@@ -244,6 +245,25 @@ fn load(path: &str) -> Result<Bundle, CliError> {
 
 fn cmd_validate(args: &[String]) -> Result<ExitCode, CliError> {
     let path = positional(args, "<bundle>")?;
+    let fix = has_flag(args, "--fix");
+    let author = flag_value(args, "--author").map(ToString::to_string);
+
+    if fix {
+        let options = FixOptions::validation_only(author);
+        let fix_report = remediate_bundle(path, &options)
+            .map_err(|e| CliError::data(format!("could not apply fixes: {e}")))?;
+        let (written, regenerated) = fix_report
+            .apply()
+            .map_err(|e| CliError::data(format!("could not write fixes: {e}")))?;
+        if written > 0 || !regenerated.is_empty() {
+            println!(
+                "Applied {} fix(es) across {} file(s).\n",
+                fix_report.total_remediations(),
+                written
+            );
+        }
+    }
+
     let bundle = load(path)?;
     let report = validate_bundle_at(&bundle, today(args)?);
 
@@ -254,10 +274,19 @@ fn cmd_validate(args: &[String]) -> Result<ExitCode, CliError> {
     let errors = report.error_count();
     let warnings = report.warning_count();
     let infos = report.of(Severity::Info).count();
-    println!(
-        "\n{} concept(s); {errors} error(s), {warnings} warning(s), {infos} info.",
-        bundle.len()
-    );
+    let fixable = report.fixable_count();
+
+    if fixable > 0 {
+        println!(
+            "\n{} concept(s); {errors} error(s), {warnings} warning(s) ({fixable} fixable with `--fix`), {infos} info.",
+            bundle.len()
+        );
+    } else {
+        println!(
+            "\n{} concept(s); {errors} error(s), {warnings} warning(s), {infos} info.",
+            bundle.len()
+        );
+    }
 
     if report.is_conformant() {
         println!("✓ conformant with OKF v{}", crate::OKF_VERSION);
@@ -270,6 +299,28 @@ fn cmd_validate(args: &[String]) -> Result<ExitCode, CliError> {
 
 fn cmd_lint(args: &[String]) -> Result<ExitCode, CliError> {
     let path = positional(args, "<bundle>")?;
+    let fix = has_flag(args, "--fix");
+    let author = flag_value(args, "--author").map(ToString::to_string);
+
+    if fix {
+        let options = FixOptions {
+            author,
+            ..Default::default()
+        };
+        let fix_report = remediate_bundle(path, &options)
+            .map_err(|e| CliError::data(format!("could not apply fixes: {e}")))?;
+        let (written, regenerated) = fix_report
+            .apply()
+            .map_err(|e| CliError::data(format!("could not write fixes: {e}")))?;
+        if written > 0 || !regenerated.is_empty() {
+            println!(
+                "Applied {} fix(es) across {} file(s).\n",
+                fix_report.total_remediations(),
+                written
+            );
+        }
+    }
+
     let bundle = load(path)?;
     let report = lint_bundle_at(&bundle, today(args)?);
 
@@ -279,14 +330,26 @@ fn cmd_lint(args: &[String]) -> Result<ExitCode, CliError> {
 
     let warnings = report.warning_count();
     let infos = report.of(Severity::Info).count();
-    println!(
-        "\n{} concept(s); {warnings} warning(s), {infos} info.",
-        bundle.len()
-    );
+    let fixable = report.fixable_count();
+
+    if fixable > 0 {
+        println!(
+            "\n{} concept(s); {warnings} warning(s) ({fixable} fixable with `--fix`), {infos} info.",
+            bundle.len()
+        );
+    } else {
+        println!(
+            "\n{} concept(s); {warnings} warning(s), {infos} info.",
+            bundle.len()
+        );
+    }
 
     if warnings == 0 {
         println!("✓ clean lint");
         Ok(ExitCode::SUCCESS)
+    } else if fixable > 0 {
+        println!("✗ {warnings} lint warning(s) ({fixable} fixable with `--fix`)");
+        Ok(ExitCode::from(EX_DATAERR))
     } else {
         println!("✗ {warnings} lint warning(s)");
         Ok(ExitCode::from(EX_DATAERR))

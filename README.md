@@ -72,8 +72,8 @@ you can read OKF.
 ```text
 okf init         [dir]       Initialize a new OKF bundle (--title, --bare)
 okf new          <path>      Create a new concept document (--type, --title, --attested)
-okf validate     <bundle>    Check a bundle against OKF v0.2 conformance
-okf lint         <bundle>    Opinionated bundle health and hygiene checks
+okf validate     <bundle>    Check a bundle against OKF v0.2 conformance (--fix)
+okf lint         <bundle>    Opinionated bundle health and hygiene checks (--fix)
 okf info         <bundle>    Summarize a bundle (concepts, types, trust, links)
 okf trust        <bundle>    Report trust tier, status, and staleness per concept
 okf links        <bundle>    Inspect internal, broken, and external cross-links
@@ -240,9 +240,10 @@ concerns.
 | [`footnotes`]   | `[^label]` reference and definition scanning                           |
 | [`links`]       | Markdown link extraction, classification, path-valued fields           |
 | [`bundle`]      | `Bundle::load`: walk a tree, build the link and derivation graphs      |
-| [`scaffold`]    | Scaffold new bundles (`init_bundle`) and concepts (`create_concept`)  |
+| [`scaffold`]    | Scaffold new bundles (`init_bundle`) and concepts (`create_concept`)   |
 | [`index`]       | Generate `index.md` directory listings                                 |
 | [`log`]         | Parse / build `log.md` update histories                                |
+| [`fix`]         | Automated remediation and migration engine                             |
 | [`validate`]    | Conformance checking with severity-tagged diagnostics                  |
 | [`lint`]        | Opinionated bundle health checks beyond conformance                    |
 
@@ -344,6 +345,7 @@ Google.
 [`scaffold`]: https://docs.rs/okf/latest/okf/scaffold/
 [`index`]: https://docs.rs/okf/latest/okf/index/
 [`log`]: https://docs.rs/okf/latest/okf/log/
+[`fix`]: https://docs.rs/okf/latest/okf/fix/
 [`lint`]: https://docs.rs/okf/latest/okf/lint/
 [`validate`]: https://docs.rs/okf/latest/okf/validate/
 [`concept_id::ConceptId`]: https://docs.rs/okf/latest/okf/concept_id/struct.ConceptId.html
