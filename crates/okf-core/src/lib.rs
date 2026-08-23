@@ -1,4 +1,4 @@
-//! # okf: the Open Knowledge Format, in pure Rust
+//! # okf-core: the Open Knowledge Format, in pure Rust
 //!
 //! A dependency-free implementation of the [Open Knowledge Format (OKF)
 //! v0.2][spec], Google's open, human- and agent-friendly format for
@@ -8,8 +8,9 @@
 //! OKF is intentionally minimal ("if you can `cat` a file, you can read OKF; if
 //! you can `git clone` a repo, you can ship it"), so this crate implements it
 //! with the standard library alone: its own [YAML-subset parser](yaml), a
-//! markdown [link scanner](links), a directory walker, and (in the binary) CLI
-//! argument parsing. There are **no third-party dependencies**.
+//! markdown [link scanner](links), and a directory walker. There are **no
+//! third-party dependencies**. The companion `okf` crate re-exports this
+//! entire library and ships the `okf` command-line tool.
 //!
 //! ## Model
 //!
@@ -46,7 +47,7 @@
 //! ## Example
 //!
 //! ```no_run
-//! use okf::{Bundle, validate_bundle};
+//! use okf_core::{Bundle, validate_bundle};
 //!
 //! let bundle = Bundle::load("./my_bundle")?;
 //! println!("{} concepts", bundle.len());
@@ -55,13 +56,13 @@
 //! if report.is_conformant() {
 //!     println!("conformant OKF v0.2 bundle");
 //! }
-//! # Ok::<(), okf::BundleError>(())
+//! # Ok::<(), okf_core::BundleError>(())
 //! ```
 //!
 //! Reading a concept's trust signals:
 //!
 //! ```
-//! use okf::{Document, TrustTier};
+//! use okf_core::{Document, TrustTier};
 //!
 //! let doc = Document::parse(
 //!     "---\n\
@@ -90,15 +91,6 @@
 // where a lint is genuinely wrong for this codebase are silenced inline with a
 // justification.
 #![warn(clippy::pedantic, clippy::nursery)]
-
-/// Compiles and runs the `README.md` examples as doctests.
-///
-/// `cfg(doctest)` means this item exists only while `cargo test` collects
-/// doctests, so it never reaches the public API or the rendered documentation.
-/// Without it the README's Rust blocks would be prose that nothing checks.
-#[cfg(doctest)]
-#[doc = include_str!("../README.md")]
-pub struct ReadmeExamples;
 
 pub mod actor;
 pub mod bundle;

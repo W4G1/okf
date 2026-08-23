@@ -1,7 +1,7 @@
 //! Link classification, resolution, and citation extraction tests (§5, §8).
 
-use okf::links::{Link, LinkKind, extract_citations, extract_links};
-use okf::{ConceptId, Document};
+use okf_core::links::{Link, LinkKind, extract_citations, extract_links};
+use okf_core::{ConceptId, Document};
 
 #[test]
 fn classify_link_kinds() {
@@ -99,8 +99,12 @@ fn traversal_above_bundle_root_does_not_clamp_inward() {
 #[test]
 fn field_paths_reject_traversal_above_bundle_root() {
     let root_source = ConceptId::parse("orders").unwrap();
-    assert!(okf::links::field_path_candidates("../references/run.py", &root_source).is_empty());
-    assert!(okf::links::field_path_candidates("/../references/run.py", &root_source).is_empty());
+    assert!(
+        okf_core::links::field_path_candidates("../references/run.py", &root_source).is_empty()
+    );
+    assert!(
+        okf_core::links::field_path_candidates("/../references/run.py", &root_source).is_empty()
+    );
 }
 
 #[test]
@@ -135,7 +139,7 @@ fn field_paths_try_both_readings_of_a_relative_target() {
     // order.
     let from = ConceptId::parse("computations/revenue").unwrap();
     assert_eq!(
-        okf::links::field_path_candidates("references/skills/run-on-bq.md", &from),
+        okf_core::links::field_path_candidates("references/skills/run-on-bq.md", &from),
         vec![
             "computations/references/skills/run-on-bq.md".to_string(),
             "references/skills/run-on-bq.md".to_string(),
@@ -143,11 +147,11 @@ fn field_paths_try_both_readings_of_a_relative_target() {
     );
     // An absolute path has exactly one reading.
     assert_eq!(
-        okf::links::field_path_candidates("/references/x.py", &from),
+        okf_core::links::field_path_candidates("/references/x.py", &from),
         vec!["references/x.py".to_string()]
     );
     // A URI has none.
-    assert!(okf::links::field_path_candidates("https://example.com/x", &from).is_empty());
+    assert!(okf_core::links::field_path_candidates("https://example.com/x", &from).is_empty());
 }
 
 #[test]

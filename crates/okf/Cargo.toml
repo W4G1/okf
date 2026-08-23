@@ -1,0 +1,28 @@
+[package]
+name = "okf"
+description = "The Open Knowledge Format (OKF) v0.2 in pure Rust: the `okf` CLI (validate, lint, inspect, index, graph, format, diff) plus the full okf-core library API re-exported, with zero dependencies."
+documentation = "https://docs.rs/okf"
+readme = "../../README.md"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories = ["command-line-utilities", "parser-implementations", "data-structures"]
+
+[dependencies]
+okf-core.workspace = true
+
+# The lib target re-exports all of okf-core, so `cargo add okf` keeps working
+# as a library dependency (`use okf::Bundle;`) while `cargo install okf` still
+# installs the CLI. Dependents only build the lib; the binary costs them
+# nothing.
+[lib]
+name = "okf"
+path = "src/lib.rs"
+
+[[bin]]
+name = "okf"
+path = "src/main.rs"

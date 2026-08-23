@@ -1,29 +1,19 @@
-[package]
-name = "okf"
-version = "0.2.1"
+[workspace]
+resolver = "3"
+members = ["crates/okf-core", "crates/okf", "crates/reserved/*"]
+
+# Metadata shared by all member crates; each inherits these with
+# `<key>.workspace = true`.
+[workspace.package]
+version = "0.2.2"
 edition = "2024"
 authors = ["Walter van der Giessen <waltervdgiessen@gmail.com>"]
-description = "A pure-Rust, zero-dependency implementation of the Open Knowledge Format (OKF) v0.2: parser, model, validator, provenance/trust/attestation families, link graph, and index/log tooling."
 license = "Apache-2.0"
 repository = "https://github.com/W4G1/okf"
-# Informational link to the format this crate implements (the upstream OKF spec).
+# Informational link to the format these crates implement (the upstream OKF spec).
 homepage = "https://github.com/W4G1/okf"
-documentation = "https://docs.rs/okf"
 keywords = ["okf", "knowledge", "markdown", "frontmatter", "metadata"]
 categories = ["parser-implementations", "data-structures"]
-readme = "README.md"
-exclude = [".gitignore"]
 
-# OKF is, by design, "markdown files with YAML frontmatter". None of that
-# requires a third-party crate, so this implementation has *zero* dependencies
-# and builds on the standard library alone (including its own YAML-subset
-# parser, markdown link scanner, directory walker, and CLI argument parsing).
-[dependencies]
-
-[[bin]]
-name = "okf"
-path = "src/bin/okf.rs"
-
-[lib]
-name = "okf"
-path = "src/lib.rs"
+[workspace.dependencies]
+okf-core = { path = "crates/okf-core", version = "0.2.2" }

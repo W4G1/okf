@@ -12,7 +12,7 @@
 mod common;
 
 use common::TempDir;
-use okf::{
+use okf_core::{
     ActorKind, Bundle, ComputationSource, ConceptId, Date, Document, ResourceKind, Severity,
     Status, TrustTier, validate_bundle, validate_bundle_at,
 };
@@ -272,7 +272,7 @@ fn footnote_labels_resolve_to_source_ids() {
 
     let attributions = revenue.document.attributions();
     assert_eq!(attributions.len(), 2);
-    assert!(attributions.iter().all(okf::Attribution::is_resolved));
+    assert!(attributions.iter().all(okf_core::Attribution::is_resolved));
     assert_eq!(attributions[0].label, "rev-policy");
     assert_eq!(attributions[0].references, 1);
     assert_eq!(attributions[0].definitions, 1);
@@ -669,9 +669,11 @@ fn trust_timestamps_require_time_but_generic_datetime_parsing_stays_permissive()
         d.message
             .contains("`verified[0].at` is not an ISO-8601 datetime with an explicit offset")
     }));
-    assert!(okf::DateTime::parse("2026-06-26").is_some());
-    assert!(!okf::validate::is_iso8601_datetime("2026-06-26"));
-    assert!(okf::validate::is_iso8601_datetime("2026-06-26T00:00:00Z"));
+    assert!(okf_core::DateTime::parse("2026-06-26").is_some());
+    assert!(!okf_core::validate::is_iso8601_datetime("2026-06-26"));
+    assert!(okf_core::validate::is_iso8601_datetime(
+        "2026-06-26T00:00:00Z"
+    ));
 }
 
 #[test]
@@ -851,7 +853,7 @@ fn every_frontmatter_family_round_trips() {
 #[test]
 fn regenerating_indexes_keeps_the_declared_version() {
     let tmp = finance_bundle();
-    okf::index::regenerate_indexes(tmp.path()).unwrap();
+    okf_core::index::regenerate_indexes(tmp.path()).unwrap();
 
     let root = tmp.read("index.md");
     assert!(

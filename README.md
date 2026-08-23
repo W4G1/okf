@@ -7,7 +7,8 @@ A **pure-Rust, zero-dependency** implementation of the [Open Knowledge Format
 specification, Google's open, human- and agent-friendly format for representing *knowledge*
 as a directory of markdown files with YAML metadata.
 
-[![crates.io](https://img.shields.io/crates/v/okf.svg)](https://crates.io/crates/okf)
+[![crates.io](https://img.shields.io/crates/v/okf.svg?label=okf)](https://crates.io/crates/okf)
+[![crates.io](https://img.shields.io/crates/v/okf-core.svg?label=okf-core)](https://crates.io/crates/okf-core)
 [![docs.rs](https://img.shields.io/docsrs/okf)](https://docs.rs/okf)
 [![CI](https://github.com/W4G1/okf/actions/workflows/rust.yml/badge.svg)](https://github.com/W4G1/okf/actions/workflows/rust.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](#license)
@@ -17,13 +18,21 @@ as a directory of markdown files with YAML metadata.
 
 ## Installation
 
+This repository is a workspace of two crates:
+
+- [`okf-core`](https://crates.io/crates/okf-core): the library implementing the
+  OKF specification (parser, model, validator, link graph, index/log tooling).
+- [`okf`](https://crates.io/crates/okf): the `okf` command-line tool, which
+  also re-exports the entire `okf-core` API, so depending on `okf` alone gives
+  you both.
+
 Install the CLI from [crates.io](https://crates.io/crates/okf):
 
 ```sh
 cargo install okf
 
 # Run the cli
-okf --version    # okf 0.2.1 (OKF spec v0.2)
+okf --version    # okf 0.2.2 (OKF spec v0.2)
 ```
 
 Or add it as a library dependency to your project:
@@ -190,7 +199,7 @@ in [`footnotes`].
 Two v0.1 constructs are superseded (§13.1) but still readable, since a v0.2
 consumer is expected to handle v0.1 bundles:
 
-| v0.1               | v0.2                    | Fallback in this crate                  |
+| v0.1               | v0.2                    | Fallback in okf-core                  |
 |--------------------|-------------------------|-----------------------------------------|
 | `timestamp`        | `generated: { by, at }` | `Frontmatter::content_changed_at`       |
 | body `# Citations` | `sources` + footnotes   | `Document::citations` still parses it   |
@@ -205,7 +214,7 @@ value: a `runtime`, typed `parameters`, the computation itself (inline under
 `# Computation` or in a file), an `executor` that produces a receipt, and a
 deterministic `attester` that turns a receipt into a verdict.
 
-This crate models and checks that contract. It **never runs anything**: the
+okf-core models and checks that contract. It **never runs anything**: the
 receipt and verdict are runtime artifacts that §10.5 explicitly keeps out of the
 bundle. Executing computations and attesting receipts are consumer-side
 concerns.
@@ -296,7 +305,7 @@ PyYAML reads back identically.
   Scalars may also span lines, folding each break into a space, because PyYAML
   wraps any value past 80 columns and the reference publishes bundles that way.
 - **Timestamps stay strings.** YAML's implicit resolver would type a bare
-  `2026-06-30T14:00:00Z` as a datetime; this crate keeps it as text with the
+  `2026-06-30T14:00:00Z` as a datetime; okf-core keeps it as text with the
   parse alongside (`DateTimeField`), so a malformed date can be *reported*
   rather than silently dropped. On the way out a datetime-valued scalar is
   emitted quoted, because a bare one is not stable even under the reference's own
@@ -307,7 +316,7 @@ PyYAML reads back identically.
 
 Licensed under the **Apache License, Version 2.0**, the same license as the
 upstream [OKF project](https://github.com/GoogleCloudPlatform/open-knowledge-format).
-This crate is a derivative work: its document parser, concept-id conventions,
+okf-core is a derivative work: its document parser, concept-id conventions,
 and index generator are ports of the OKF reference implementation. See
 [`LICENSE`](LICENSE) for the full terms and [`NOTICE`](NOTICE) for attribution.
 

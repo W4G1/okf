@@ -6,8 +6,8 @@
 //! `trust_tier`, `is_stale`), the equivalent here is a [`Frontmatter`] accessor,
 //! so the assertions are transcribed rather than the call shapes.
 
-use okf::yaml::Value;
-use okf::{Date, Document, DocumentError, TrustTier};
+use okf_core::yaml::Value;
+use okf_core::{Date, Document, DocumentError, TrustTier};
 
 /// Builds a document from a frontmatter block with an empty body.
 fn with_frontmatter(frontmatter: &str) -> Document {

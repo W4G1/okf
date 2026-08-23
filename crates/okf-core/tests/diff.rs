@@ -3,7 +3,7 @@
 mod common;
 
 use common::TempDir;
-use okf::{Bundle, bundle_diff};
+use okf_core::{Bundle, bundle_diff};
 
 /// A minimal conformant concept body.
 const CONCEPT: &str = "---\n\

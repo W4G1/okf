@@ -1,0 +1,12 @@
+[package]
+name = "okf-web"
+# Deliberately 0.0.0: this is a reserved name, not a release.
+version = "0.0.0"
+description = "Reserved for the OKF project: future web-based bundle viewing for the Open Knowledge Format. Placeholder with no functionality yet; use the okf or okf-core crates."
+readme = "README.md"
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true

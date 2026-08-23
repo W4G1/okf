@@ -1,6 +1,6 @@
 //! YAML-subset parser/emitter tests, including the round-trip invariant.
 
-use okf::yaml::Value;
+use okf_core::yaml::Value;
 
 fn roundtrip(src: &str) -> Value {
     let v = Value::parse(src).unwrap();
@@ -235,7 +235,7 @@ fn strings_needing_quotes_roundtrip() {
     for s in ["42", "true", "null", "a: b", "value # x", "", "  spaced  "] {
         let v = Value::String(s.to_string());
         let emitted = Value::Mapping({
-            let mut m = okf::yaml::Mapping::new();
+            let mut m = okf_core::yaml::Mapping::new();
             m.insert("k", v.clone());
             m
         })
@@ -287,7 +287,7 @@ fn conservative_number_resolution() {
 fn non_finite_and_large_floats_roundtrip() {
     for f in [f64::INFINITY, f64::NEG_INFINITY, 1e30, -2.5e-12, 1.0] {
         let v = Value::Float(f);
-        let mut m = okf::yaml::Mapping::new();
+        let mut m = okf_core::yaml::Mapping::new();
         m.insert("k", v.clone());
         let emitted = Value::Mapping(m).to_yaml_string();
         let reparsed = Value::parse(&emitted).unwrap();
@@ -298,7 +298,7 @@ fn non_finite_and_large_floats_roundtrip() {
         }
     }
     // NaN is a float on the way back (compared specially).
-    let mut m = okf::yaml::Mapping::new();
+    let mut m = okf_core::yaml::Mapping::new();
     m.insert("k", Value::Float(f64::NAN));
     let reparsed = Value::parse(&Value::Mapping(m).to_yaml_string()).unwrap();
     assert!(matches!(reparsed.as_mapping().unwrap().get("k"), Some(Value::Float(g)) if g.is_nan()));
@@ -402,7 +402,7 @@ fn iso_datetimes_emit_quoted_but_bare_dates_stay_plain() {
     // PyYAML types a bare ISO datetime as a `datetime` and re-dumps it as
     // `2026-06-30 14:00:00+00:00`, losing the `T` and `Z` the spec asks for. A
     // quoted timestamp survives that round-trip byte-identical, so emit one.
-    let mut m = okf::yaml::Mapping::new();
+    let mut m = okf_core::yaml::Mapping::new();
     m.insert("at", Value::String("2026-06-30T14:00:00Z".into()));
     m.insert("stale_after", Value::String("2026-12-31".into()));
     m.insert("offset", Value::String("2026-07-10T21:15:20+00:00".into()));

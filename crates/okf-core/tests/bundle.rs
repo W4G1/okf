@@ -4,7 +4,7 @@
 mod common;
 
 use common::TempDir;
-use okf::{
+use okf_core::{
     Bundle, BundleError, ConceptId, ConceptIdError, DocumentError, Severity, validate_bundle,
 };
 

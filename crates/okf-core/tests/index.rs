@@ -3,10 +3,10 @@
 mod common;
 
 use common::TempDir;
-use okf::index::{
+use okf_core::index::{
     IndexEntry, build_index_text, default_synthesize, regenerate_indexes, regenerate_indexes_with,
 };
-use okf::links::extract_links;
+use okf_core::links::extract_links;
 
 fn write_doc(tmp: &TempDir, rel: &str, type_: &str, title: &str, description: &str) {
     let contents = format!(
@@ -195,7 +195,7 @@ fn generated_markdown_escapes_text_and_encodes_destinations() {
     );
     assert_eq!(
         extract_links(&text)[0]
-            .resolve_all(&okf::ConceptId::parse("index").unwrap())
+            .resolve_all(&okf_core::ConceptId::parse("index").unwrap())
             .iter()
             .map(ToString::to_string)
             .collect::<Vec<_>>(),
