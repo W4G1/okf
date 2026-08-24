@@ -120,8 +120,8 @@ fn test_mapping_traits() {
 #[test]
 fn test_value_conversions_and_methods() {
     // as_float
-    let vf = Value::Float(3.14);
-    assert_eq!(vf.as_float(), Some(3.14));
+    let vf = Value::Float(3.75);
+    assert_eq!(vf.as_float(), Some(3.75));
     assert_eq!(Value::Int(42).as_float(), None);
 
     // FromStr
@@ -139,7 +139,7 @@ fn test_value_conversions_and_methods() {
     assert_eq!(Value::from(7_usize), Value::Int(7));
 
     // Float conversions
-    assert_eq!(Value::from(2.718_f64), Value::Float(2.718));
+    assert_eq!(Value::from(2.625_f64), Value::Float(2.625));
     assert_eq!(Value::from(1.5_f32), Value::Float(1.5));
 
     // String / Cow conversions

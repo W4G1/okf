@@ -25,12 +25,12 @@
 
 use crate::computation::{ATTESTED_COMPUTATION_TYPE, Attester, Executor, Parameter};
 use crate::date::{Date, DateTime, DateTimeField};
+use crate::error::DocumentError;
 use crate::provenance::{Source, UsageWindow};
 use crate::trust::{self, Generated, Status, TrustTier, Verification};
-use crate::error::DocumentError;
 use crate::yaml::{Mapping, Value};
-use std::fmt;
 use std::borrow::Cow;
+use std::fmt;
 
 /// The only frontmatter key OKF always requires: a concept carrying
 /// nothing but `type` is fully conformant.
