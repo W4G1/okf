@@ -32,7 +32,7 @@ fn init_bundle_creates_conformant_bundle() {
     let bundle_dir = tmp.path().join("my_bundle");
 
     let options = BundleInitOptions {
-        title: "Test Knowledge Base".to_string(),
+        title: "Test Bundle".to_string(),
         create_sample: true,
         sample_name: "overview".to_string(),
         author: Some("human:alice".to_string()),

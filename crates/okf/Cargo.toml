@@ -13,6 +13,7 @@ keywords.workspace = true
 categories = ["command-line-utilities", "parser-implementations", "data-structures"]
 
 [dependencies]
+clap = { workspace = true, optional = true }
 okf-core.workspace = true
 okf-validator = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
@@ -23,7 +24,7 @@ default = ["validator"]
 # the validate, syntax, and lint modules, and the okf validate / okf lint
 # subcommands. On by default; opt out with default-features = false for a
 # parse-only dependency.
-validator = ["dep:okf-validator", "dep:serde_json"]
+validator = ["dep:okf-validator", "dep:serde_json", "dep:clap"]
 
 # The lib target re-exports all of okf-core, so `cargo add okf` keeps working
 # as a library dependency (`use okf::Bundle;`) while `cargo install okf` still

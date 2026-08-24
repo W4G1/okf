@@ -16,8 +16,6 @@
 //!   lint         <bundle>   Opinionated bundle health checks (--fix, --json).
 //!   diff         <a> <b>    OKF-semantics diff between two bundles (--json).
 //! ```
-//!
-//! Argument parsing is hand-rolled to keep the crate dependency-free.
 
 #![warn(clippy::pedantic, clippy::nursery)]
 
@@ -26,6 +24,7 @@ use crate::{
     Report, Severity, TrustTier, Value, bundle_diff, create_concept, init_bundle, lint_bundle_at,
     remediate_bundle, validate_bundle_at,
 };
+use clap::{Args, Parser, Subcommand};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -45,13 +44,6 @@ struct CliError {
 }
 
 impl CliError {
-    fn usage(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-            code: EX_USAGE,
-        }
-    }
-
     fn data(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
@@ -67,6 +59,349 @@ impl CliError {
     }
 }
 
+fn parse_date(raw: &str) -> Result<Date, String> {
+    Date::parse(raw).ok_or_else(|| format!("--today is not a YYYY-MM-DD date: {raw}"))
+}
+
+#[derive(Parser, Debug)]
+#[command(
+    name = "okf",
+    about = "okf: Open Knowledge Format toolkit",
+    version = concat!(env!("CARGO_PKG_VERSION"), " (OKF spec v0.2)"),
+    subcommand_required = true,
+    arg_required_else_help = true
+)]
+pub struct Cli {
+    #[command(subcommand)]
+    pub command: Commands,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum Commands {
+    /// Initialize a new OKF bundle (--title, --bare, --json)
+    Init(InitArgs),
+    /// Create a new concept document (--type, --title, --attested, --json)
+    New(NewArgs),
+    /// Check a bundle against OKF v0.2 conformance (--fix, --json)
+    Validate(ValidateArgs),
+    /// Summarize a bundle (concepts, types, trust, links, --json)
+    Info(InfoArgs),
+    /// Report trust tier, status, and staleness per concept (--json)
+    Trust(TrustArgs),
+    /// Inspect internal, broken, and external cross-links (--json)
+    Links(LinksArgs),
+    /// List Attested Computation contracts (--json)
+    Computations(ComputationsArgs),
+    /// (Re)generate every index.md in the bundle (--json)
+    Index(IndexArgs),
+    /// Print the cross-link graph (--format text|mermaid|json, --json)
+    Graph(GraphArgs),
+    /// Parse one concept document and print its structure (--json)
+    Parse(ParseArgs),
+    /// Normalize document(s) by parse + re-serialize (-w writes, --check verifies)
+    Fmt(FmtArgs),
+    /// Opinionated bundle health checks (--fix, --json)
+    Lint(LintArgs),
+    /// OKF-semantics diff between two bundles (--json)
+    Diff(DiffArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct InitArgs {
+    /// Directory to initialize (defaults to current directory)
+    #[arg(default_value = ".")]
+    pub dir: PathBuf,
+
+    /// Title of the OKF bundle
+    #[arg(long, default_value = "OKF Bundle")]
+    pub title: String,
+
+    /// Do not create a sample concept
+    #[arg(long, visible_alias = "no-sample")]
+    pub bare: bool,
+
+    /// Name for the sample concept
+    #[arg(long, default_value = "overview")]
+    pub sample_name: String,
+
+    /// Author attribution for initial files
+    #[arg(long)]
+    pub author: Option<String>,
+
+    /// Overwrite existing files if they exist
+    #[arg(short, long)]
+    pub force: bool,
+
+    /// Output results as JSON
+    #[arg(short, long)]
+    pub json: bool,
+
+    /// Output format (text or json)
+    #[arg(long, value_parser = ["text", "json"])]
+    pub format: Option<String>,
+}
+
+#[derive(Args, Debug)]
+pub struct NewArgs {
+    /// Concept file path, or bundle directory and concept ID
+    #[arg(required = true, num_args = 1..=2)]
+    pub path: Vec<PathBuf>,
+
+    /// Concept type
+    #[arg(long = "type", default_value = "Concept")]
+    pub type_: String,
+
+    /// Concept title
+    #[arg(long)]
+    pub title: Option<String>,
+
+    /// Concept description
+    #[arg(long)]
+    pub description: Option<String>,
+
+    /// Author attribution
+    #[arg(long)]
+    pub author: Option<String>,
+
+    /// Lifecycle status (stable, draft, deprecated)
+    #[arg(long, default_value = "draft")]
+    pub status: String,
+
+    /// Scaffold an Attested Computation concept
+    #[arg(long)]
+    pub attested: bool,
+
+    /// Overwrite existing file if it exists
+    #[arg(short, long)]
+    pub force: bool,
+
+    /// Output results as JSON
+    #[arg(short, long)]
+    pub json: bool,
+
+    /// Output format (text or json)
+    #[arg(long, value_parser = ["text", "json"])]
+    pub format: Option<String>,
+}
+
+#[derive(Args, Debug)]
+pub struct ValidateArgs {
+    /// Bundle directory to validate
+    pub bundle: PathBuf,
+
+    /// Apply automatic fixes where possible
+    #[arg(long)]
+    pub fix: bool,
+
+    /// Author name to record when applying fixes
+    #[arg(long)]
+    pub author: Option<String>,
+
+    /// Evaluate staleness against this date instead of today
+    #[arg(long, value_parser = parse_date)]
+    pub today: Option<Date>,
+
+    /// Output results as JSON
+    #[arg(short, long)]
+    pub json: bool,
+
+    /// Output format (text or json)
+    #[arg(long, value_parser = ["text", "json"])]
+    pub format: Option<String>,
+}
+
+#[derive(Args, Debug)]
+pub struct InfoArgs {
+    /// Bundle directory to summarize
+    pub bundle: PathBuf,
+
+    /// Evaluate staleness against this date instead of today
+    #[arg(long, value_parser = parse_date)]
+    pub today: Option<Date>,
+
+    /// Output results as JSON
+    #[arg(short, long)]
+    pub json: bool,
+
+    /// Output format (text or json)
+    #[arg(long, value_parser = ["text", "json"])]
+    pub format: Option<String>,
+}
+
+#[derive(Args, Debug)]
+pub struct TrustArgs {
+    /// Bundle directory to report trust for
+    pub bundle: PathBuf,
+
+    /// Evaluate staleness against this date instead of today
+    #[arg(long, value_parser = parse_date)]
+    pub today: Option<Date>,
+
+    /// Output results as JSON
+    #[arg(short, long)]
+    pub json: bool,
+
+    /// Output format (text or json)
+    #[arg(long, value_parser = ["text", "json"])]
+    pub format: Option<String>,
+}
+
+#[allow(clippy::struct_excessive_bools)]
+#[derive(Args, Debug)]
+pub struct LinksArgs {
+    /// Bundle directory to inspect links in
+    pub bundle: PathBuf,
+
+    /// Show only broken links
+    #[arg(long)]
+    pub broken: bool,
+
+    /// Exit with error code 65 if broken links are found
+    #[arg(long)]
+    pub check: bool,
+
+    /// Include external links
+    #[arg(long, visible_alias = "external")]
+    pub all: bool,
+
+    /// Output results as JSON
+    #[arg(short, long)]
+    pub json: bool,
+
+    /// Output format (text or json)
+    #[arg(long, value_parser = ["text", "json"])]
+    pub format: Option<String>,
+}
+
+#[derive(Args, Debug)]
+pub struct ComputationsArgs {
+    /// Bundle directory to inspect Attested Computations in
+    pub bundle: PathBuf,
+
+    /// Output results as JSON
+    #[arg(short, long)]
+    pub json: bool,
+
+    /// Output format (text or json)
+    #[arg(long, value_parser = ["text", "json"])]
+    pub format: Option<String>,
+}
+
+#[derive(Args, Debug)]
+pub struct IndexArgs {
+    /// Bundle directory whose index.md files should be regenerated
+    pub bundle: PathBuf,
+
+    /// Output results as JSON
+    #[arg(short, long)]
+    pub json: bool,
+
+    /// Output format (text or json)
+    #[arg(long, value_parser = ["text", "json"])]
+    pub format: Option<String>,
+}
+
+#[derive(Args, Debug)]
+pub struct GraphArgs {
+    /// Bundle directory to graph
+    pub bundle: PathBuf,
+
+    /// Output format (text, mermaid, or json)
+    #[arg(long, value_parser = ["text", "mermaid", "json"], default_value = "text")]
+    pub format: String,
+
+    /// Include derivation edges from `sources`
+    #[arg(long)]
+    pub sources: bool,
+
+    /// Output results as JSON (shorthand for --format json)
+    #[arg(short, long)]
+    pub json: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct ParseArgs {
+    /// Concept file to parse
+    pub file: PathBuf,
+
+    /// Evaluate staleness against this date instead of today
+    #[arg(long, value_parser = parse_date)]
+    pub today: Option<Date>,
+
+    /// Output results as JSON
+    #[arg(short, long)]
+    pub json: bool,
+
+    /// Output format (text or json)
+    #[arg(long, value_parser = ["text", "json"])]
+    pub format: Option<String>,
+}
+
+#[derive(Args, Debug)]
+pub struct FmtArgs {
+    /// File or directory to format
+    pub path: PathBuf,
+
+    /// Write formatted output back to file(s)
+    #[arg(short, long)]
+    pub write: bool,
+
+    /// Check if files are formatted without writing; exits with code 65 if unformatted
+    #[arg(short, long)]
+    pub check: bool,
+
+    /// Output results as JSON
+    #[arg(short, long)]
+    pub json: bool,
+
+    /// Output format (text or json)
+    #[arg(long, value_parser = ["text", "json"])]
+    pub format: Option<String>,
+}
+
+#[derive(Args, Debug)]
+pub struct LintArgs {
+    /// Bundle directory to lint
+    pub bundle: PathBuf,
+
+    /// Apply automatic fixes where possible
+    #[arg(long)]
+    pub fix: bool,
+
+    /// Author name to record when applying fixes
+    #[arg(long)]
+    pub author: Option<String>,
+
+    /// Evaluate staleness against this date instead of today
+    #[arg(long, value_parser = parse_date)]
+    pub today: Option<Date>,
+
+    /// Output results as JSON
+    #[arg(short, long)]
+    pub json: bool,
+
+    /// Output format (text or json)
+    #[arg(long, value_parser = ["text", "json"])]
+    pub format: Option<String>,
+}
+
+#[derive(Args, Debug)]
+pub struct DiffArgs {
+    /// First bundle directory (base)
+    pub a: PathBuf,
+
+    /// Second bundle directory (target)
+    pub b: PathBuf,
+
+    /// Output results as JSON
+    #[arg(short, long)]
+    pub json: bool,
+
+    /// Output format (text or json)
+    #[arg(long, value_parser = ["text", "json"])]
+    pub format: Option<String>,
+}
+
 /// Runs the `okf` CLI on `args` (the program name already stripped) and
 /// returns the process exit code.
 ///
@@ -74,43 +409,31 @@ impl CliError {
 /// (the `cargo-okf` crate) are both thin wrappers around it.
 #[must_use]
 pub fn run(args: &[String]) -> ExitCode {
-    if args.is_empty() {
-        eprintln!("{USAGE}");
-        return ExitCode::from(EX_USAGE);
-    }
-    let cmd = args[0].as_str();
-    let rest = &args[1..];
+    let parse_result =
+        Cli::try_parse_from(std::iter::once("okf").chain(args.iter().map(String::as_str)));
 
-    let result = match cmd {
-        "init" => cmd_init(rest),
-        "new" => cmd_new(rest),
-        "validate" => cmd_validate(rest),
-        "info" => cmd_info(rest),
-        "trust" => cmd_trust(rest),
-        "links" => cmd_links(rest),
-        "computations" => cmd_computations(rest),
-        "index" => cmd_index(rest),
-        "graph" => cmd_graph(rest),
-        "parse" => cmd_parse(rest),
-        "fmt" => cmd_fmt(rest),
-        "lint" => cmd_lint(rest),
-        "diff" => cmd_diff(rest),
-        "-h" | "--help" | "help" => {
-            println!("{USAGE}");
-            return ExitCode::SUCCESS;
+    let cli = match parse_result {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = e.print();
+            return ExitCode::from(u8::try_from(e.exit_code()).unwrap_or(EX_USAGE));
         }
-        "-V" | "--version" | "version" => {
-            println!(
-                "okf {} (OKF spec v{})",
-                env!("CARGO_PKG_VERSION"),
-                crate::OKF_VERSION
-            );
-            return ExitCode::SUCCESS;
-        }
-        other => {
-            eprintln!("unknown subcommand: {other}\n\n{USAGE}");
-            return ExitCode::from(EX_USAGE);
-        }
+    };
+
+    let result = match cli.command {
+        Commands::Init(ref a) => cmd_init(a),
+        Commands::New(ref a) => cmd_new(a),
+        Commands::Validate(ref a) => cmd_validate(a),
+        Commands::Info(ref a) => cmd_info(a),
+        Commands::Trust(ref a) => cmd_trust(a),
+        Commands::Links(ref a) => cmd_links(a),
+        Commands::Computations(ref a) => cmd_computations(a),
+        Commands::Index(ref a) => cmd_index(a),
+        Commands::Graph(ref a) => cmd_graph(a),
+        Commands::Parse(ref a) => cmd_parse(a),
+        Commands::Fmt(ref a) => cmd_fmt(a),
+        Commands::Lint(ref a) => cmd_lint(a),
+        Commands::Diff(ref a) => cmd_diff(a),
     };
 
     match result {
@@ -122,146 +445,15 @@ pub fn run(args: &[String]) -> ExitCode {
     }
 }
 
-const USAGE: &str = "\
-okf: Open Knowledge Format toolkit
-
-USAGE:
-    okf <command> [args]
-
-COMMANDS:
-    init         [dir]       Initialize a new OKF bundle (--title, --bare, --json)
-    new          <path>      Create a new concept document (--type, --title, --attested, --json)
-    validate     <bundle>    Check a bundle against OKF v0.2 conformance (--fix, --json)
-    info         <bundle>    Summarize a bundle (concepts, types, trust, links, --json)
-    trust        <bundle>    Report trust tier, status, and staleness per concept (--json)
-    links        <bundle>    Inspect internal, broken, and external cross-links (--json)
-    computations <bundle>    List Attested Computation contracts (--json)
-    index        <bundle>    (Re)generate every index.md in the bundle (--json)
-    graph        <bundle>    Print the cross-link graph (--format text|mermaid|json, --json)
-    parse        <file>      Parse one concept document and print its structure (--json)
-    fmt          <path>      Normalize document(s) by parse + re-serialize (-w writes, --check verifies)
-    lint         <bundle>    Opinionated bundle health checks (--fix, --json)
-    diff         <a> <b>     OKF-semantics diff between two bundles (--json)
-
-OPTIONS:
-    -h, --help               Show this help
-    -V, --version            Show version
-    -j, --json               Output results as JSON (or --format json)
-        --today <YYYY-MM-DD> Evaluate staleness against this date instead of today";
-
-/// Flags that consume the argument after them, so it is not mistaken for a
-/// positional path.
-const VALUED_FLAGS: [&str; 8] = [
-    "--today",
-    "--format",
-    "--type",
-    "--title",
-    "--description",
-    "--author",
-    "--sample-name",
-    "--status",
-];
-
-/// Returns the first positional argument, or an error. Everything after a `--`
-/// separator is treated as positional (so paths beginning with `-` work).
-fn positional<'a>(args: &'a [String], what: &str) -> Result<&'a str, CliError> {
-    if let Some(pos) = args.iter().position(|a| a == "--")
-        && let Some(arg) = args.get(pos + 1)
-    {
-        return Ok(arg.as_str());
-    }
-    let mut skip = false;
-    for arg in args {
-        if std::mem::replace(&mut skip, false) {
-            continue;
-        }
-        if VALUED_FLAGS.contains(&arg.as_str()) {
-            skip = true;
-        } else if !arg.starts_with('-') {
-            return Ok(arg.as_str());
-        }
-    }
-    Err(CliError::usage(format!("missing {what}")))
+fn load(path: impl AsRef<Path>) -> Result<Bundle, CliError> {
+    Bundle::load(path.as_ref()).map_err(|e| CliError::no_input(e.to_string()))
 }
 
-/// All positional arguments, in order. Flags and their values are skipped, and
-/// everything after a `--` separator is treated as positional.
-fn positionals(args: &[String]) -> Vec<&str> {
-    if let Some(pos) = args.iter().position(|a| a == "--") {
-        return args[pos + 1..].iter().map(String::as_str).collect();
-    }
-    let mut out = Vec::new();
-    let mut skip = false;
-    for arg in args {
-        if std::mem::replace(&mut skip, false) {
-            continue;
-        }
-        if VALUED_FLAGS.contains(&arg.as_str()) {
-            skip = true;
-        } else if !arg.starts_with('-') {
-            out.push(arg.as_str());
-        }
-    }
-    out
-}
-
-fn has_flag(args: &[String], flag: &str) -> bool {
-    args.iter().any(|a| a == flag)
-}
-
-/// The value of `--flag <value>` or `--flag=<value>`.
-fn flag_value<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
-    let prefix = format!("{flag}=");
-    for (i, arg) in args.iter().enumerate() {
-        if let Some(value) = arg.strip_prefix(&prefix) {
-            return Some(value);
-        }
-        if arg == flag {
-            return args.get(i + 1).map(String::as_str);
-        }
-    }
-    None
-}
-
-/// Checks if JSON output mode was requested via `--json`, `-j`, or `--format json`.
-fn is_json(args: &[String]) -> Result<bool, CliError> {
-    if has_flag(args, "--json") || has_flag(args, "-j") {
-        return Ok(true);
-    }
-    match flag_value(args, "--format") {
-        None | Some("text") => Ok(false),
-        Some("json") => Ok(true),
-        Some(other) => Err(CliError::usage(format!(
-            "unknown --format: {other} (expected text|json)"
-        ))),
-    }
-}
-
-/// The date staleness is evaluated against: `--today YYYY-MM-DD`, else the
-/// system clock in UTC.
-fn today(args: &[String]) -> Result<Option<Date>, CliError> {
-    let uses_flag = args
-        .iter()
-        .any(|a| a == "--today" || a.starts_with("--today="));
-    if !uses_flag {
-        return Ok(Date::today_utc());
-    }
-    let raw = flag_value(args, "--today")
-        .ok_or_else(|| CliError::usage("--today needs a YYYY-MM-DD date"))?;
-    Date::parse(raw)
-        .map(Some)
-        .ok_or_else(|| CliError::usage(format!("--today is not a YYYY-MM-DD date: {raw}")))
-}
-
-fn load(path: &str) -> Result<Bundle, CliError> {
-    Bundle::load(path).map_err(|e| CliError::no_input(e.to_string()))
-}
-
-fn cmd_validate(args: &[String]) -> Result<ExitCode, CliError> {
-    let path = positional(args, "<bundle>")?;
-    let fix = has_flag(args, "--fix");
-    let author = flag_value(args, "--author").map(ToString::to_string);
-    let json = is_json(args)?;
+fn cmd_validate(args: &ValidateArgs) -> Result<ExitCode, CliError> {
+    let path = &args.bundle;
+    let fix = args.fix;
+    let author = args.author.clone();
+    let json = args.json || args.format.as_deref() == Some("json");
 
     let mut applied_fixes = 0;
     let mut written_files = 0;
@@ -281,7 +473,8 @@ fn cmd_validate(args: &[String]) -> Result<ExitCode, CliError> {
     }
 
     let bundle = load(path)?;
-    let report = validate_bundle_at(&bundle, today(args)?);
+    let today_date = args.today.or_else(Date::today_utc);
+    let report = validate_bundle_at(&bundle, today_date);
 
     if json {
         print_validate_json(&bundle, &report, fix, applied_fixes, written_files);
@@ -322,52 +515,11 @@ fn cmd_validate(args: &[String]) -> Result<ExitCode, CliError> {
     }
 }
 
-fn print_validate_json(
-    bundle: &Bundle,
-    report: &Report,
-    fix: bool,
-    fixes_applied: usize,
-    files_written: usize,
-) {
-    let diagnostics: Vec<serde_json::Value> = report
-        .diagnostics
-        .iter()
-        .map(|d| {
-            serde_json::json!({
-                "severity": d.severity.to_string(),
-                "message": strip_spec_references(&d.message),
-                "path": d.path.as_ref().map(|p| p.to_string_lossy()),
-                "concept": d.concept.as_ref().map(ToString::to_string),
-                "fixable": d.fixable,
-            })
-        })
-        .collect();
-
-    let mut val = serde_json::json!({
-        "okf_version": crate::OKF_VERSION,
-        "bundle": bundle.root().to_string_lossy(),
-        "conformant": report.is_conformant(),
-        "concepts_count": bundle.len(),
-        "error_count": report.error_count(),
-        "warning_count": report.warning_count(),
-        "info_count": report.of(Severity::Info).count(),
-        "fixable_count": report.fixable_count(),
-        "diagnostics": diagnostics,
-    });
-
-    if fix {
-        val["fixes_applied"] = serde_json::json!(fixes_applied);
-        val["files_written"] = serde_json::json!(files_written);
-    }
-
-    println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());
-}
-
-fn cmd_lint(args: &[String]) -> Result<ExitCode, CliError> {
-    let path = positional(args, "<bundle>")?;
-    let fix = has_flag(args, "--fix");
-    let author = flag_value(args, "--author").map(ToString::to_string);
-    let json = is_json(args)?;
+fn cmd_lint(args: &LintArgs) -> Result<ExitCode, CliError> {
+    let path = &args.bundle;
+    let fix = args.fix;
+    let author = args.author.clone();
+    let json = args.json || args.format.as_deref() == Some("json");
 
     let mut applied_fixes = 0;
     let mut written_files = 0;
@@ -390,7 +542,8 @@ fn cmd_lint(args: &[String]) -> Result<ExitCode, CliError> {
     }
 
     let bundle = load(path)?;
-    let report = lint_bundle_at(&bundle, today(args)?);
+    let today_date = args.today.or_else(Date::today_utc);
+    let report = lint_bundle_at(&bundle, today_date);
 
     if json {
         print_lint_json(&bundle, &report, fix, applied_fixes, written_files);
@@ -433,6 +586,613 @@ fn cmd_lint(args: &[String]) -> Result<ExitCode, CliError> {
         }
     }
 }
+
+fn cmd_info(args: &InfoArgs) -> Result<ExitCode, CliError> {
+    let path = &args.bundle;
+    let bundle = load(path)?;
+    let today_date = args.today.or_else(Date::today_utc);
+    let json = args.json || args.format.as_deref() == Some("json");
+
+    if json {
+        print_info_json(&bundle, today_date);
+        return Ok(ExitCode::SUCCESS);
+    }
+
+    println!("bundle:      {}", bundle.root().display());
+    println!(
+        "okf_version: {}",
+        bundle.okf_version().unwrap_or("(undeclared)")
+    );
+    println!("concepts:    {}", bundle.len());
+    println!("index.md:    {}", bundle.index_files().len());
+    println!("log.md:      {}", bundle.log_files().len());
+
+    let mut by_type: BTreeMap<String, usize> = BTreeMap::new();
+    for c in bundle.concepts() {
+        let t = c.type_().as_deref().unwrap_or("(none)").to_string();
+        *by_type.entry(t).or_default() += 1;
+    }
+    if !by_type.is_empty() {
+        println!("\ntypes:");
+        for (t, n) in &by_type {
+            println!("  {n:>4}  {t}");
+        }
+    }
+
+    let mut by_tier: BTreeMap<String, usize> = BTreeMap::new();
+    let mut by_status: BTreeMap<String, usize> = BTreeMap::new();
+    for c in bundle.concepts() {
+        *by_tier.entry(c.trust_tier().to_string()).or_default() += 1;
+        *by_status.entry(c.status().to_string()).or_default() += 1;
+    }
+    println!("\ntrust tiers:");
+    for (tier, n) in &by_tier {
+        println!("  {n:>4}  {tier}");
+    }
+    println!("\nstatus:");
+    for (status, n) in &by_status {
+        println!("  {n:>4}  {status}");
+    }
+
+    if let Some(today) = today_date {
+        let stale = bundle.stale_on(today);
+        println!("\nstale on {today}: {} concept(s)", stale.len());
+    }
+
+    let with_sources = bundle
+        .concepts()
+        .iter()
+        .filter(|c| !c.sources().is_empty())
+        .count();
+    let derivation_edges: usize = bundle
+        .concepts()
+        .iter()
+        .map(|c| bundle.derived_from(&c.id).len())
+        .sum();
+    println!(
+        "\nsources:     {with_sources} concept(s) record provenance; \
+         {derivation_edges} derivation edge(s) inside the bundle"
+    );
+    println!("computations: {}", bundle.attested_computations().count());
+
+    let broken = bundle.broken_links();
+    let total_links: usize = bundle
+        .concepts()
+        .iter()
+        .map(|c| bundle.links_from(&c.id).len())
+        .sum();
+    println!(
+        "links:       {total_links} internal ({} broken)",
+        broken.len()
+    );
+
+    let tags = bundle.tags();
+    if !tags.is_empty() {
+        println!("tags:        {} distinct", tags.len());
+    }
+
+    if !bundle.parse_errors().is_empty() {
+        println!("\nunparseable files:");
+        for (p, e) in bundle.parse_errors() {
+            println!("  {}: {e}", p.display());
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn cmd_trust(args: &TrustArgs) -> Result<ExitCode, CliError> {
+    let path = &args.bundle;
+    let bundle = load(path)?;
+    let today_date = args.today.or_else(Date::today_utc);
+    let json = args.json || args.format.as_deref() == Some("json");
+
+    if json {
+        print_trust_json(&bundle, today_date);
+        return Ok(ExitCode::SUCCESS);
+    }
+
+    for c in bundle.concepts() {
+        let fm = &c.document.frontmatter;
+        let stale = match today_date {
+            Some(t) if c.is_stale_on(t) => " STALE",
+            _ => "",
+        };
+        println!("{} [{}] {}{stale}", c.id, c.status(), c.trust_tier());
+
+        if let Some(generated) = fm.generated() {
+            println!("  generated: {generated}");
+        }
+        for verification in fm.verified() {
+            println!("  verified:  {verification}");
+        }
+        if let Some(stale_after) = fm.stale_after() {
+            println!("  stale_after: {stale_after}");
+        }
+        for resolved in bundle.sources_of(&c.id) {
+            let target = resolved
+                .concept
+                .as_ref()
+                .map_or_else(String::new, |id| format!(" -> {id}"));
+            println!("  source:    {}{target}", resolved.source);
+        }
+    }
+
+    let mut counts: BTreeMap<TrustTier, usize> = BTreeMap::new();
+    for c in bundle.concepts() {
+        *counts.entry(c.trust_tier()).or_default() += 1;
+    }
+    println!("\n{} concept(s):", bundle.len());
+    for (tier, n) in &counts {
+        println!("  {n:>4}  {tier}");
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn cmd_computations(args: &ComputationsArgs) -> Result<ExitCode, CliError> {
+    let path = &args.bundle;
+    let bundle = load(path)?;
+    let json = args.json || args.format.as_deref() == Some("json");
+
+    if json {
+        print_computations_json(&bundle);
+        return Ok(ExitCode::SUCCESS);
+    }
+
+    let mut found = 0;
+    for c in bundle.attested_computations() {
+        let Some(contract) = c.attested_computation() else {
+            continue;
+        };
+        found += 1;
+        println!("{} ({})", c.id, c.display_title());
+        println!(
+            "  runtime:     {}",
+            contract.runtime.as_deref().unwrap_or("(missing)")
+        );
+        println!("  computation: {}", contract.computation);
+        if !contract.parameters.is_empty() {
+            let params: Vec<String> = contract
+                .parameters
+                .iter()
+                .map(ToString::to_string)
+                .collect();
+            println!("  parameters:  {}", params.join(", "));
+        }
+        if let Some(executor) = &contract.executor {
+            println!(
+                "  executor:    {} (receipt: {})",
+                executor.resource.as_deref().unwrap_or("(missing)"),
+                if executor.receipt.is_empty() {
+                    "(none)".to_string()
+                } else {
+                    executor.receipt.join(", ")
+                }
+            );
+        }
+        if let Some(attester) = &contract.attester {
+            println!(
+                "  attester:    {}",
+                attester.resource.as_deref().unwrap_or("(missing)")
+            );
+        }
+        let used_by = bundle.backlinks(&c.id);
+        if !used_by.is_empty() {
+            let ids: Vec<String> = used_by.iter().map(ToString::to_string).collect();
+            println!("  used by:     {}", ids.join(", "));
+        }
+    }
+
+    if found == 0 {
+        println!(
+            "no `Attested Computation` concepts in {}",
+            bundle.root().display()
+        );
+    } else {
+        println!("\n{found} attested computation(s).");
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn cmd_index(args: &IndexArgs) -> Result<ExitCode, CliError> {
+    let path = &args.bundle;
+    if !path.is_dir() {
+        return Err(CliError::no_input(format!(
+            "bundle root is not a directory: {}",
+            path.display()
+        )));
+    }
+    let json = args.json || args.format.as_deref() == Some("json");
+    let written =
+        crate::index::regenerate_indexes(path).map_err(|e| CliError::no_input(e.to_string()))?;
+    if json {
+        let val = serde_json::json!({
+            "bundle": path.to_string_lossy(),
+            "regenerated_count": written.len(),
+            "regenerated": written.iter().map(|p| p.to_string_lossy()).collect::<Vec<_>>(),
+        });
+        println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());
+    } else if written.is_empty() {
+        println!("no index files written (empty bundle?)");
+    } else {
+        for p in &written {
+            println!("wrote {}", p.display());
+        }
+        println!("\n{} index file(s) regenerated.", written.len());
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum GraphFormat {
+    Text,
+    Mermaid,
+    Json,
+}
+
+fn cmd_graph(args: &GraphArgs) -> Result<ExitCode, CliError> {
+    let path = &args.bundle;
+    let format = if args.json || args.format == "json" {
+        GraphFormat::Json
+    } else if args.format == "mermaid" {
+        GraphFormat::Mermaid
+    } else {
+        GraphFormat::Text
+    };
+    let sources = args.sources;
+    let bundle = load(path)?;
+
+    match format {
+        GraphFormat::Text => print_graph_text(&bundle, sources),
+        GraphFormat::Mermaid => print_graph_mermaid(&bundle, sources),
+        GraphFormat::Json => print_graph_json(&bundle, sources),
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn cmd_parse(args: &ParseArgs) -> Result<ExitCode, CliError> {
+    let path = &args.file;
+    let text = std::fs::read_to_string(path).map_err(|e| CliError::no_input(e.to_string()))?;
+    let doc = Document::parse(&text).map_err(|e| CliError::data(e.to_string()))?;
+    let json = args.json || args.format.as_deref() == Some("json");
+    let today_date = args.today.or_else(Date::today_utc);
+
+    if json {
+        print_parse_json(&doc, &path.to_string_lossy(), today_date);
+        return Ok(ExitCode::SUCCESS);
+    }
+
+    let fm = &doc.frontmatter;
+
+    println!("frontmatter ({} key(s)):", fm.as_mapping().len());
+    print_frontmatter(fm);
+    let conformant = doc.validate().is_ok();
+    println!("\nhas non-empty `type`: {conformant}");
+    println!("body: {} byte(s)", doc.body.len());
+    let missing = doc.missing_recommended();
+    if !missing.is_empty() {
+        println!("\nmissing recommended keys: {}", missing.join(", "));
+    }
+    print_parse_trust(fm);
+    print_parse_sources(fm);
+    print_parse_attributions(&doc);
+    print_parse_computation(&doc);
+    print_parse_links(&doc);
+    Ok(ExitCode::SUCCESS)
+}
+
+#[allow(clippy::too_many_lines)]
+fn cmd_fmt(args: &FmtArgs) -> Result<ExitCode, CliError> {
+    let target_path = &args.path;
+    let write = args.write;
+    let check = args.check;
+    let json = args.json || args.format.as_deref() == Some("json");
+
+    if !target_path.exists() {
+        return Err(CliError::no_input(format!(
+            "No such file or directory: {}",
+            target_path.display()
+        )));
+    }
+
+    let path_str = target_path.to_string_lossy();
+    if check {
+        return cmd_fmt_check(target_path, &path_str, json);
+    }
+
+    if target_path.is_dir() {
+        let mut md_files = Vec::new();
+        collect_markdown_files(target_path, &mut md_files)?;
+        md_files.sort();
+
+        if md_files.is_empty() {
+            if json {
+                let val = serde_json::json!({
+                    "formatted_count": 0,
+                    "error_count": 0,
+                    "written": write,
+                    "files": Vec::<String>::new(),
+                });
+                println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());
+            } else {
+                println!("no markdown files found in {}", target_path.display());
+            }
+            return Ok(ExitCode::SUCCESS);
+        }
+
+        let mut formatted_count = 0;
+        let mut error_count = 0;
+        let mut formatted_files = Vec::new();
+
+        for file_path in &md_files {
+            let text = match std::fs::read_to_string(file_path) {
+                Ok(t) => t,
+                Err(e) => {
+                    eprintln!("error reading {}: {e}", file_path.display());
+                    error_count += 1;
+                    continue;
+                }
+            };
+            let out = match format_markdown_file(file_path, &text) {
+                Ok(out) => out,
+                Err(e) => {
+                    eprintln!("error parsing {}: {e}", file_path.display());
+                    error_count += 1;
+                    continue;
+                }
+            };
+            if write {
+                if let Err(e) = std::fs::write(file_path, &out) {
+                    eprintln!("error writing {}: {e}", file_path.display());
+                    error_count += 1;
+                    continue;
+                }
+                if !json {
+                    println!("formatted {}", file_path.display());
+                }
+            } else if !json {
+                println!("--- {} ---", file_path.display());
+                print!("{out}");
+            }
+            formatted_count += 1;
+            formatted_files.push(file_path.to_string_lossy().into_owned());
+        }
+
+        if json {
+            let val = serde_json::json!({
+                "formatted_count": formatted_count,
+                "error_count": error_count,
+                "written": write,
+                "files": formatted_files,
+            });
+            println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());
+        } else if write {
+            println!(
+                "\n{formatted_count} file(s) formatted in {}.",
+                target_path.display()
+            );
+        }
+
+        if error_count > 0 {
+            Ok(ExitCode::from(EX_DATAERR))
+        } else {
+            Ok(ExitCode::SUCCESS)
+        }
+    } else {
+        let text = std::fs::read_to_string(target_path).map_err(|e| CliError::no_input(e.to_string()))?;
+        let out =
+            format_markdown_file(target_path, &text).map_err(|e| CliError::data(e.to_string()))?;
+
+        if write {
+            std::fs::write(target_path, &out).map_err(|e| CliError::no_input(e.to_string()))?;
+            if json {
+                let val = serde_json::json!({
+                    "formatted_count": 1,
+                    "error_count": 0,
+                    "written": true,
+                    "file": path_str,
+                });
+                println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());
+            } else {
+                println!("formatted {path_str}");
+            }
+        } else if json {
+            let val = serde_json::json!({
+                "formatted_count": 1,
+                "error_count": 0,
+                "written": false,
+                "file": path_str,
+            });
+            println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());
+        } else {
+            print!("{out}");
+        }
+        Ok(ExitCode::SUCCESS)
+    }
+}
+
+fn cmd_init(args: &InitArgs) -> Result<ExitCode, CliError> {
+    let dir = &args.dir;
+    let title = &args.title;
+    let bare = args.bare;
+    let sample_name = &args.sample_name;
+    let author = args.author.clone();
+    let force = args.force;
+    let json = args.json || args.format.as_deref() == Some("json");
+
+    let options = BundleInitOptions {
+        title: title.clone(),
+        create_sample: !bare,
+        sample_name: sample_name.clone(),
+        author,
+        force,
+    };
+
+    let created = init_bundle(dir, &options)
+        .map_err(|e| CliError::data(format!("could not initialize bundle: {e}")))?;
+
+    if json {
+        let created_paths: Vec<String> = created
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect();
+        let val = serde_json::json!({
+            "status": "ok",
+            "bundle": dir.to_string_lossy(),
+            "title": title,
+            "created": created_paths,
+        });
+        println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());
+    } else {
+        println!("initialized OKF bundle at {}", dir.display());
+        for p in &created {
+            println!("  created {}", p.display());
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn cmd_new(args: &NewArgs) -> Result<ExitCode, CliError> {
+    let target_path = if args.path.len() >= 2 {
+        args.path[0].join(&args.path[1])
+    } else {
+        args.path[0].clone()
+    };
+
+    let type_ = &args.type_;
+    let title = args.title.clone();
+    let description = args.description.clone();
+    let author = args.author.clone();
+    let status = match args.status.as_str() {
+        "stable" => crate::Status::Stable,
+        "deprecated" => crate::Status::Deprecated,
+        "draft" => crate::Status::Draft,
+        other => crate::Status::Other(other.to_string()),
+    };
+    let attested = args.attested;
+    let force = args.force;
+    let json = args.json || args.format.as_deref() == Some("json");
+
+    let options = ConceptOptions {
+        type_: type_.clone(),
+        title: title.clone(),
+        description,
+        status: status.clone(),
+        author,
+        attested,
+        tags: Vec::new(),
+        force,
+    };
+
+    let created = create_concept(&target_path, &options)
+        .map_err(|e| CliError::data(format!("could not create concept: {e}")))?;
+
+    if json {
+        let title_val = title.unwrap_or_else(|| {
+            created
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .map_or_else(|| "Untitled".to_string(), crate::scaffold::title_from_name)
+        });
+        let val = serde_json::json!({
+            "status": "ok",
+            "path": created.to_string_lossy(),
+            "type": type_,
+            "title": title_val,
+            "lifecycle_status": status.to_string(),
+            "attested": attested,
+        });
+        println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());
+    } else {
+        println!("created concept at {}", created.display());
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn cmd_links(args: &LinksArgs) -> Result<ExitCode, CliError> {
+    let path = &args.bundle;
+    let bundle = load(path)?;
+    let broken_only = args.broken;
+    let check = args.check;
+    let show_external = args.all;
+    let json = args.json || args.format.as_deref() == Some("json");
+
+    if json {
+        Ok(print_links_json(&bundle, broken_only, show_external, check))
+    } else {
+        Ok(print_links_text(&bundle, broken_only, show_external, check))
+    }
+}
+
+fn cmd_diff(args: &DiffArgs) -> Result<ExitCode, CliError> {
+    let a = load(&args.a)?;
+    let b = load(&args.b)?;
+    let diff = bundle_diff(&a, &b);
+    let json = args.json || args.format.as_deref() == Some("json");
+
+    if json {
+        print_diff_json(&a, &b, &diff);
+        return Ok(ExitCode::SUCCESS);
+    }
+
+    println!("{} -> {}", a.root().display(), b.root().display());
+    println!("{diff}");
+
+    let changes = diff.added.len()
+        + diff.removed.len()
+        + diff.renamed.len()
+        + diff.content.len()
+        + diff.frontmatter.len()
+        + diff.trust.len()
+        + diff.added_links.len()
+        + diff.removed_links.len()
+        + diff.mended_links.len()
+        + diff.broken_links.len();
+    println!("\n{changes} change(s).");
+    Ok(ExitCode::SUCCESS)
+}
+
+
+fn print_validate_json(
+    bundle: &Bundle,
+    report: &Report,
+    fix: bool,
+    fixes_applied: usize,
+    files_written: usize,
+) {
+    let diagnostics: Vec<serde_json::Value> = report
+        .diagnostics
+        .iter()
+        .map(|d| {
+            serde_json::json!({
+                "severity": d.severity.to_string(),
+                "message": strip_spec_references(&d.message),
+                "path": d.path.as_ref().map(|p| p.to_string_lossy()),
+                "concept": d.concept.as_ref().map(ToString::to_string),
+                "fixable": d.fixable,
+            })
+        })
+        .collect();
+
+    let mut val = serde_json::json!({
+        "okf_version": crate::OKF_VERSION,
+        "bundle": bundle.root().to_string_lossy(),
+        "conformant": report.is_conformant(),
+        "concepts_count": bundle.len(),
+        "error_count": report.error_count(),
+        "warning_count": report.warning_count(),
+        "info_count": report.of(Severity::Info).count(),
+        "fixable_count": report.fixable_count(),
+        "diagnostics": diagnostics,
+    });
+
+    if fix {
+        val["fixes_applied"] = serde_json::json!(fixes_applied);
+        val["files_written"] = serde_json::json!(files_written);
+    }
+
+    println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());
+}
+
 
 fn print_lint_json(
     bundle: &Bundle,
@@ -572,97 +1332,6 @@ fn section_reference_end(chars: &[char], start: usize) -> Option<usize> {
     Some(i)
 }
 
-fn cmd_info(args: &[String]) -> Result<ExitCode, CliError> {
-    let path = positional(args, "<bundle>")?;
-    let bundle = load(path)?;
-    let json = is_json(args)?;
-
-    if json {
-        print_info_json(&bundle, today(args)?);
-        return Ok(ExitCode::SUCCESS);
-    }
-
-    println!("bundle:      {}", bundle.root().display());
-    println!(
-        "okf_version: {}",
-        bundle.okf_version().unwrap_or("(undeclared)")
-    );
-    println!("concepts:    {}", bundle.len());
-    println!("index.md:    {}", bundle.index_files().len());
-    println!("log.md:      {}", bundle.log_files().len());
-
-    let mut by_type: BTreeMap<String, usize> = BTreeMap::new();
-    for c in bundle.concepts() {
-        let t = c.type_().as_deref().unwrap_or("(none)").to_string();
-        *by_type.entry(t).or_default() += 1;
-    }
-    if !by_type.is_empty() {
-        println!("\ntypes:");
-        for (t, n) in &by_type {
-            println!("  {n:>4}  {t}");
-        }
-    }
-
-    let mut by_tier: BTreeMap<String, usize> = BTreeMap::new();
-    let mut by_status: BTreeMap<String, usize> = BTreeMap::new();
-    for c in bundle.concepts() {
-        *by_tier.entry(c.trust_tier().to_string()).or_default() += 1;
-        *by_status.entry(c.status().to_string()).or_default() += 1;
-    }
-    println!("\ntrust tiers:");
-    for (tier, n) in &by_tier {
-        println!("  {n:>4}  {tier}");
-    }
-    println!("\nstatus:");
-    for (status, n) in &by_status {
-        println!("  {n:>4}  {status}");
-    }
-
-    if let Some(today) = today(args)? {
-        let stale = bundle.stale_on(today);
-        println!("\nstale on {today}: {} concept(s)", stale.len());
-    }
-
-    let with_sources = bundle
-        .concepts()
-        .iter()
-        .filter(|c| !c.sources().is_empty())
-        .count();
-    let derivation_edges: usize = bundle
-        .concepts()
-        .iter()
-        .map(|c| bundle.derived_from(&c.id).len())
-        .sum();
-    println!(
-        "\nsources:     {with_sources} concept(s) record provenance; \
-         {derivation_edges} derivation edge(s) inside the bundle"
-    );
-    println!("computations: {}", bundle.attested_computations().count());
-
-    let broken = bundle.broken_links();
-    let total_links: usize = bundle
-        .concepts()
-        .iter()
-        .map(|c| bundle.links_from(&c.id).len())
-        .sum();
-    println!(
-        "links:       {total_links} internal ({} broken)",
-        broken.len()
-    );
-
-    let tags = bundle.tags();
-    if !tags.is_empty() {
-        println!("tags:        {} distinct", tags.len());
-    }
-
-    if !bundle.parse_errors().is_empty() {
-        println!("\nunparseable files:");
-        for (p, e) in bundle.parse_errors() {
-            println!("  {}: {e}", p.display());
-        }
-    }
-    Ok(ExitCode::SUCCESS)
-}
 
 fn print_info_json(bundle: &Bundle, today_date: Option<Date>) {
     let mut by_type: BTreeMap<String, usize> = BTreeMap::new();
@@ -741,53 +1410,6 @@ fn print_info_json(bundle: &Bundle, today_date: Option<Date>) {
     println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());
 }
 
-fn cmd_trust(args: &[String]) -> Result<ExitCode, CliError> {
-    let path = positional(args, "<bundle>")?;
-    let bundle = load(path)?;
-    let today = today(args)?;
-    let json = is_json(args)?;
-
-    if json {
-        print_trust_json(&bundle, today);
-        return Ok(ExitCode::SUCCESS);
-    }
-
-    for c in bundle.concepts() {
-        let fm = &c.document.frontmatter;
-        let stale = match today {
-            Some(t) if c.is_stale_on(t) => " STALE",
-            _ => "",
-        };
-        println!("{} [{}] {}{stale}", c.id, c.status(), c.trust_tier());
-
-        if let Some(generated) = fm.generated() {
-            println!("  generated: {generated}");
-        }
-        for verification in fm.verified() {
-            println!("  verified:  {verification}");
-        }
-        if let Some(stale_after) = fm.stale_after() {
-            println!("  stale_after: {stale_after}");
-        }
-        for resolved in bundle.sources_of(&c.id) {
-            let target = resolved
-                .concept
-                .as_ref()
-                .map_or_else(String::new, |id| format!(" -> {id}"));
-            println!("  source:    {}{target}", resolved.source);
-        }
-    }
-
-    let mut counts: BTreeMap<TrustTier, usize> = BTreeMap::new();
-    for c in bundle.concepts() {
-        *counts.entry(c.trust_tier()).or_default() += 1;
-    }
-    println!("\n{} concept(s):", bundle.len());
-    for (tier, n) in &counts {
-        println!("  {n:>4}  {tier}");
-    }
-    Ok(ExitCode::SUCCESS)
-}
 
 fn print_trust_json(bundle: &Bundle, today_date: Option<Date>) {
     let mut counts: BTreeMap<String, usize> = BTreeMap::new();
@@ -852,70 +1474,6 @@ fn print_trust_json(bundle: &Bundle, today_date: Option<Date>) {
     println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());
 }
 
-fn cmd_computations(args: &[String]) -> Result<ExitCode, CliError> {
-    let path = positional(args, "<bundle>")?;
-    let bundle = load(path)?;
-    let json = is_json(args)?;
-
-    if json {
-        print_computations_json(&bundle);
-        return Ok(ExitCode::SUCCESS);
-    }
-
-    let mut found = 0;
-    for c in bundle.attested_computations() {
-        let Some(contract) = c.attested_computation() else {
-            continue;
-        };
-        found += 1;
-        println!("{} ({})", c.id, c.display_title());
-        println!(
-            "  runtime:     {}",
-            contract.runtime.as_deref().unwrap_or("(missing)")
-        );
-        println!("  computation: {}", contract.computation);
-        if !contract.parameters.is_empty() {
-            let params: Vec<String> = contract
-                .parameters
-                .iter()
-                .map(ToString::to_string)
-                .collect();
-            println!("  parameters:  {}", params.join(", "));
-        }
-        if let Some(executor) = &contract.executor {
-            println!(
-                "  executor:    {} (receipt: {})",
-                executor.resource.as_deref().unwrap_or("(missing)"),
-                if executor.receipt.is_empty() {
-                    "(none)".to_string()
-                } else {
-                    executor.receipt.join(", ")
-                }
-            );
-        }
-        if let Some(attester) = &contract.attester {
-            println!(
-                "  attester:    {}",
-                attester.resource.as_deref().unwrap_or("(missing)")
-            );
-        }
-        let used_by = bundle.backlinks(&c.id);
-        if !used_by.is_empty() {
-            let ids: Vec<String> = used_by.iter().map(ToString::to_string).collect();
-            println!("  used by:     {}", ids.join(", "));
-        }
-    }
-
-    if found == 0 {
-        println!(
-            "no `Attested Computation` concepts in {}",
-            bundle.root().display()
-        );
-    } else {
-        println!("\n{found} attested computation(s).");
-    }
-    Ok(ExitCode::SUCCESS)
-}
 
 fn print_computations_json(bundle: &Bundle) {
     let comps: Vec<serde_json::Value> = bundle
@@ -972,68 +1530,6 @@ fn print_computations_json(bundle: &Bundle) {
     println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());
 }
 
-fn cmd_index(args: &[String]) -> Result<ExitCode, CliError> {
-    let path = positional(args, "<bundle>")?;
-    if !Path::new(path).is_dir() {
-        return Err(CliError::no_input(format!(
-            "bundle root is not a directory: {path}"
-        )));
-    }
-    let json = is_json(args)?;
-    let written =
-        crate::index::regenerate_indexes(path).map_err(|e| CliError::no_input(e.to_string()))?;
-    if json {
-        let val = serde_json::json!({
-            "bundle": path,
-            "regenerated_count": written.len(),
-            "regenerated": written.iter().map(|p| p.to_string_lossy()).collect::<Vec<_>>(),
-        });
-        println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());
-    } else if written.is_empty() {
-        println!("no index files written (empty bundle?)");
-    } else {
-        for p in &written {
-            println!("wrote {}", p.display());
-        }
-        println!("\n{} index file(s) regenerated.", written.len());
-    }
-    Ok(ExitCode::SUCCESS)
-}
-
-fn cmd_graph(args: &[String]) -> Result<ExitCode, CliError> {
-    let path = positional(args, "<bundle>")?;
-    let format = graph_format(args)?;
-    let sources = has_flag(args, "--sources");
-    let bundle = load(path)?;
-
-    match format {
-        GraphFormat::Text => print_graph_text(&bundle, sources),
-        GraphFormat::Mermaid => print_graph_mermaid(&bundle, sources),
-        GraphFormat::Json => print_graph_json(&bundle, sources),
-    }
-    Ok(ExitCode::SUCCESS)
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum GraphFormat {
-    Text,
-    Mermaid,
-    Json,
-}
-
-fn graph_format(args: &[String]) -> Result<GraphFormat, CliError> {
-    if has_flag(args, "--json") || has_flag(args, "-j") {
-        return Ok(GraphFormat::Json);
-    }
-    match flag_value(args, "--format") {
-        None | Some("text") => Ok(GraphFormat::Text),
-        Some("mermaid") => Ok(GraphFormat::Mermaid),
-        Some("json") => Ok(GraphFormat::Json),
-        Some(other) => Err(CliError::usage(format!(
-            "unknown --format: {other} (expected text|mermaid|json)"
-        ))),
-    }
-}
 
 fn print_graph_text(bundle: &Bundle, sources: bool) {
     for c in bundle.concepts() {
@@ -1166,35 +1662,6 @@ fn print_graph_json(bundle: &Bundle, sources: bool) {
     println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());
 }
 
-fn cmd_parse(args: &[String]) -> Result<ExitCode, CliError> {
-    let path = positional(args, "<file>")?;
-    let text = std::fs::read_to_string(path).map_err(|e| CliError::no_input(e.to_string()))?;
-    let doc = Document::parse(&text).map_err(|e| CliError::data(e.to_string()))?;
-    let json = is_json(args)?;
-
-    if json {
-        print_parse_json(&doc, path, today(args)?);
-        return Ok(ExitCode::SUCCESS);
-    }
-
-    let fm = &doc.frontmatter;
-
-    println!("frontmatter ({} key(s)):", fm.as_mapping().len());
-    print_frontmatter(fm);
-    let conformant = doc.validate().is_ok();
-    println!("\nhas non-empty `type`: {conformant}");
-    println!("body: {} byte(s)", doc.body.len());
-    let missing = doc.missing_recommended();
-    if !missing.is_empty() {
-        println!("\nmissing recommended keys: {}", missing.join(", "));
-    }
-    print_parse_trust(fm);
-    print_parse_sources(fm);
-    print_parse_attributions(&doc);
-    print_parse_computation(&doc);
-    print_parse_links(&doc);
-    Ok(ExitCode::SUCCESS)
-}
 
 fn print_parse_json(doc: &Document, path: &str, today_date: Option<Date>) {
     let fm = &doc.frontmatter;
@@ -1430,134 +1897,6 @@ fn format_markdown_file(file_path: &Path, text: &str) -> Result<String, Document
 }
 
 #[allow(clippy::too_many_lines)]
-fn cmd_fmt(args: &[String]) -> Result<ExitCode, CliError> {
-    let path = positional(args, "<path>")?;
-    let write = has_flag(args, "-w") || has_flag(args, "--write");
-    let check = has_flag(args, "-c") || has_flag(args, "--check");
-    let json = is_json(args)?;
-    let target_path = Path::new(path);
-
-    if !target_path.exists() {
-        return Err(CliError::no_input(format!(
-            "No such file or directory: {path}"
-        )));
-    }
-
-    if check {
-        return cmd_fmt_check(target_path, path, json);
-    }
-
-    if target_path.is_dir() {
-        let mut md_files = Vec::new();
-        collect_markdown_files(target_path, &mut md_files)?;
-        md_files.sort();
-
-        if md_files.is_empty() {
-            if json {
-                let val = serde_json::json!({
-                    "formatted_count": 0,
-                    "error_count": 0,
-                    "written": write,
-                    "files": Vec::<String>::new(),
-                });
-                println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());
-            } else {
-                println!("no markdown files found in {}", target_path.display());
-            }
-            return Ok(ExitCode::SUCCESS);
-        }
-
-        let mut formatted_count = 0;
-        let mut error_count = 0;
-        let mut formatted_files = Vec::new();
-
-        for file_path in &md_files {
-            let text = match std::fs::read_to_string(file_path) {
-                Ok(t) => t,
-                Err(e) => {
-                    eprintln!("error reading {}: {e}", file_path.display());
-                    error_count += 1;
-                    continue;
-                }
-            };
-            let out = match format_markdown_file(file_path, &text) {
-                Ok(out) => out,
-                Err(e) => {
-                    eprintln!("error parsing {}: {e}", file_path.display());
-                    error_count += 1;
-                    continue;
-                }
-            };
-            if write {
-                if let Err(e) = std::fs::write(file_path, &out) {
-                    eprintln!("error writing {}: {e}", file_path.display());
-                    error_count += 1;
-                    continue;
-                }
-                if !json {
-                    println!("formatted {}", file_path.display());
-                }
-            } else if !json {
-                println!("--- {} ---", file_path.display());
-                print!("{out}");
-            }
-            formatted_count += 1;
-            formatted_files.push(file_path.to_string_lossy().into_owned());
-        }
-
-        if json {
-            let val = serde_json::json!({
-                "formatted_count": formatted_count,
-                "error_count": error_count,
-                "written": write,
-                "files": formatted_files,
-            });
-            println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());
-        } else if write {
-            println!(
-                "\n{formatted_count} file(s) formatted in {}.",
-                target_path.display()
-            );
-        }
-
-        if error_count > 0 {
-            Ok(ExitCode::from(EX_DATAERR))
-        } else {
-            Ok(ExitCode::SUCCESS)
-        }
-    } else {
-        let text = std::fs::read_to_string(path).map_err(|e| CliError::no_input(e.to_string()))?;
-        let out =
-            format_markdown_file(target_path, &text).map_err(|e| CliError::data(e.to_string()))?;
-
-        if write {
-            std::fs::write(target_path, &out).map_err(|e| CliError::no_input(e.to_string()))?;
-            if json {
-                let val = serde_json::json!({
-                    "formatted_count": 1,
-                    "error_count": 0,
-                    "written": true,
-                    "file": path,
-                });
-                println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());
-            } else {
-                println!("formatted {path}");
-            }
-        } else if json {
-            let val = serde_json::json!({
-                "formatted_count": 1,
-                "error_count": 0,
-                "written": false,
-                "file": path,
-            });
-            println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());
-        } else {
-            print!("{out}");
-        }
-        Ok(ExitCode::SUCCESS)
-    }
-}
-
 fn cmd_fmt_check(target_path: &Path, path_str: &str, json: bool) -> Result<ExitCode, CliError> {
     let mut files = Vec::new();
     if target_path.is_dir() {
@@ -1671,125 +2010,6 @@ fn collect_markdown_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), Cl
     Ok(())
 }
 
-fn cmd_init(args: &[String]) -> Result<ExitCode, CliError> {
-    let pos = positionals(args);
-    let dir = pos.first().copied().unwrap_or(".");
-    let title = flag_value(args, "--title").unwrap_or("Knowledge Base");
-    let bare = has_flag(args, "--bare") || has_flag(args, "--no-sample");
-    let sample_name = flag_value(args, "--sample-name").unwrap_or("overview");
-    let author = flag_value(args, "--author").map(ToString::to_string);
-    let force = has_flag(args, "-f") || has_flag(args, "--force");
-    let json = is_json(args)?;
-
-    let options = BundleInitOptions {
-        title: title.to_string(),
-        create_sample: !bare,
-        sample_name: sample_name.to_string(),
-        author,
-        force,
-    };
-
-    let created = init_bundle(dir, &options)
-        .map_err(|e| CliError::data(format!("could not initialize bundle: {e}")))?;
-
-    if json {
-        let created_paths: Vec<String> = created
-            .iter()
-            .map(|p| p.to_string_lossy().into_owned())
-            .collect();
-        let val = serde_json::json!({
-            "status": "ok",
-            "bundle": dir,
-            "title": title,
-            "created": created_paths,
-        });
-        println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());
-    } else {
-        println!("initialized OKF bundle at {dir}");
-        for p in &created {
-            println!("  created {}", p.display());
-        }
-    }
-    Ok(ExitCode::SUCCESS)
-}
-
-fn cmd_new(args: &[String]) -> Result<ExitCode, CliError> {
-    let pos = positionals(args);
-    if pos.is_empty() {
-        return Err(CliError::usage(
-            "missing concept path (usage: okf new <path> or okf new <bundle> <concept-id>)",
-        ));
-    }
-    let target_path = if pos.len() >= 2 {
-        Path::new(pos[0]).join(pos[1])
-    } else {
-        PathBuf::from(pos[0])
-    };
-
-    let type_ = flag_value(args, "--type").unwrap_or("Concept");
-    let title = flag_value(args, "--title").map(ToString::to_string);
-    let description = flag_value(args, "--description").map(ToString::to_string);
-    let author = flag_value(args, "--author").map(ToString::to_string);
-    let status = match flag_value(args, "--status") {
-        Some("stable") => crate::Status::Stable,
-        Some("deprecated") => crate::Status::Deprecated,
-        Some("draft") | None => crate::Status::Draft,
-        Some(other) => crate::Status::Other(other.to_string()),
-    };
-    let attested = has_flag(args, "--attested");
-    let force = has_flag(args, "-f") || has_flag(args, "--force");
-    let json = is_json(args)?;
-
-    let options = ConceptOptions {
-        type_: type_.to_string(),
-        title: title.clone(),
-        description,
-        status: status.clone(),
-        author,
-        attested,
-        tags: Vec::new(),
-        force,
-    };
-
-    let created = create_concept(&target_path, &options)
-        .map_err(|e| CliError::data(format!("could not create concept: {e}")))?;
-
-    if json {
-        let title_val = title.unwrap_or_else(|| {
-            created
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .map_or_else(|| "Untitled".to_string(), crate::scaffold::title_from_name)
-        });
-        let val = serde_json::json!({
-            "status": "ok",
-            "path": created.to_string_lossy(),
-            "type": type_,
-            "title": title_val,
-            "lifecycle_status": status.to_string(),
-            "attested": attested,
-        });
-        println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());
-    } else {
-        println!("created concept at {}", created.display());
-    }
-    Ok(ExitCode::SUCCESS)
-}
-
-fn cmd_links(args: &[String]) -> Result<ExitCode, CliError> {
-    let path = positional(args, "<bundle>")?;
-    let bundle = load(path)?;
-    let broken_only = has_flag(args, "--broken");
-    let check = has_flag(args, "--check");
-    let show_external = has_flag(args, "--all") || has_flag(args, "--external");
-    let json = is_json(args)?;
-
-    if json {
-        Ok(print_links_json(&bundle, broken_only, show_external, check))
-    } else {
-        Ok(print_links_text(&bundle, broken_only, show_external, check))
-    }
-}
 
 fn print_links_text(
     bundle: &Bundle,
@@ -1945,37 +2165,6 @@ fn print_links_json(
     }
 }
 
-fn cmd_diff(args: &[String]) -> Result<ExitCode, CliError> {
-    let paths = positionals(args);
-    if paths.len() < 2 {
-        return Err(CliError::usage("usage: okf diff <a> <b>"));
-    }
-    let a = load(paths[0])?;
-    let b = load(paths[1])?;
-    let diff = bundle_diff(&a, &b);
-    let json = is_json(args)?;
-
-    if json {
-        print_diff_json(&a, &b, &diff);
-        return Ok(ExitCode::SUCCESS);
-    }
-
-    println!("{} -> {}", a.root().display(), b.root().display());
-    println!("{diff}");
-
-    let changes = diff.added.len()
-        + diff.removed.len()
-        + diff.renamed.len()
-        + diff.content.len()
-        + diff.frontmatter.len()
-        + diff.trust.len()
-        + diff.added_links.len()
-        + diff.removed_links.len()
-        + diff.mended_links.len()
-        + diff.broken_links.len();
-    println!("\n{changes} change(s).");
-    Ok(ExitCode::SUCCESS)
-}
 
 #[allow(clippy::too_many_lines)]
 fn print_diff_json(a: &Bundle, b: &Bundle, diff: &crate::BundleDiff) {

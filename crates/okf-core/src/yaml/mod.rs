@@ -1,4 +1,4 @@
-//! A small, dependency-free YAML *subset* used for OKF frontmatter.
+//! A small YAML *subset* parser used for OKF frontmatter.
 //!
 //! OKF frontmatter is, in practice, a flat-ish YAML mapping of scalars, lists,
 //! and occasionally nested mappings (see the [specification][spec]). A

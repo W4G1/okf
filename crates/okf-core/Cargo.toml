@@ -1,6 +1,6 @@
 [package]
 name = "okf-core"
-description = "A pure-Rust, zero-dependency implementation of the Open Knowledge Format (OKF) v0.2 specification: parser, model, validator, provenance/trust/attestation families, link graph, and index/log tooling."
+description = "A pure-Rust implementation of the Open Knowledge Format (OKF) v0.2 specification: parser, model, validator, provenance/trust/attestation families, link graph, and index/log tooling."
 documentation = "https://docs.rs/okf-core"
 readme = "../../README.md"
 version.workspace = true
@@ -12,10 +12,8 @@ homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
-# OKF is, by design, "markdown files with YAML frontmatter". None of that
-# requires a third-party crate, so this implementation has *zero* dependencies
-# and builds on the standard library alone (including its own YAML-subset
-# parser, markdown link scanner, and directory walker).
+# OKF is, by design, "markdown files with YAML frontmatter", implemented
+# with its own YAML-subset parser, markdown link scanner, and directory walker.
 [dependencies]
 
 # Path-only (no version), so cargo strips this cycle-free dev-dependency when

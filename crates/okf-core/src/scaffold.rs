@@ -32,7 +32,7 @@ pub struct BundleInitOptions {
 impl Default for BundleInitOptions {
     fn default() -> Self {
         Self {
-            title: "Knowledge Base".to_string(),
+            title: "OKF Bundle".to_string(),
             create_sample: true,
             sample_name: "overview".to_string(),
             author: None,

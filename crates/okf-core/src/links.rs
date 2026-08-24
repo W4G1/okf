@@ -1,7 +1,7 @@
 //! Markdown link extraction, classification, and path-valued fields.
 //!
 //! OKF relationships are expressed as ordinary markdown links, so this module
-//! provides a small, dependency-free scanner for inline `[text](dest)` links
+//! provides a small scanner for inline `[text](dest)` links
 //! plus the link-classification rules (absolute bundle-relative vs.
 //! relative vs. external). It ignores links inside fenced code blocks and
 //! inline code spans, which are content rather than relationships.

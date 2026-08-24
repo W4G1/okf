@@ -577,7 +577,6 @@ This repository is structured as a multi-crate Rust workspace:
 
 ## Design choices
 
-- **Zero third-party dependencies:** `okf-core` and `okf-validator` use only Rust standard library components (`std`). No external YAML parsers, no external regex crates, no heavy runtime.
 - **Full frontmatter preservation:** Rather than deserializing into rigid structs (which would drop custom or extension keys), `Frontmatter` maintains an order-preserving map and layers typed accessors on top. Unknown keys survive round-trips untouched.
 - **Computed, not stored, trust signals:** Trust tiers and credibility signals are derived at query time from verified actors. Storing a subjective trust number is fragile and non-portable.
 - **Permissive and resilient loading:** `Bundle::load` never crashes on a single broken file; parse errors and broken links are collected as diagnostic graph items so you can inspect and fix them.

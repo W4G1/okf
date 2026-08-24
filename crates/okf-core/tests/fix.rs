@@ -187,7 +187,7 @@ fn adds_missing_top_level_heading() {
                    by: human:alice\n\
                    at: 2026-01-01T00:00:00Z\n\
                  ---\n\n\
-                 Welcome to the knowledge base.\n";
+                 Welcome to the bundle.\n";
     let doc = Document::parse(input).unwrap();
     let opts = FixOptions::default();
 
@@ -195,7 +195,7 @@ fn adds_missing_top_level_heading() {
     assert!(
         remediated
             .body
-            .starts_with("# Getting Started\n\nWelcome to the knowledge base.")
+            .starts_with("# Getting Started\n\nWelcome to the bundle.")
     );
     assert!(
         fixes.iter().any(
@@ -352,7 +352,7 @@ fn remediate_bundle_end_to_end() {
     let tmp = TempDir::new();
     tmp.write(
         "index.md",
-        "---\nokf_version: \"0.2\"\n---\n\n# Knowledge Base\n",
+        "---\nokf_version: \"0.2\"\n---\n\n# OKF Bundle\n",
     );
     tmp.write(
         "log.md",

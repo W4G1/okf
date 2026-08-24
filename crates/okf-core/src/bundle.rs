@@ -164,8 +164,7 @@ impl Bundle {
         // Parse every non-reserved file in parallel. The work per file is
         // I/O-bound (`fs::read_to_string`) followed by CPU-bound
         // (`Document::parse`), so parallelizing across the file list scales
-        // with cores on large bundles while staying zero-dependency via
-        // `std::thread::scope`. Results are merged in chunk order so the
+        // with cores on large bundles via `std::thread::scope`. Results are merged in chunk order so the
         // vectors below retain the deterministic sorted order callers rely on.
         let outcomes = parse_files_parallel(&root, &md_files)?;
 

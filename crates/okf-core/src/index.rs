@@ -9,7 +9,7 @@
 //! `_build_index_text`. The reference synthesizes subdirectory descriptions
 //! with an LLM; since OKF tooling must not require any particular model or
 //! network access, the description synthesizer here is a pluggable closure with
-//! a deterministic, dependency-free default ([`default_synthesize`]). Ported to
+//! a deterministic default ([`default_synthesize`]). Ported to
 //! Rust and modified from the original Apache-2.0 Python source; see the NOTICE
 //! file.
 

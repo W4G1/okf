@@ -1,4 +1,4 @@
-//! Shared test helpers: a tiny dependency-free temporary-directory fixture.
+//! Shared test helpers: a temporary-directory fixture.
 //!
 //! `#![allow(dead_code)]` because each integration-test binary includes this
 //! module but uses a different subset of its helpers.

@@ -1,6 +1,6 @@
 //! # okf-core: the Open Knowledge Format, in pure Rust
 //!
-//! A dependency-free implementation of the [Open Knowledge Format (OKF)
+//! A pure-Rust implementation of the [Open Knowledge Format (OKF)
 //! v0.2][spec], Google's open, human- and agent-friendly format for
 //! representing knowledge as a directory of markdown files with YAML
 //! frontmatter.
@@ -8,8 +8,7 @@
 //! OKF is intentionally minimal ("if you can `cat` a file, you can read OKF; if
 //! you can `git clone` a repo, you can ship it"), so this crate implements it
 //! with the standard library alone: its own [YAML-subset parser](yaml), a
-//! markdown [link scanner](links), and a directory walker. There are **no
-//! third-party dependencies**. The companion `okf` crate re-exports this
+//! markdown [link scanner](links), and a directory walker. The companion `okf` crate re-exports this
 //! entire library and ships the `okf` command-line tool.
 //!
 //! ## Model
