@@ -25,7 +25,7 @@ description: Headline income-statement figures for a fiscal year.
 tags: [finance, income-statement]
 status: stable
 generated: { by: reference_agent/gemini-2.5-pro, at: 2026-06-20T22:53:05Z }
-verified: { by: human:ahormati, at: 2026-06-25T09:00:00Z }
+verified: { by: human:walter, at: 2026-06-25T09:00:00Z }
 stale_after: 2026-12-31T00:00:00Z
 sources:
   - id: fpa-handbook
@@ -57,7 +57,7 @@ executor:
 attester:
   resource: references/attesters/sql-equality.py
 generated: { by: reference_agent/gemini-2.5-pro, at: 2026-06-28T14:00:00Z }
-verified: { by: human:ahormati, at: 2026-06-25T09:00:00Z }
+verified: { by: human:walter, at: 2026-06-25T09:00:00Z }
 stale_after: 2026-12-31T00:00:00Z
 sources:
   - id: rev-policy
@@ -529,7 +529,7 @@ fn malformed_families_warn_without_breaking_conformance() {
          status: experimental\n\
          stale_after: soon\n\
          generated: { at: 2026-06-20T22:53:05Z }\n\
-         verified: [{ by: human:ahormati, at: yesterday }]\n\
+         verified: [{ by: human:walter, at: yesterday }]\n\
          sources:\n\
          \x20 - { id: dup, resource: https://a }\n\
          \x20 - { id: dup, title: no resource }\n\
@@ -873,4 +873,229 @@ fn regenerating_indexes_keeps_the_declared_version() {
         computations.starts_with("# Attested Computation"),
         "{computations}"
     );
+}
+
+#[test]
+fn test_validate_warns_when_verified_predates_generated() {
+    let tmp = TempDir::new();
+    tmp.write("index.md", "# Test\n\n* [Metric](metric.md)\n");
+    tmp.write(
+        "metric.md",
+        "---\ntype: Metric\ntitle: Revenue\ndescription: d\n\
+         generated: { by: ref/x, at: 2026-06-28T14:00:00Z }\n\
+         verified: { by: human:a, at: 2026-06-25T09:00:00Z }\n\
+         ---\n\n# Definition\n\nProse.\n",
+    );
+    let bundle = Bundle::load(tmp.path()).unwrap();
+    let report = validate_bundle(&bundle);
+    let warnings: Vec<_> = report
+        .of(Severity::Warning)
+        .filter(|d| d.message.contains("predates `generated.at`"))
+        .collect();
+    assert_eq!(warnings.len(), 1, "expected warning for verified predating generated: {warnings:#?}");
+}
+
+#[test]
+fn test_validate_warns_on_future_timestamp() {
+    let tmp = TempDir::new();
+    tmp.write("index.md", "# Test\n\n* [Metric](metric.md)\n");
+    tmp.write(
+        "metric.md",
+        "---\ntype: Metric\ntitle: Revenue\ndescription: d\n\
+         generated: { by: ref/x, at: 2099-01-01T00:00:00Z }\n\
+         verified: { by: human:a, at: 2026-06-25T09:00:00Z }\n\
+         ---\n\n# Definition\n\nProse.\n",
+    );
+    let bundle = Bundle::load(tmp.path()).unwrap();
+    let today = Date::new(2026, 7, 1).unwrap();
+    let report = validate_bundle_at(&bundle, Some(today));
+    let warnings: Vec<_> = report
+        .of(Severity::Warning)
+        .filter(|d| d.message.contains("is in the future"))
+        .collect();
+    assert_eq!(warnings.len(), 1, "expected warning for future timestamp: {warnings:#?}");
+}
+
+#[test]
+fn test_validate_warns_on_empty_body() {
+    let tmp = TempDir::new();
+    tmp.write("index.md", "# Test\n\n* [Metric](metric.md)\n");
+    tmp.write(
+        "metric.md",
+        "---\ntype: Metric\ntitle: Revenue\ndescription: d\n\
+         generated: { by: ref/x, at: 2026-06-20T22:53:05Z }\n\
+         ---\n\n   \n",
+    );
+    let bundle = Bundle::load(tmp.path()).unwrap();
+    let report = validate_bundle(&bundle);
+    let warnings: Vec<_> = report
+        .of(Severity::Warning)
+        .filter(|d| d.message.contains("body is empty"))
+        .collect();
+    assert_eq!(warnings.len(), 1, "expected warning for empty body: {warnings:#?}");
+}
+
+#[test]
+fn test_validate_warns_on_circular_derivation() {
+    let tmp = TempDir::new();
+    tmp.write("index.md", "# Test\n\n* [A](a.md)\n* [B](b.md)\n");
+    tmp.write(
+        "a.md",
+        "---\ntype: Metric\ntitle: A\ndescription: d\n\
+         generated: { by: ref/x, at: 2026-06-20T22:53:05Z }\n\
+         sources:\n  - { resource: b.md }\n\
+         ---\n\n# Definition\n\nSee [B](b.md).\n",
+    );
+    tmp.write(
+        "b.md",
+        "---\ntype: Metric\ntitle: B\ndescription: d\n\
+         generated: { by: ref/x, at: 2026-06-20T22:53:05Z }\n\
+         sources:\n  - { resource: a.md }\n\
+         ---\n\n# Definition\n\nSee [A](a.md).\n",
+    );
+    let bundle = Bundle::load(tmp.path()).unwrap();
+    let report = validate_bundle(&bundle);
+    let warnings: Vec<_> = report
+        .of(Severity::Warning)
+        .filter(|d| d.message.contains("circular concept derivation"))
+        .collect();
+    assert!(!warnings.is_empty(), "expected warning for circular derivation: {warnings:#?}");
+}
+
+#[test]
+fn test_validate_warns_on_missing_attestation_resource_on_disk() {
+    let tmp = TempDir::new();
+    tmp.write("index.md", "# Test\n\n* [Calc](comp.md)\n");
+    tmp.write(
+        "comp.md",
+        "---\ntype: Attested Computation\ntitle: Calc\ndescription: d\n\
+         generated: { by: ref/x, at: 2026-06-20T22:53:05Z }\n\
+         runtime: python\n\
+         parameters:\n  - { name: x, type: string }\n\
+         executor:\n  resource: non_existent_script.py\n  receipt: [res]\n\
+         attester:\n  resource: non_existent_verifier.py\n\
+         ---\n\n# Calc\n\n# Computation\n\n```python\nx = 1\n```\n",
+    );
+    let bundle = Bundle::load(tmp.path()).unwrap();
+    let report = validate_bundle(&bundle);
+    let warnings: Vec<_> = report
+        .of(Severity::Warning)
+        .filter(|d| d.message.contains("which does not exist on disk"))
+        .collect();
+    assert_eq!(warnings.len(), 2, "expected 2 warnings for missing resources on disk: {warnings:#?}");
+}
+
+#[test]
+fn test_validate_reports_broken_cross_link_info() {
+    let tmp = TempDir::new();
+    tmp.write("index.md", "# Test\n\n* [A](a.md)\n");
+    tmp.write(
+        "a.md",
+        "---\ntype: Metric\ntitle: A\ndescription: d\n\
+         generated: { by: ref/x, at: 2026-06-20T22:53:05Z }\n\
+         ---\n\n# Definition\n\nLink to [nonexistent](ghost.md).\n",
+    );
+    let bundle = Bundle::load(tmp.path()).unwrap();
+    let report = validate_bundle(&bundle);
+    let infos: Vec<_> = report
+        .of(Severity::Info)
+        .filter(|d| d.message.contains("ghost.md"))
+        .collect();
+    assert_eq!(infos.len(), 1, "expected info for broken link: {infos:#?}");
+}
+
+#[test]
+fn test_validate_warns_on_link_to_deprecated_concept() {
+    let tmp = TempDir::new();
+    tmp.write("index.md", "# Test\n\n* [New](new.md)\n* [Old](old.md)\n");
+    tmp.write(
+        "old.md",
+        "---\ntype: Metric\ntitle: Old\ndescription: d\nstatus: deprecated\n\
+         generated: { by: ref/x, at: 2026-06-20T22:53:05Z }\n\
+         ---\n\n# Definition\n\nProse.\n",
+    );
+    tmp.write(
+        "new.md",
+        "---\ntype: Metric\ntitle: New\ndescription: d\n\
+         generated: { by: ref/x, at: 2026-06-20T22:53:05Z }\n\
+         ---\n\n# Definition\n\nSee [the old one](old.md).\n",
+    );
+    let bundle = Bundle::load(tmp.path()).unwrap();
+    let report = validate_bundle(&bundle);
+    let warnings: Vec<_> = report
+        .of(Severity::Warning)
+        .filter(|d| d.message.contains("links to deprecated concept `old`"))
+        .collect();
+    assert_eq!(warnings.len(), 1, "expected warning for linking to deprecated concept: {warnings:#?}");
+}
+
+#[test]
+fn test_validate_warns_on_duplicate_concept_titles() {
+    let tmp = TempDir::new();
+    tmp.write("index.md", "# Test\n\n* [a](a.md)\n* [b](b.md)\n");
+    for name in ["a.md", "b.md"] {
+        tmp.write(
+            name,
+            "---\ntype: Metric\ntitle: Same title\ndescription: d\n\
+             generated: { by: ref/x, at: 2026-06-20T22:53:05Z }\n\
+             ---\n\n# Definition\n\nProse.\n",
+        );
+    }
+    let bundle = Bundle::load(tmp.path()).unwrap();
+    let report = validate_bundle(&bundle);
+    let warnings: Vec<_> = report
+        .of(Severity::Warning)
+        .filter(|d| d.message.contains("`title` \"Same title\" is shared with another concept"))
+        .collect();
+    assert_eq!(warnings.len(), 2, "expected 2 warnings for duplicate titles: {warnings:#?}");
+}
+
+#[test]
+fn test_validate_warns_on_duplicate_log_dates() {
+    let tmp = TempDir::new();
+    tmp.write("index.md", "# Test\n\n* [Revenue](metric.md)\n");
+    tmp.write(
+        "metric.md",
+        "---\ntype: Metric\ntitle: Revenue\ndescription: d\n\
+         generated: { by: ref/x, at: 2026-06-20T22:53:05Z }\n\
+         ---\n\n# Definition\n\nProse.\n",
+    );
+    tmp.write(
+        "log.md",
+        "# Update Log\n\n## 2026-05-22\n* **Update**: First.\n\n## 2026-05-22\n* **Update**: Duplicate date.\n",
+    );
+    let bundle = Bundle::load(tmp.path()).unwrap();
+    let report = validate_bundle(&bundle);
+    let warnings: Vec<_> = report
+        .of(Severity::Warning)
+        .filter(|d| d.message.contains("duplicate date heading `## 2026-05-22`"))
+        .collect();
+    assert_eq!(warnings.len(), 1, "expected warning for duplicate log date: {warnings:#?}");
+    assert!(warnings[0].fixable, "duplicate log date warning should be fixable");
+}
+
+#[test]
+fn test_validate_warns_on_stale_index() {
+    let tmp = TempDir::new();
+    tmp.write("index.md", "# Test\n\n* [A](a.md)\n");
+    tmp.write(
+        "a.md",
+        "---\ntype: Metric\ntitle: A\ndescription: d\n\
+         generated: { by: ref/x, at: 2026-06-20T22:53:05Z }\n\
+         ---\n\n# Definition\n\nProse.\n",
+    );
+    tmp.write(
+        "b.md",
+        "---\ntype: Metric\ntitle: B\ndescription: d\n\
+         generated: { by: ref/x, at: 2026-06-20T22:53:05Z }\n\
+         ---\n\n# Definition\n\nProse.\n",
+    );
+    let bundle = Bundle::load(tmp.path()).unwrap();
+    let report = validate_bundle(&bundle);
+    let warnings: Vec<_> = report
+        .of(Severity::Warning)
+        .filter(|d| d.message.contains("index.md is out of sync with its directory"))
+        .collect();
+    assert_eq!(warnings.len(), 1, "expected warning for stale index: {warnings:#?}");
+    assert!(warnings[0].fixable, "stale index warning should be fixable");
 }

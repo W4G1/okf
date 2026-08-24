@@ -1,4 +1,4 @@
-//! Conformance checking against OKF v0.2.
+//! Conformance checking and structural validation against OKF v0.2.
 //!
 //! A bundle is **conformant** if (1) every non-reserved `.md` file has a
 //! parseable frontmatter block, (2) every frontmatter has a non-empty `type`,
@@ -7,14 +7,51 @@
 //! fields, unknown types or keys, broken links, or missing `index.md` files.
 //!
 //! Accordingly, [`validate_bundle`] reports only true conformance violations as
-//! [`Severity::Error`]. The v0.2 families are all optional, so
-//! everything they contribute here is a [`Severity::Warning`] (a producer
-//! mistake worth fixing) or [`Severity::Info`] (a permitted state worth
-//! knowing about, such as a broken link or a concept past its `stale_after`).
+//! [`Severity::Error`]. Material soft-guidance deviations, data integrity issues,
+//! temporal inconsistencies, and contract discrepancies are
+//! reported as [`Severity::Warning`] (producer mistakes worth fixing)
+//! or [`Severity::Info`] (permitted states worth noting).
 //!
 //! Staleness is the one check that depends on the wall clock, so it is opt-in:
 //! [`validate_bundle`] is deterministic and [`validate_bundle_at`] takes the
 //! date to compare against.
+//!
+//! | Code | Severity | Finding                                                                            |
+//! |------|----------|------------------------------------------------------------------------------------|
+//! | V1   | error    | unparseable concept document (frontmatter parse error)                             |
+//! | V2   | error    | missing or non-scalar required `type` field                                        |
+//! | V3   | warning  | missing recommended frontmatter field (`title`, `description`, `generated`)        |
+//! | V4   | warning  | concept body is empty                                                              |
+//! | V5   | warning  | `tags` is not a YAML list of strings                                               |
+//! | V6   | warning  | `generated` is malformed, missing `by`, or `at` is not a valid ISO datetime        |
+//! | V7   | warning  | `verified` is malformed, missing `by`, or `at` is not a valid ISO datetime         |
+//! | V8   | warning  | latest `verified.at` predates `generated.at` (content modified after verification) |
+//! | V9   | warning  | timestamp in `generated`, `verified`, or `sources` is in the future                |
+//! | V10  | warning  | unknown `status` value (not `draft`, `stable`, `deprecated`)                       |
+//! | V11  | warning  | `stale_after` is not a valid ISO datetime                                          |
+//! | V12  | info     | stale concept (past `stale_after` with `--today`)                                  |
+//! | V13  | warning  | `sources` malformed, missing `resource`, or duplicate `id`                         |
+//! | V14  | warning  | `sources.last_modified` or `usage_window` not valid ISO datetime                   |
+//! | V15  | warning  | `sources.usage_count` without `usage_window` or not an integer                     |
+//! | V16  | warning  | footnote attribution matches no `sources[].id`                                     |
+//! | V17  | warning  | footnote is cited in body but never defined                                        |
+//! | V18  | warning  | circular concept derivation in sources graph                                       |
+//! | V19  | warning  | legacy v0.1 `timestamp` present (superseded by `generated`)                        |
+//! | V20  | warning  | legacy v0.1 body `# Citations` list present (superseded by `sources`)              |
+//! | V21  | warning  | missing `runtime` or `computation` source on `Attested Computation`                |
+//! | V22  | warning  | contract `parameters`, `executor`, or `attester` missing required fields           |
+//! | V23  | warning  | `executor`, `attester`, or `computation` resource missing on disk                  |
+//! | V26  | info     | computation fields on non-computation concept type                                 |
+//! | V27  | info     | explicit path field does not resolve to a file in the bundle                       |
+//! | V28  | info     | broken link (target does not resolve to a concept in the bundle)                   |
+//! | V29  | warning  | links to a `status: deprecated` concept                                            |
+//! | V30  | warning  | `title` shared with another concept                                                |
+//! | V31  | warning  | concept-id segment outside portable ASCII set                                      |
+//! | V32  | error    | reserved `index.md` or `log.md` unreadable, unparseable, or bad frontmatter        |
+//! | V33  | error    | reserved `log.md` structural errors or invalid ISO date format                     |
+//! | V34  | warning  | `log.md` contains duplicate date heading `## YYYY-MM-DD`                           |
+//! | V35  | warning  | existing `index.md` is out of sync with its directory                              |
+//! | V36  | info     | bundle declares unrecognized or non-target `okf_version`                           |
 
 use okf_core::bundle::Bundle;
 use okf_core::computation::{ATTESTED_COMPUTATION_TYPE, ComputationSource};
@@ -26,9 +63,9 @@ use okf_core::log::Log;
 use okf_core::provenance::{ResourceKind, Source};
 use okf_core::trust::{STATUS_VALUES, Verification};
 use okf_core::yaml::Value;
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Severity of a diagnostic.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -37,7 +74,7 @@ pub enum Severity {
     Error,
     /// A soft-guidance deviation (the bundle is still conformant).
     Warning,
-    /// Informational note, for example a broken but permitted cross-link.
+    /// Informational note, for example a permitted but noteworthy cross-link or draft state.
     Info,
 }
 
@@ -167,14 +204,16 @@ pub fn validate_bundle_at(bundle: &Bundle, today: Option<Date>) -> Report {
             }
         }
         check_recommended(&mut cx, &concept.document);
+        check_empty_body(&mut cx, &concept.document);
         check_tags(&mut cx, fm);
-        check_trust(&mut cx, fm);
+        check_trust(&mut cx, fm, today);
         check_lifecycle(&mut cx, fm, today);
-        check_provenance(&mut cx, fm);
+        check_provenance(&mut cx, fm, today);
         check_attribution(&mut cx, &concept.document);
         check_legacy(&mut cx, &concept.document);
-        check_computation(&mut cx, &concept.document);
+        check_computation(&mut cx, bundle, &concept.document);
         check_path_fields(&mut cx, bundle, fm);
+        check_links_to_deprecated(&mut cx, bundle);
     }
 
     // (3) Reserved files must follow their structure when present.
@@ -182,7 +221,12 @@ pub fn validate_bundle_at(bundle: &Bundle, today: Option<Date>) -> Report {
     validate_reserved(bundle, &mut report);
     check_declared_version(bundle, &mut report);
 
-    // Broken cross-links are permitted; report them as info only.
+    // Cross-bundle checks:
+    check_duplicate_titles(bundle, &mut report);
+    check_circular_derivation(bundle, &mut report);
+    check_stale_indexes(bundle, &mut report);
+
+    // Broken cross-links are permitted by the spec; report them as info.
     for (source, raw) in bundle.broken_links() {
         report.info(
             None,
@@ -275,7 +319,7 @@ impl Report {
     }
 }
 
-/// Recommended fields, plus `generated`.
+/// Recommended fields (`title`, `description`, `status`, `generated`).
 ///
 /// Always a warning: conformance forbids rejecting a concept for a missing optional
 /// field, however much a producer wants it filled in.
@@ -292,6 +336,13 @@ fn check_recommended(cx: &mut Context, doc: &Document) {
             format!("missing recommended frontmatter field `{field}`"),
             fixable,
         );
+    }
+}
+
+/// Checks that the document body is not empty.
+fn check_empty_body(cx: &mut Context, doc: &Document) {
+    if doc.body.trim().is_empty() {
+        cx.warn("body is empty; a concept should carry at least one line of prose or code");
     }
 }
 
@@ -314,7 +365,10 @@ fn check_tags(cx: &mut Context, fm: &Frontmatter) {
 }
 
 /// `generated` and `verified`.
-fn check_trust(cx: &mut Context, fm: &Frontmatter) {
+fn check_trust(cx: &mut Context, fm: &Frontmatter, today: Option<Date>) {
+    let check_date = today.or_else(Date::today_utc);
+    let threshold_seconds = check_date.map(|d| (d.days_since_epoch() + 1) * 86_400);
+
     if let Some(value) = fm.get("generated").filter(|v| !v.is_empty_value()) {
         match fm.generated() {
             None => cx.warn(format!(
@@ -325,11 +379,22 @@ fn check_trust(cx: &mut Context, fm: &Frontmatter) {
                 if generated.by.is_none() {
                     cx.warn("`generated.by` is required within `generated`");
                 }
-                if let Some(at) = generated.at.filter(|a| !a.is_valid()) {
-                    cx.warn(format!(
-                        "`generated.at` is not an ISO-8601 datetime with an explicit offset: {:?}",
-                        at.raw
-                    ));
+                match generated.at {
+                    None => {}
+                    Some(at) if !at.is_valid() => {
+                        cx.warn(format!(
+                            "`generated.at` is not an ISO-8601 datetime with an explicit offset: {:?}",
+                            at.raw
+                        ));
+                    }
+                    Some(at) => {
+                        if let Some(threshold) = threshold_seconds
+                            && let Some(dt) = at.datetime
+                            && dt.to_utc_seconds() > threshold
+                        {
+                            cx.warn(format!("`generated.at` timestamp `{dt}` is in the future"));
+                        }
+                    }
                 }
             }
         }
@@ -360,19 +425,37 @@ fn check_trust(cx: &mut Context, fm: &Frontmatter) {
                     ));
                     continue;
                 };
-                check_verification_event(cx, i, &event);
+                check_verification_event(cx, i, &event, threshold_seconds);
             }
         }
         Value::Mapping(_) => {
             if let Some(event) = Verification::from_value(value) {
-                check_verification_event(cx, 0, &event);
+                check_verification_event(cx, 0, &event, threshold_seconds);
             }
         }
         _ => unreachable!("verified shape checked above"),
     }
+
+    // Check if latest verified.at predates generated.at
+    if let Some(generated) = fm.generated()
+        && let Some(generated_at) = generated.at.as_ref().and_then(|a| a.datetime)
+        && let Some(latest) = okf_core::trust::latest_verification(&events)
+        && let Some(latest_at) = latest.at.as_ref().and_then(|a| a.datetime)
+        && latest_at < generated_at
+    {
+        cx.warn(format!(
+            "latest verification ({latest_at}) predates `generated.at` ({generated_at}); \
+             the current content was never re-verified"
+        ));
+    }
 }
 
-fn check_verification_event(cx: &mut Context, i: usize, event: &Verification) {
+fn check_verification_event(
+    cx: &mut Context,
+    i: usize,
+    event: &Verification,
+    threshold_seconds: Option<i64>,
+) {
     if event
         .by
         .as_ref()
@@ -386,7 +469,16 @@ fn check_verification_event(cx: &mut Context, i: usize, event: &Verification) {
             "`verified[{i}].at` is not an ISO-8601 datetime with an explicit offset: {:?}",
             at.raw
         )),
-        Some(_) => {}
+        Some(at) => {
+            if let Some(threshold) = threshold_seconds
+                && let Some(dt) = at.datetime
+                && dt.to_utc_seconds() > threshold
+            {
+                cx.warn(format!(
+                    "`verified[{i}].at` timestamp `{dt}` is in the future"
+                ));
+            }
+        }
     }
 }
 
@@ -421,10 +513,12 @@ fn check_lifecycle(cx: &mut Context, fm: &Frontmatter, today: Option<Date>) {
     }
 }
 
-/// `sources` and its credibility signals.
-fn check_provenance(cx: &mut Context, fm: &Frontmatter) {
+/// `sources` and `usage_window`.
+fn check_provenance(cx: &mut Context, fm: &Frontmatter, today: Option<Date>) {
+    let check_date = today.or_else(Date::today_utc);
+    let threshold_seconds = check_date.map(|d| (d.days_since_epoch() + 1) * 86_400);
+
     let Some(value) = fm.get("sources").filter(|v| !v.is_empty_value()) else {
-        // A `usage_window` with nothing to frame is a producer slip.
         if fm.get("usage_window").is_some() {
             cx.warn("`usage_window` is present without `sources` to frame");
         }
@@ -491,6 +585,13 @@ fn check_provenance(cx: &mut Context, fm: &Frontmatter) {
                 "`sources[{i}].last_modified` is not an ISO-8601 datetime with an explicit offset: {:?}",
                 last_modified.raw
             ));
+        } else if let Some(threshold) = threshold_seconds
+            && let Some(last_modified) = source.last_modified.as_ref().and_then(|d| d.datetime)
+            && last_modified.to_utc_seconds() > threshold
+        {
+            cx.warn(format!(
+                "`sources[{i}].last_modified` timestamp `{last_modified}` is in the future"
+            ));
         }
         if source.usage_count.is_some()
             && source
@@ -556,7 +657,7 @@ fn check_legacy(cx: &mut Context, doc: &Document) {
 }
 
 /// The Attested Computation contract.
-fn check_computation(cx: &mut Context, doc: &Document) {
+fn check_computation(cx: &mut Context, bundle: &Bundle, doc: &Document) {
     let fm = &doc.frontmatter;
     let computation_keys = [
         "runtime",
@@ -631,6 +732,57 @@ fn check_computation(cx: &mut Context, doc: &Document) {
         }
         Some(_) => {}
     }
+
+    check_attestation_resources(cx, bundle, doc);
+}
+
+fn check_attestation_resources(cx: &mut Context, bundle: &Bundle, doc: &Document) {
+    let Some(contract) = doc.attested_computation() else {
+        return;
+    };
+    if let Some(executor) = &contract.executor
+        && let Some(res) = &executor.resource
+        && !res.starts_with("http://")
+        && !res.starts_with("https://")
+        && bundle.resolve_path_field(&cx.id, res).is_none()
+    {
+        cx.warn(format!(
+            "`executor.resource` points to `{res}` which does not exist on disk"
+        ));
+    }
+    if let Some(attester) = &contract.attester
+        && let Some(res) = &attester.resource
+        && !res.starts_with("http://")
+        && !res.starts_with("https://")
+        && bundle.resolve_path_field(&cx.id, res).is_none()
+    {
+        cx.warn(format!(
+            "`attester.resource` points to `{res}` which does not exist on disk"
+        ));
+    }
+    if let okf_core::computation::ComputationSource::File(path) = &contract.computation
+        && !path.starts_with("http://")
+        && !path.starts_with("https://")
+        && bundle.resolve_path_field(&cx.id, path).is_none()
+    {
+        cx.warn(format!(
+            "`computation` file `{path}` does not exist on disk"
+        ));
+    }
+}
+
+fn check_links_to_deprecated(cx: &mut Context, bundle: &Bundle) {
+    let mut warned: BTreeSet<ConceptId> = BTreeSet::new();
+    for link in bundle.links_from(&cx.id) {
+        if !link.exists || !warned.insert(link.target.clone()) {
+            continue;
+        }
+        if let Some(target) = bundle.get(&link.target)
+            && target.status().is_deprecated()
+        {
+            cx.warn(format!("links to deprecated concept `{}`", link.target));
+        }
+    }
 }
 
 /// Path-valued fields that point inside the bundle but resolve to nothing.
@@ -686,11 +838,212 @@ fn check_segment_portability(bundle: &Bundle, report: &mut Report) {
                 format!(
                     "concept-id segment {segment:?} is outside the conventional \
                      `[A-Za-z0-9_][A-Za-z0-9_.-]*` set; the bundle is still conformant, but \
-                     such a name needs `<...>` or percent-encoding to link portably and is \
+                     such a name needs `<...>` or percent-encoded to link portably and is \
                      not guaranteed to survive every filesystem unchanged"
                 ),
             );
         }
+    }
+}
+
+fn check_duplicate_titles(bundle: &Bundle, report: &mut Report) {
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    for c in bundle.concepts() {
+        if let Some(title) = c.document.frontmatter.title() {
+            *counts.entry(title.into_owned()).or_default() += 1;
+        }
+    }
+    for c in bundle.concepts() {
+        if let Some(title) = c.document.frontmatter.title()
+            && counts.get(title.as_ref()).copied().unwrap_or(0) > 1
+        {
+            report.warn(
+                Some(c.path.clone()),
+                Some(c.id.clone()),
+                format!(
+                    "`title` {title:?} is shared with another concept; titles should disambiguate"
+                ),
+            );
+        }
+    }
+}
+
+fn check_circular_derivation(bundle: &Bundle, report: &mut Report) {
+    let mut warned: BTreeSet<ConceptId> = BTreeSet::new();
+
+    for concept in bundle.concepts() {
+        if warned.contains(&concept.id) {
+            continue;
+        }
+        let mut path = Vec::new();
+        let mut visited = BTreeSet::new();
+
+        if find_derivation_cycle(bundle, &concept.id, &mut path, &mut visited) {
+            for id in &path {
+                warned.insert(id.clone());
+            }
+            let cycle_str: Vec<String> = path.iter().map(ToString::to_string).collect();
+            report.warn(
+                Some(concept.path.clone()),
+                Some(concept.id.clone()),
+                format!("circular concept derivation: {}", cycle_str.join(" ~> ")),
+            );
+        }
+    }
+}
+
+fn find_derivation_cycle(
+    bundle: &Bundle,
+    current: &ConceptId,
+    path: &mut Vec<ConceptId>,
+    visited: &mut BTreeSet<ConceptId>,
+) -> bool {
+    path.push(current.clone());
+    visited.insert(current.clone());
+
+    for next in bundle.derived_from(current) {
+        if path.first() == Some(next) || path.contains(next) {
+            path.push((*next).clone());
+            return true;
+        }
+        if !visited.contains(next) && find_derivation_cycle(bundle, next, path, visited) {
+            return true;
+        }
+    }
+
+    path.pop();
+    false
+}
+
+/// Synthesizes the concept id an `index.md` would have if it were itself a
+/// concept, so [`okf_core::links::Link::resolve_all`] can resolve its relative links against the
+/// index's own directory.
+#[must_use]
+pub fn index_source_id(bundle_root: &Path, index_path: &Path) -> Option<ConceptId> {
+    let rel = index_path.strip_prefix(bundle_root).ok()?;
+    let mut segments: Vec<String> = rel
+        .components()
+        .filter_map(|c| match c {
+            std::path::Component::Normal(s) => Some(s.to_string_lossy().to_string()),
+            _ => None,
+        })
+        .collect();
+    if let Some(last) = segments.last_mut()
+        && let Some(stripped) = last.strip_suffix(".md")
+    {
+        *last = stripped.to_string();
+    }
+    ConceptId::new(segments).ok()
+}
+
+/// Every link target an `index.md` lists, paired with the raw target as
+/// written, resolved to a concept id whether or not that concept exists in the
+/// bundle.
+#[must_use]
+pub fn index_listed_targets(bundle: &Bundle, index_path: &Path) -> Vec<(String, ConceptId)> {
+    let mut out = Vec::new();
+    let Some(source) = index_source_id(bundle.root(), index_path) else {
+        return out;
+    };
+    let Ok(text) = fs::read_to_string(index_path) else {
+        return out;
+    };
+    let Ok(doc) = Document::parse(&text) else {
+        return out;
+    };
+    for link in doc.links() {
+        for target in link.resolve_all(&source) {
+            out.push((link.target.clone(), target));
+        }
+    }
+    out
+}
+
+/// `true` when a raw link target names a concept (a `.md` file or a bare id)
+/// rather than a non-markdown resource such as `attester.py`.
+#[must_use]
+pub fn is_concept_link(raw: &str) -> bool {
+    let t = raw.trim();
+    if t.starts_with('#') || t.is_empty() {
+        return false;
+    }
+    if okf_core::links::LinkKind::External == okf_core::links::Link::classify(t) {
+        return false;
+    }
+    let before_anchor = t.split('#').next().unwrap_or(t);
+    let basename = before_anchor.rsplit('/').next().unwrap_or(before_anchor);
+    if okf_core::bundle::RESERVED_FILENAMES.contains(&basename) {
+        return false;
+    }
+    #[allow(clippy::case_sensitive_file_extension_comparisons)]
+    {
+        basename.ends_with(".md") || !basename.contains('.')
+    }
+}
+
+fn check_stale_indexes(bundle: &Bundle, report: &mut Report) {
+    for index_path in bundle.index_files() {
+        let Some(dir) = index_path.parent() else {
+            continue;
+        };
+        let Some(index_id) = index_source_id(bundle.root(), index_path) else {
+            continue;
+        };
+        let index_dir = index_id.parent();
+
+        let actual: BTreeSet<ConceptId> = bundle
+            .concepts()
+            .iter()
+            .filter(|c| c.path.parent() == Some(dir))
+            .map(|c| c.id.clone())
+            .collect();
+
+        let listed: BTreeSet<ConceptId> = index_listed_targets(bundle, index_path)
+            .into_iter()
+            .filter(|(raw, _)| is_concept_link(raw))
+            .map(|(_, target)| target)
+            .filter(|t| t.parent() == index_dir)
+            .collect();
+
+        let missing_from_index: Vec<String> = actual
+            .iter()
+            .filter(|c| !listed.contains(*c))
+            .map(ConceptId::to_string)
+            .collect();
+        let listed_but_not_on_disk: Vec<String> = listed
+            .iter()
+            .filter(|c| !actual.contains(*c))
+            .map(ConceptId::to_string)
+            .collect();
+
+        if missing_from_index.is_empty() && listed_but_not_on_disk.is_empty() {
+            continue;
+        }
+
+        let mut parts = Vec::new();
+        if !missing_from_index.is_empty() {
+            parts.push(format!(
+                "missing from index: {}",
+                missing_from_index.join(", ")
+            ));
+        }
+        if !listed_but_not_on_disk.is_empty() {
+            parts.push(format!(
+                "listed but not on disk: {}",
+                listed_but_not_on_disk.join(", ")
+            ));
+        }
+
+        report.add_fixable(
+            Severity::Warning,
+            Some(index_path.clone()),
+            None,
+            format!(
+                "index.md is out of sync with its directory ({})",
+                parts.join("; ")
+            ),
+            true,
+        );
     }
 }
 
@@ -770,6 +1123,23 @@ fn validate_reserved(bundle: &Bundle, report: &mut Report) {
                 None,
                 format!("log date heading is not ISO-8601 `YYYY-MM-DD`: {bad:?}"),
             );
+        }
+        let mut seen = HashMap::new();
+        for day in &log.days {
+            *seen.entry(day.date.clone()).or_insert(0) += 1;
+        }
+        for (date, count) in seen {
+            if count > 1 {
+                report.add_fixable(
+                    Severity::Warning,
+                    Some(path.clone()),
+                    None,
+                    format!(
+                        "log.md contains duplicate date heading `## {date}` (entries should be grouped under a single heading)"
+                    ),
+                    true,
+                );
+            }
         }
     }
 }

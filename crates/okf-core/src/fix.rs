@@ -51,7 +51,7 @@ pub enum RemediationKind {
     AddedComputationLanguage(String),
     /// Consolidated duplicate date headings in `log.md` (L27).
     ConsolidatedLogDates(String),
-    /// Stripped trailing whitespace and normalized excess blank lines (L28).
+    /// Stripped trailing whitespace and normalized excess blank lines (L8).
     CleanedWhitespace,
 }
 
@@ -86,7 +86,7 @@ pub struct FixOptions {
     pub tag_computation_blocks: bool,
     /// Whether to consolidate duplicate date headings in log.md (L27).
     pub fix_log_duplicates: bool,
-    /// Whether to strip trailing whitespace and excess blank lines (L28).
+    /// Whether to strip trailing whitespace and excess blank lines (L8).
     pub clean_whitespace: bool,
     /// Whether to regenerate index files (L16).
     pub regenerate_indexes: bool,
@@ -312,7 +312,7 @@ pub fn remediate_document(
         });
     }
 
-    // 8. Trailing whitespace and excess blank lines (L28)
+    // 8. Trailing whitespace and excess blank lines (L8)
     if options.clean_whitespace {
         let (cleaned_body, whitespace_changed) = clean_body_whitespace(&new_doc.body);
         if whitespace_changed {
