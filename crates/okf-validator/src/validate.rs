@@ -1325,8 +1325,12 @@ fn check_link_anchors(cx: &mut Context, bundle: &Bundle, doc: &Document) {
         if link.kind == okf_core::LinkKind::Anchor {
             let anchor = link.target.trim_start_matches('#');
             if !anchor.is_empty() {
-                let slug = okf_core::heading_slug(anchor);
-                if !own_slugs.contains(&slug) && !own_slugs.contains(anchor) {
+                let decoded = anchor.replace("%20", " ").replace('+', " ");
+                let slug = okf_core::heading_slug(&decoded);
+                if !own_slugs.contains(&slug)
+                    && !own_slugs.contains(anchor)
+                    && !own_slugs.contains(&decoded.to_lowercase())
+                {
                     cx.warn(format!(
                         "internal link anchor `#{anchor}` does not match any heading in this document"
                     ));
@@ -1339,8 +1343,12 @@ fn check_link_anchors(cx: &mut Context, bundle: &Bundle, doc: &Document) {
                 && let Some(target_concept) = bundle.get(&target_id)
             {
                 let target_slugs = concept_heading_slugs(&target_concept.document);
-                let slug = okf_core::heading_slug(anchor);
-                if !target_slugs.contains(&slug) && !target_slugs.contains(anchor) {
+                let decoded = anchor.replace("%20", " ").replace('+', " ");
+                let slug = okf_core::heading_slug(&decoded);
+                if !target_slugs.contains(&slug)
+                    && !target_slugs.contains(anchor)
+                    && !target_slugs.contains(&decoded.to_lowercase())
+                {
                     cx.warn(format!(
                         "link anchor `#{anchor}` does not match any heading in target concept `{target_id}`"
                     ));

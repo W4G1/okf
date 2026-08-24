@@ -174,6 +174,10 @@ pub struct NewArgs {
     #[arg(required = true, num_args = 1..=2)]
     pub path: Vec<PathBuf>,
 
+    /// Bundle directory
+    #[arg(long)]
+    pub bundle: Option<PathBuf>,
+
     /// Concept type
     #[arg(long = "type", default_value = "Concept")]
     pub type_: String,
@@ -213,7 +217,8 @@ pub struct NewArgs {
 
 #[derive(Args, Debug)]
 pub struct ValidateArgs {
-    /// Bundle directory to validate
+    /// Bundle directory to validate (defaults to current directory)
+    #[arg(default_value = ".")]
     pub bundle: PathBuf,
 
     /// Apply automatic fixes where possible
@@ -239,7 +244,8 @@ pub struct ValidateArgs {
 
 #[derive(Args, Debug)]
 pub struct InfoArgs {
-    /// Bundle directory to summarize
+    /// Bundle directory to summarize (defaults to current directory)
+    #[arg(default_value = ".")]
     pub bundle: PathBuf,
 
     /// Evaluate staleness against this date instead of today
@@ -257,7 +263,8 @@ pub struct InfoArgs {
 
 #[derive(Args, Debug)]
 pub struct TrustArgs {
-    /// Bundle directory to report trust for
+    /// Bundle directory to report trust for (defaults to current directory)
+    #[arg(default_value = ".")]
     pub bundle: PathBuf,
 
     /// Evaluate staleness against this date instead of today
@@ -276,19 +283,20 @@ pub struct TrustArgs {
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Args, Debug)]
 pub struct LinksArgs {
-    /// Bundle directory to inspect links in
+    /// Bundle directory to inspect links in (defaults to current directory)
+    #[arg(default_value = ".")]
     pub bundle: PathBuf,
 
     /// Show only broken links
-    #[arg(long)]
+    #[arg(short, long)]
     pub broken: bool,
 
     /// Exit with error code 65 if broken links are found
-    #[arg(long)]
+    #[arg(short, long)]
     pub check: bool,
 
     /// Include external links
-    #[arg(long, visible_alias = "external")]
+    #[arg(short, long, visible_alias = "external")]
     pub all: bool,
 
     /// Output results as JSON
@@ -302,7 +310,8 @@ pub struct LinksArgs {
 
 #[derive(Args, Debug)]
 pub struct ComputationsArgs {
-    /// Bundle directory to inspect Attested Computations in
+    /// Bundle directory to inspect Attested Computations in (defaults to current directory)
+    #[arg(default_value = ".")]
     pub bundle: PathBuf,
 
     /// Output results as JSON
@@ -316,7 +325,8 @@ pub struct ComputationsArgs {
 
 #[derive(Args, Debug)]
 pub struct IndexArgs {
-    /// Bundle directory whose index.md files should be regenerated
+    /// Bundle directory whose index.md files should be regenerated (defaults to current directory)
+    #[arg(default_value = ".")]
     pub bundle: PathBuf,
 
     /// Output results as JSON
@@ -330,7 +340,8 @@ pub struct IndexArgs {
 
 #[derive(Args, Debug)]
 pub struct GraphArgs {
-    /// Bundle directory to graph
+    /// Bundle directory to graph (defaults to current directory)
+    #[arg(default_value = ".")]
     pub bundle: PathBuf,
 
     /// Output format (text, mermaid, or json)
@@ -388,7 +399,8 @@ pub struct FmtArgs {
 
 #[derive(Args, Debug)]
 pub struct LintArgs {
-    /// Bundle directory to lint
+    /// Bundle directory to lint (defaults to current directory)
+    #[arg(default_value = ".")]
     pub bundle: PathBuf,
 
     /// Apply automatic fixes where possible
@@ -592,6 +604,10 @@ pub struct MergeArgs {
     /// Bundle directory (defaults to current directory)
     #[arg(long, default_value = ".")]
     pub bundle: PathBuf,
+
+    /// Force merge even if non-fatal warnings exist
+    #[arg(short, long)]
+    pub force: bool,
 
     /// Simulate changes without modifying files on disk
     #[arg(short = 'n', long)]
@@ -1026,6 +1042,7 @@ fn cmd_index(args: &IndexArgs) -> Result<ExitCode, CliError> {
         crate::index::regenerate_indexes(path).map_err(|e| CliError::no_input(e.to_string()))?;
     if json {
         let val = serde_json::json!({
+            "okf_version": crate::OKF_VERSION,
             "bundle": path.to_string_lossy(),
             "regenerated_count": written.len(),
             "regenerated": written.iter().map(|p| p.to_string_lossy()).collect::<Vec<_>>(),
@@ -1070,7 +1087,14 @@ fn cmd_graph(args: &GraphArgs) -> Result<ExitCode, CliError> {
 }
 
 fn cmd_parse(args: &ParseArgs) -> Result<ExitCode, CliError> {
-    let path = &args.file;
+    let mut resolved_path = args.file.clone();
+    if !resolved_path.exists() {
+        let with_md = resolved_path.with_extension("md");
+        if with_md.exists() {
+            resolved_path = with_md;
+        }
+    }
+    let path = &resolved_path;
     let text = std::fs::read_to_string(path).map_err(|e| CliError::no_input(e.to_string()))?;
     let doc = Document::parse(&text).map_err(|e| CliError::data(e.to_string()))?;
     let json = args.json || args.format.as_deref() == Some("json");
@@ -1102,17 +1126,22 @@ fn cmd_parse(args: &ParseArgs) -> Result<ExitCode, CliError> {
 
 #[allow(clippy::too_many_lines)]
 fn cmd_fmt(args: &FmtArgs) -> Result<ExitCode, CliError> {
-    let target_path = &args.path;
+    let mut resolved_path = args.path.clone();
+    if !resolved_path.exists() {
+        let with_md = resolved_path.with_extension("md");
+        if with_md.exists() {
+            resolved_path = with_md;
+        } else {
+            return Err(CliError::no_input(format!(
+                "No such file or directory: {}",
+                args.path.display()
+            )));
+        }
+    }
+    let target_path = &resolved_path;
     let write = args.write;
     let check = args.check;
     let json = args.json || args.format.as_deref() == Some("json");
-
-    if !target_path.exists() {
-        return Err(CliError::no_input(format!(
-            "No such file or directory: {}",
-            target_path.display()
-        )));
-    }
 
     let path_str = target_path.to_string_lossy();
     if check {
@@ -1207,6 +1236,7 @@ fn cmd_fmt(args: &FmtArgs) -> Result<ExitCode, CliError> {
             std::fs::write(target_path, &out).map_err(|e| CliError::no_input(e.to_string()))?;
             if json {
                 let val = serde_json::json!({
+                    "okf_version": crate::OKF_VERSION,
                     "formatted_count": 1,
                     "error_count": 0,
                     "written": true,
@@ -1218,6 +1248,7 @@ fn cmd_fmt(args: &FmtArgs) -> Result<ExitCode, CliError> {
             }
         } else if json {
             let val = serde_json::json!({
+                "okf_version": crate::OKF_VERSION,
                 "formatted_count": 1,
                 "error_count": 0,
                 "written": false,
@@ -1257,6 +1288,7 @@ fn cmd_init(args: &InitArgs) -> Result<ExitCode, CliError> {
             .map(|p| p.to_string_lossy().into_owned())
             .collect();
         let val = serde_json::json!({
+            "okf_version": crate::OKF_VERSION,
             "status": "ok",
             "bundle": dir.to_string_lossy(),
             "title": title,
@@ -1275,6 +1307,8 @@ fn cmd_init(args: &InitArgs) -> Result<ExitCode, CliError> {
 fn cmd_new(args: &NewArgs) -> Result<ExitCode, CliError> {
     let target_path = if args.path.len() >= 2 {
         args.path[0].join(&args.path[1])
+    } else if let Some(bundle) = &args.bundle {
+        bundle.join(&args.path[0])
     } else {
         args.path[0].clone()
     };
@@ -1315,6 +1349,7 @@ fn cmd_new(args: &NewArgs) -> Result<ExitCode, CliError> {
                 .map_or_else(|| "Untitled".to_string(), crate::scaffold::title_from_name)
         });
         let val = serde_json::json!({
+            "okf_version": crate::OKF_VERSION,
             "status": "ok",
             "path": created.to_string_lossy(),
             "type": type_,
@@ -1682,6 +1717,7 @@ fn print_trust_json(bundle: &Bundle, today_date: Option<Date>) {
         .collect();
 
     let val = serde_json::json!({
+        "okf_version": bundle.okf_version().unwrap_or(crate::OKF_VERSION),
         "bundle": bundle.root().to_string_lossy(),
         "concepts_count": bundle.len(),
         "summary": counts,
@@ -1738,6 +1774,7 @@ fn print_computations_json(bundle: &Bundle) {
         .collect();
 
     let val = serde_json::json!({
+        "okf_version": bundle.okf_version().unwrap_or(crate::OKF_VERSION),
         "bundle": bundle.root().to_string_lossy(),
         "computations_count": comps.len(),
         "computations": comps,
@@ -1871,6 +1908,7 @@ fn print_graph_json(bundle: &Bundle, sources: bool) {
         .collect();
 
     let val = serde_json::json!({
+        "okf_version": bundle.okf_version().unwrap_or(crate::OKF_VERSION),
         "concepts": concepts,
     });
 
@@ -1941,6 +1979,7 @@ fn print_parse_json(doc: &Document, path: &str, today_date: Option<Date>) {
         .collect();
 
     let val = serde_json::json!({
+        "okf_version": crate::OKF_VERSION,
         "file": path,
         "conformant": doc.validate().is_ok(),
         "missing_recommended": doc.missing_recommended(),
@@ -2123,6 +2162,7 @@ fn cmd_fmt_check(target_path: &Path, path_str: &str, json: bool) -> Result<ExitC
     if files.is_empty() {
         if json {
             let val = serde_json::json!({
+                "okf_version": crate::OKF_VERSION,
                 "clean": true,
                 "total_files": 0,
                 "unformatted_count": 0,
@@ -2171,6 +2211,7 @@ fn cmd_fmt_check(target_path: &Path, path_str: &str, json: bool) -> Result<ExitC
             .map(|p| p.to_string_lossy().into_owned())
             .collect();
         let val = serde_json::json!({
+            "okf_version": crate::OKF_VERSION,
             "clean": clean,
             "total_files": files.len(),
             "unformatted_count": unformatted_count,
@@ -2364,6 +2405,8 @@ fn print_links_json(
         .collect();
 
     let val = serde_json::json!({
+        "okf_version": bundle.okf_version().unwrap_or(crate::OKF_VERSION),
+        "bundle": bundle.root().to_string_lossy(),
         "concepts_count": bundle.len(),
         "broken_count": broken_count,
         "concepts": concepts,
@@ -2472,6 +2515,7 @@ fn print_diff_json(a: &Bundle, b: &Bundle, diff: &crate::BundleDiff) {
         .collect();
 
     let val = serde_json::json!({
+        "okf_version": crate::OKF_VERSION,
         "bundle_a": a.root().to_string_lossy(),
         "bundle_b": b.root().to_string_lossy(),
         "changes_count": changes_count,
@@ -2491,11 +2535,17 @@ fn print_diff_json(a: &Bundle, b: &Bundle, diff: &crate::BundleDiff) {
 }
 
 fn load_refactor_bundle(bundle_arg: &Path, source_arg: &str) -> Result<Bundle, CliError> {
-    if let Ok(b) = Bundle::load(bundle_arg) {
+    if bundle_arg.join("index.md").exists()
+        && let Ok(b) = Bundle::load(bundle_arg)
+    {
         return Ok(b);
     }
     let p = Path::new(source_arg);
-    let mut cur = p.parent();
+    let mut cur = if p.is_file() || p.extension().is_some() {
+        p.parent()
+    } else {
+        Some(p)
+    };
     while let Some(dir) = cur {
         if dir.join("index.md").exists()
             && let Ok(b) = Bundle::load(dir)
@@ -2509,28 +2559,27 @@ fn load_refactor_bundle(bundle_arg: &Path, source_arg: &str) -> Result<Bundle, C
 
 fn resolve_concept_id(raw: &str, bundle: &Bundle) -> Result<ConceptId, CliError> {
     let clean = raw.trim();
-    if let Ok(id) = ConceptId::parse(clean)
-        && bundle.contains(&id)
-    {
-        return Ok(id);
-    }
-    if let Some(stripped) = clean.strip_suffix(".md")
-        && let Ok(id) = ConceptId::parse(stripped)
-        && bundle.contains(&id)
-    {
-        return Ok(id);
-    }
     let p = Path::new(clean);
-    if let Ok(rel) = p.strip_prefix(bundle.root()) {
-        let stripped = rel.to_string_lossy();
-        let stem = stripped.strip_suffix(".md").unwrap_or(&stripped);
-        if let Ok(id) = ConceptId::parse(stem)
-            && bundle.contains(&id)
-        {
-            return Ok(id);
-        }
+    if let Ok(id) = ConceptId::from_path(bundle.root(), p)
+        && bundle.contains(&id)
+    {
+        return Ok(id);
     }
-    let fallback = clean.strip_suffix(".md").unwrap_or(clean);
+    let joined = bundle.root().join(p);
+    if let Ok(id) = ConceptId::from_path(bundle.root(), &joined)
+        && bundle.contains(&id)
+    {
+        return Ok(id);
+    }
+    let fallback = clean
+        .strip_suffix(".md")
+        .unwrap_or(clean)
+        .trim_start_matches("./");
+    if let Ok(id) = ConceptId::parse(fallback)
+        && bundle.contains(&id)
+    {
+        return Ok(id);
+    }
     ConceptId::parse(fallback)
         .map_err(|e| CliError::data(format!("invalid concept ID '{raw}': {e}")))
 }
@@ -2538,14 +2587,18 @@ fn resolve_concept_id(raw: &str, bundle: &Bundle) -> Result<ConceptId, CliError>
 fn resolve_target_concept_id(raw: &str, bundle: &Bundle) -> Result<ConceptId, CliError> {
     let clean = raw.trim();
     let p = Path::new(clean);
-    if let Ok(rel) = p.strip_prefix(bundle.root()) {
-        let stripped = rel.to_string_lossy();
-        let stem = stripped.strip_suffix(".md").unwrap_or(&stripped);
-        return ConceptId::parse(stem)
-            .map_err(|e| CliError::data(format!("invalid target concept ID '{raw}': {e}")));
+    if let Ok(id) = ConceptId::from_path(bundle.root(), p) {
+        return Ok(id);
     }
-    let stem = clean.strip_suffix(".md").unwrap_or(clean);
-    ConceptId::parse(stem)
+    let joined = bundle.root().join(p);
+    if let Ok(id) = ConceptId::from_path(bundle.root(), &joined) {
+        return Ok(id);
+    }
+    let fallback = clean
+        .strip_suffix(".md")
+        .unwrap_or(clean)
+        .trim_start_matches("./");
+    ConceptId::parse(fallback)
         .map_err(|e| CliError::data(format!("invalid target concept ID '{raw}': {e}")))
 }
 
@@ -2581,6 +2634,7 @@ fn cmd_mv_section(
             .map(|p| p.to_string_lossy().into_owned())
             .collect();
         let val = serde_json::json!({
+            "okf_version": crate::OKF_VERSION,
             "status": "ok",
             "dry_run": report.dry_run,
             "kind": "rename_section",
@@ -2595,24 +2649,7 @@ fn cmd_mv_section(
         });
         println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());
     } else {
-        let prefix = if report.dry_run {
-            "[dry-run] would rename"
-        } else {
-            "renamed"
-        };
-        println!(
-            "{prefix} section '{}' -> '{}' in {}",
-            report.old_section, report.new_section, report.concept
-        );
-        println!(
-            "  updated {} internal link(s)",
-            report.internal_links_updated
-        );
-        println!(
-            "  updated {} external backlink(s)",
-            report.external_links_updated
-        );
-        println!("  affected {} file(s)", report.affected_files.len());
+        println!("{report}");
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -2646,6 +2683,7 @@ fn cmd_mv(args: &MvArgs) -> Result<ExitCode, CliError> {
             .map(|p| p.to_string_lossy().into_owned())
             .collect();
         let val = serde_json::json!({
+            "okf_version": crate::OKF_VERSION,
             "status": "ok",
             "dry_run": report.dry_run,
             "source": report.source.to_string(),
@@ -2659,27 +2697,7 @@ fn cmd_mv(args: &MvArgs) -> Result<ExitCode, CliError> {
         });
         println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());
     } else {
-        let prefix = if report.dry_run {
-            "[dry-run] would rename"
-        } else {
-            "renamed"
-        };
-        println!("{prefix} concept {} -> {}", report.source, report.target);
-        println!(
-            "  rewrote {} incoming link(s)",
-            report.rewritten_incoming_links
-        );
-        println!(
-            "  rebased {} outgoing link(s)",
-            report.rebased_outgoing_links
-        );
-        if report.rebased_frontmatter_paths > 0 {
-            println!(
-                "  rebased {} frontmatter path(s)",
-                report.rebased_frontmatter_paths
-            );
-        }
-        println!("  affected {} file(s)", report.affected_files.len());
+        println!("{report}");
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -2714,6 +2732,7 @@ fn cmd_rm(args: &RmArgs) -> Result<ExitCode, CliError> {
             .collect();
         let redirect_str = report.redirected_to.as_ref().map(ToString::to_string);
         let val = serde_json::json!({
+            "okf_version": crate::OKF_VERSION,
             "status": "ok",
             "dry_run": report.dry_run,
             "target": report.target.to_string(),
@@ -2725,24 +2744,7 @@ fn cmd_rm(args: &RmArgs) -> Result<ExitCode, CliError> {
         });
         println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());
     } else {
-        let prefix = if report.dry_run {
-            "[dry-run] would remove"
-        } else {
-            "removed"
-        };
-        if let Some(r) = &report.redirected_to {
-            println!(
-                "{prefix} concept {} (redirected {} link(s) to {r})",
-                report.target, report.redirected_count
-            );
-        } else if report.unlinked_count > 0 {
-            println!(
-                "{prefix} concept {} (unlinked {} link(s))",
-                report.target, report.unlinked_count
-            );
-        } else {
-            println!("{prefix} concept {}", report.target);
-        }
+        println!("{report}");
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -2775,6 +2777,7 @@ fn cmd_split(args: &SplitArgs) -> Result<ExitCode, CliError> {
             .map(|p| p.to_string_lossy().into_owned())
             .collect();
         let val = serde_json::json!({
+            "okf_version": crate::OKF_VERSION,
             "status": "ok",
             "dry_run": report.dry_run,
             "source": report.source.to_string(),
@@ -2788,18 +2791,7 @@ fn cmd_split(args: &SplitArgs) -> Result<ExitCode, CliError> {
         });
         println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());
     } else {
-        let prefix = if report.dry_run {
-            "[dry-run] would extract"
-        } else {
-            "extracted"
-        };
-        println!(
-            "{prefix} section '{}' from {} -> {}",
-            report.section, report.source, report.target
-        );
-        println!("  extracted {} line(s)", report.extracted_lines_count);
-        println!("  moved {} source/footnote(s)", report.moved_sources_count);
-        println!("  created {}", report.target_path.display());
+        println!("{report}");
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -2812,6 +2804,7 @@ fn cmd_merge(args: &MergeArgs) -> Result<ExitCode, CliError> {
 
     let options = MergeOptions {
         heading: args.heading.clone(),
+        force: args.force,
         dry_run: args.dry_run,
         update_index: !args.no_index,
         update_log: !args.no_log,
@@ -2828,6 +2821,7 @@ fn cmd_merge(args: &MergeArgs) -> Result<ExitCode, CliError> {
             .map(|p| p.to_string_lossy().into_owned())
             .collect();
         let val = serde_json::json!({
+            "okf_version": crate::OKF_VERSION,
             "status": "ok",
             "dry_run": report.dry_run,
             "source": report.source.to_string(),
@@ -2840,19 +2834,7 @@ fn cmd_merge(args: &MergeArgs) -> Result<ExitCode, CliError> {
         });
         println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());
     } else {
-        let prefix = if report.dry_run {
-            "[dry-run] would merge"
-        } else {
-            "merged"
-        };
-        println!("{prefix} concept {} -> {}", report.source, report.target);
-        println!(
-            "  rewrote {} incoming link(s)",
-            report.rewritten_links_count
-        );
-        println!("  merged {} source(s)", report.merged_sources_count);
-        println!("  removed {}", report.removed_path.display());
-        println!("  updated {}", report.updated_path.display());
+        println!("{report}");
     }
     Ok(ExitCode::SUCCESS)
 }

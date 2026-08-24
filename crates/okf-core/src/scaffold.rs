@@ -233,6 +233,28 @@ pub fn create_concept(path: impl AsRef<Path>, options: &ConceptOptions) -> io::R
         path.set_extension("md");
     }
 
+    for comp in path.components() {
+        match comp {
+            std::path::Component::Normal(seg) => {
+                if let Some(s) = seg.to_str() {
+                    let s_no_ext = s.strip_suffix(".md").unwrap_or(s);
+                    if let Err(e) = crate::concept_id::validate_segment(s_no_ext) {
+                        return Err(io::Error::new(io::ErrorKind::InvalidInput, e.to_string()));
+                    }
+                }
+            }
+            std::path::Component::ParentDir => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "concept path cannot contain `..`",
+                ));
+            }
+            std::path::Component::CurDir
+            | std::path::Component::Prefix(_)
+            | std::path::Component::RootDir => {}
+        }
+    }
+
     if path.exists() && !options.force {
         return Err(io::Error::new(
             io::ErrorKind::AlreadyExists,

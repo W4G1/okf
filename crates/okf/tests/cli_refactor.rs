@@ -357,3 +357,128 @@ fn cli_refactor_exit_codes_missing_bundle_and_data_error() {
         .unwrap();
     assert_eq!(output_sec_err.status.code(), Some(65));
 }
+
+#[test]
+fn cli_refactor_author_attribution_and_path_resolution() {
+    let tmp = TempDir::new();
+    tmp.write("index.md", "---\nokf_version: \"0.2\"\n---\n\n# Bundle\n");
+    tmp.write(
+        "module/service.md",
+        "---\ntype: Concept\ntitle: Service\n---\n\n# Service\n\n## Implementation\n\n```python\n# ## Implementation\npass\n```\n\nDetails.\n",
+    );
+
+    // 1. Rename with ./ relative paths and --author
+    let output = okf()
+        .args([
+            "mv",
+            "./module/service.md",
+            "./module/daemon.md",
+            "--bundle",
+            tmp.path().to_str().unwrap(),
+            "--author",
+            "human:alice",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert!(!tmp.path().join("module/service.md").exists());
+    assert!(tmp.path().join("module/daemon.md").exists());
+
+    let log_content = tmp.read("log.md");
+    assert!(log_content.contains("(by human:alice)"));
+
+    // 2. Split section with code block immunity and --author
+    let split_out = okf()
+        .args([
+            "split",
+            "module/daemon",
+            "module/impl",
+            "--section",
+            "Implementation",
+            "--bundle",
+            tmp.path().to_str().unwrap(),
+            "--author",
+            "human:bob",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(split_out.status.success());
+    assert!(tmp.path().join("module/impl.md").exists());
+
+    let log_after_split = tmp.read("log.md");
+    assert!(log_after_split.contains("(by human:bob)"));
+
+    let daemon_content = tmp.read("module/daemon.md");
+    assert!(daemon_content.contains("[Implementation](impl.md)"));
+}
+
+#[test]
+fn cli_merge_force_flag_accepted() {
+    let tmp = TempDir::new();
+    tmp.write("index.md", "---\nokf_version: \"0.2\"\n---\n\n# Bundle\n");
+    tmp.write(
+        "a.md",
+        "---\ntype: Concept\ntitle: A\n---\n\n# A\n\nContent A.\n",
+    );
+    tmp.write(
+        "b.md",
+        "---\ntype: Concept\ntitle: B\n---\n\n# B\n\nContent B.\n",
+    );
+
+    let output = okf()
+        .args([
+            "merge",
+            "a",
+            "b",
+            "--force",
+            "--bundle",
+            tmp.path().to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert!(!tmp.path().join("a.md").exists());
+    assert!(tmp.path().join("b.md").exists());
+}
+
+#[test]
+fn cli_refactor_infers_bundle_from_source_file_path() {
+    let tmp = TempDir::new();
+    let bundle_dir = tmp.path().join("my_bundle");
+    std::fs::create_dir_all(&bundle_dir).unwrap();
+
+    std::fs::write(
+        bundle_dir.join("index.md"),
+        "---\nokf_version: \"0.2\"\n---\n\n# Bundle\n",
+    )
+    .unwrap();
+    std::fs::write(
+        bundle_dir.join("source.md"),
+        "---\ntype: Concept\ntitle: Source\n---\n\n# Source\n",
+    )
+    .unwrap();
+
+    let outside_dir = tmp.path().join("outside");
+    std::fs::create_dir_all(&outside_dir).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_okf"))
+        .args([
+            "mv",
+            bundle_dir.join("source.md").to_str().unwrap(),
+            "target",
+        ])
+        .current_dir(&outside_dir)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!bundle_dir.join("source.md").exists());
+    assert!(bundle_dir.join("target.md").exists());
+}

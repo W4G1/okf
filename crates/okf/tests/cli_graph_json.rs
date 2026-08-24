@@ -26,6 +26,7 @@ fn graph_json_is_valid_for_empty_and_linkless_bundles() {
     assert_eq!(
         val,
         serde_json::json!({
+            "okf_version": "0.2",
             "concepts": [
                 {
                     "id": "plain",
@@ -50,6 +51,7 @@ fn graph_json_separates_and_escapes_every_link_field() {
     assert_eq!(
         val,
         serde_json::json!({
+            "okf_version": "0.2",
             "concepts": [
                 {
                     "id": "source",

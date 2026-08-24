@@ -1176,3 +1176,34 @@ fn test_validate_warns_on_broken_link_anchors() {
         "internal link anchor `#broken-internal` does not match any heading in this document"
     )));
 }
+
+#[test]
+fn test_validate_accepts_url_encoded_link_anchors() {
+    let tmp = common::TempDir::new();
+    tmp.write(
+        "index.md",
+        "---\nokf_version: \"0.2\"\n---\n\n# Test\n\n* [Pricing](pricing.md)\n* [Overview](overview.md)\n",
+    );
+    tmp.write(
+        "pricing.md",
+        "---\ntype: Concept\ntitle: Pricing\ngenerated:\n  by: human:alice\n  at: 2026-01-01T00:00:00Z\n---\n\n# Pricing\n\n## Valid Section\nContent.\n",
+    );
+    tmp.write(
+        "overview.md",
+        "---\ntype: Concept\ntitle: Overview\ngenerated:\n  by: human:alice\n  at: 2026-01-01T00:00:00Z\n---\n\n# Overview\n\nSee [Good](pricing.md#valid%20section) and [Internal](#internal%20heading).\n\n## Internal Heading\nInternal.\n",
+    );
+
+    let bundle = Bundle::load(tmp.path()).unwrap();
+    let report = validate_bundle(&bundle);
+
+    let anchor_warnings: Vec<_> = report
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == okf_validator::Severity::Warning && d.message.contains("anchor"))
+        .collect();
+
+    assert!(
+        anchor_warnings.is_empty(),
+        "expected 0 anchor warnings, got: {anchor_warnings:#?}"
+    );
+}

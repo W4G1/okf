@@ -157,6 +157,35 @@ pub struct MoveReport {
     pub dry_run: bool,
 }
 
+impl fmt::Display for MoveReport {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let prefix = if self.dry_run {
+            "[dry-run] would rename"
+        } else {
+            "renamed"
+        };
+        writeln!(f, "{prefix} concept {} -> {}", self.source, self.target)?;
+        writeln!(
+            f,
+            "  rewrote {} incoming link(s)",
+            self.rewritten_incoming_links
+        )?;
+        writeln!(
+            f,
+            "  rebased {} outgoing link(s)",
+            self.rebased_outgoing_links
+        )?;
+        if self.rebased_frontmatter_paths > 0 {
+            writeln!(
+                f,
+                "  rebased {} frontmatter path(s)",
+                self.rebased_frontmatter_paths
+            )?;
+        }
+        write!(f, "  affected {} file(s)", self.affected_files.len())
+    }
+}
+
 /// Options for removing a concept.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[allow(clippy::struct_excessive_bools)]
@@ -208,6 +237,32 @@ pub struct RemoveReport {
     pub affected_files: Vec<PathBuf>,
     /// Whether this was a dry run.
     pub dry_run: bool,
+}
+
+impl fmt::Display for RemoveReport {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let prefix = if self.dry_run {
+            "[dry-run] would remove"
+        } else {
+            "removed"
+        };
+        if let Some(r) = &self.redirected_to {
+            writeln!(
+                f,
+                "{prefix} concept {} (redirected {} link(s) to {r})",
+                self.target, self.redirected_count
+            )?;
+        } else if self.unlinked_count > 0 {
+            writeln!(
+                f,
+                "{prefix} concept {} (unlinked {} link(s))",
+                self.target, self.unlinked_count
+            )?;
+        } else {
+            writeln!(f, "{prefix} concept {}", self.target)?;
+        }
+        write!(f, "  affected {} file(s)", self.affected_files.len())
+    }
 }
 
 /// Options for splitting a concept section into a new concept.
@@ -291,11 +346,32 @@ pub struct SplitReport {
     pub dry_run: bool,
 }
 
+impl fmt::Display for SplitReport {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let prefix = if self.dry_run {
+            "[dry-run] would extract"
+        } else {
+            "extracted"
+        };
+        writeln!(
+            f,
+            "{prefix} section '{}' from {} -> {}",
+            self.section, self.source, self.target
+        )?;
+        writeln!(f, "  extracted {} line(s)", self.extracted_lines_count)?;
+        writeln!(f, "  moved {} source/footnote(s)", self.moved_sources_count)?;
+        write!(f, "  created {}", self.target_path.display())
+    }
+}
+
 /// Options for merging one concept into another.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct MergeOptions {
     /// Optional heading under which to append source content in target.
     pub heading: Option<String>,
+    /// Force merge even if non-fatal warnings exist.
+    pub force: bool,
     /// If true, simulate changes without writing to disk.
     pub dry_run: bool,
     /// Regenerate index.md listings after merge.
@@ -310,6 +386,7 @@ impl Default for MergeOptions {
     fn default() -> Self {
         Self {
             heading: None,
+            force: false,
             dry_run: false,
             update_index: true,
             update_log: true,
@@ -337,6 +414,25 @@ pub struct MergeReport {
     pub affected_files: Vec<PathBuf>,
     /// Whether this was a dry run.
     pub dry_run: bool,
+}
+
+impl fmt::Display for MergeReport {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let prefix = if self.dry_run {
+            "[dry-run] would merge"
+        } else {
+            "merged"
+        };
+        writeln!(f, "{prefix} concept {} -> {}", self.source, self.target)?;
+        writeln!(
+            f,
+            "  rewrote {} incoming link(s)",
+            self.rewritten_links_count
+        )?;
+        writeln!(f, "  merged {} source(s)", self.merged_sources_count)?;
+        writeln!(f, "  removed {}", self.removed_path.display())?;
+        write!(f, "  updated {}", self.updated_path.display())
+    }
 }
 
 /// Options for renaming a section heading within a concept.
@@ -381,6 +477,32 @@ pub struct RenameSectionReport {
     pub affected_files: Vec<PathBuf>,
     /// Whether this was a dry run.
     pub dry_run: bool,
+}
+
+impl fmt::Display for RenameSectionReport {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let prefix = if self.dry_run {
+            "[dry-run] would rename"
+        } else {
+            "renamed"
+        };
+        writeln!(
+            f,
+            "{prefix} section '{}' -> '{}' in {}",
+            self.old_section, self.new_section, self.concept
+        )?;
+        writeln!(
+            f,
+            "  updated {} internal link(s)",
+            self.internal_links_updated
+        )?;
+        writeln!(
+            f,
+            "  updated {} external backlink(s)",
+            self.external_links_updated
+        )?;
+        write!(f, "  affected {} file(s)", self.affected_files.len())
+    }
 }
 
 /// Computes the relative markdown link path from `from_concept` to `to_concept`.
@@ -796,8 +918,30 @@ pub fn rename_section(
     let mut matched_title = String::new();
     let mut new_lines = Vec::new();
 
+    let mut fence: Option<char> = None;
+
     for line in doc.body.lines() {
         let trimmed = line.trim();
+        let trimmed_start = line.trim_start();
+
+        if let Some(f) = fence {
+            if trimmed_start.starts_with(&f.to_string().repeat(3)) {
+                fence = None;
+            }
+            new_lines.push(line.to_string());
+            continue;
+        }
+        if trimmed_start.starts_with("```") {
+            fence = Some('`');
+            new_lines.push(line.to_string());
+            continue;
+        }
+        if trimmed_start.starts_with("~~~") {
+            fence = Some('~');
+            new_lines.push(line.to_string());
+            continue;
+        }
+
         if !found_heading && trimmed.starts_with('#') {
             let hashes = trimmed.chars().take_while(|c| *c == '#').count();
             let title = trimmed[hashes..].trim();
@@ -902,8 +1046,12 @@ pub fn rename_section(
                 month: 8,
                 day: 24,
             });
+            let author_suffix = options
+                .author
+                .as_ref()
+                .map_or(String::new(), |a| format!(" (by {a})"));
             let log_msg = format!(
-                "Renamed section `{clean_old}` to `{clean_new}` in concept `{concept_id}` (updated {internal_count} internal link(s), {external_count} external backlink(s))."
+                "Renamed section `{clean_old}` to `{clean_new}` in concept `{concept_id}` (updated {internal_count} internal link(s), {external_count} external backlink(s)){author_suffix}."
             );
             let _ = append_log_entry(bundle.root(), today, "Update", &log_msg);
         }
@@ -1089,8 +1237,12 @@ pub fn move_concept(
                 month: 8,
                 day: 24,
             });
+            let author_suffix = options
+                .author
+                .as_ref()
+                .map_or(String::new(), |a| format!(" (by {a})"));
             let log_msg = format!(
-                "Renamed concept `{source}` to `{target}` (rewrote {rewritten_incoming_total} incoming links, rebased {rebased_outgoing_count} outgoing links)."
+                "Renamed concept `{source}` to `{target}` (rewrote {rewritten_incoming_total} incoming links, rebased {rebased_outgoing_count} outgoing links){author_suffix}."
             );
             let _ = append_log_entry(bundle.root(), today, "Update", &log_msg);
         }
@@ -1421,8 +1573,12 @@ pub fn split_concept(
                 month: 8,
                 day: 24,
             });
+            let author_suffix = options
+                .author
+                .as_ref()
+                .map_or(String::new(), |a| format!(" (by {a})"));
             let log_msg = format!(
-                "Extracted section `{}` from `{source}` into new concept `{target}`.",
+                "Extracted section `{}` from `{source}` into new concept `{target}`{author_suffix}.",
                 options.section
             );
             let _ = append_log_entry(bundle.root(), today, "Creation", &log_msg);
@@ -1582,10 +1738,21 @@ pub fn merge_concepts(
         format!("## {source_title}")
     });
 
+    let body_to_append = {
+        let trimmed = source_body_final.trim();
+        trimmed.strip_prefix('#').map_or(trimmed, |rest| {
+            let first_line = rest.lines().next().unwrap_or("");
+            if first_line.starts_with('#') {
+                trimmed
+            } else {
+                rest[first_line.len()..].trim_start()
+            }
+        })
+    };
+
     target_doc.body = format!(
-        "{}\n\n{heading}\n\n{}\n",
-        target_doc.body.trim_end(),
-        source_body_final.trim_start()
+        "{}\n\n{heading}\n\n{body_to_append}\n",
+        target_doc.body.trim_end()
     );
 
     // 5. Rewrite incoming backlinks across the bundle
@@ -1670,8 +1837,12 @@ pub fn merge_concepts(
                 month: 8,
                 day: 24,
             });
+            let author_suffix = options
+                .author
+                .as_ref()
+                .map_or(String::new(), |a| format!(" (by {a})"));
             let log_msg = format!(
-                "Merged concept `{source}` into `{target}` (rewrote {rewritten_links_total} inbound links)."
+                "Merged concept `{source}` into `{target}` (rewrote {rewritten_links_total} inbound links){author_suffix}."
             );
             let _ = append_log_entry(bundle.root(), today, "Update", &log_msg);
         }
@@ -1792,18 +1963,41 @@ fn extract_section_from_body(
     custom_link_text: Option<&str>,
 ) -> Option<(String, Vec<String>, String)> {
     let clean_query = section_query.trim().trim_start_matches('#').trim();
+    let query_slug = heading_slug(clean_query);
     let lines: Vec<&str> = body.lines().collect();
 
     let mut match_idx = None;
     let mut match_level = 1;
     let mut match_title = String::new();
+    let mut fence: Option<char> = None;
 
     for (i, line) in lines.iter().enumerate() {
+        let trimmed_start = line.trim_start();
+        if let Some(f) = fence {
+            if trimmed_start.starts_with(&f.to_string().repeat(3)) {
+                fence = None;
+            }
+            continue;
+        }
+        if trimmed_start.starts_with("```") {
+            fence = Some('`');
+            continue;
+        }
+        if trimmed_start.starts_with("~~~") {
+            fence = Some('~');
+            continue;
+        }
+
         let trimmed = line.trim();
         if trimmed.starts_with('#') {
             let hashes = trimmed.chars().take_while(|c| *c == '#').count();
             let title = trimmed[hashes..].trim();
-            if title.eq_ignore_ascii_case(clean_query) {
+            if title.eq_ignore_ascii_case(clean_query)
+                || heading_slug(title) == query_slug
+                || title
+                    .replace(['-', '_'], " ")
+                    .eq_ignore_ascii_case(&clean_query.replace(['-', '_'], " "))
+            {
                 match_idx = Some(i);
                 match_level = hashes;
                 match_title = title.to_string();
@@ -1814,8 +2008,25 @@ fn extract_section_from_body(
 
     let start_idx = match_idx?;
     let mut end_idx = lines.len();
+    fence = None;
 
     for (i, line) in lines.iter().enumerate().skip(start_idx + 1) {
+        let trimmed_start = line.trim_start();
+        if let Some(f) = fence {
+            if trimmed_start.starts_with(&f.to_string().repeat(3)) {
+                fence = None;
+            }
+            continue;
+        }
+        if trimmed_start.starts_with("```") {
+            fence = Some('`');
+            continue;
+        }
+        if trimmed_start.starts_with("~~~") {
+            fence = Some('~');
+            continue;
+        }
+
         let trimmed = line.trim();
         if trimmed.starts_with('#') {
             let hashes = trimmed.chars().take_while(|c| *c == '#').count();

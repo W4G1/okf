@@ -258,3 +258,92 @@ fn test_link_kind_traits() {
         Err(ParseLinkKindError("invalid".into()))
     );
 }
+
+#[test]
+fn test_refactor_report_display_traits() {
+    use okf_core::refactor::{
+        MergeReport, MoveReport, RemoveReport, RenameSectionReport, SplitReport,
+    };
+    use std::path::PathBuf;
+
+    let move_report = MoveReport {
+        source: "auth/old".parse().unwrap(),
+        target: "auth/new".parse().unwrap(),
+        source_path: PathBuf::from("auth/old.md"),
+        target_path: PathBuf::from("auth/new.md"),
+        rewritten_incoming_links: 3,
+        rebased_outgoing_links: 1,
+        rebased_frontmatter_paths: 1,
+        affected_files: vec![PathBuf::from("auth/new.md"), PathBuf::from("users.md")],
+        dry_run: false,
+    };
+    let move_text = move_report.to_string();
+    assert!(move_text.contains("renamed concept auth/old -> auth/new"));
+    assert!(move_text.contains("rewrote 3 incoming link(s)"));
+    assert!(move_text.contains("rebased 1 outgoing link(s)"));
+    assert!(move_text.contains("rebased 1 frontmatter path(s)"));
+    assert!(move_text.contains("affected 2 file(s)"));
+
+    let remove_report = RemoveReport {
+        target: "obsolete".parse().unwrap(),
+        removed_path: PathBuf::from("obsolete.md"),
+        redirected_to: Some("replacement".parse().unwrap()),
+        redirected_count: 2,
+        unlinked_count: 0,
+        affected_files: vec![PathBuf::from("obsolete.md")],
+        dry_run: true,
+    };
+    let rm_text = remove_report.to_string();
+    assert!(
+        rm_text.contains(
+            "[dry-run] would remove concept obsolete (redirected 2 link(s) to replacement)"
+        )
+    );
+
+    let split_report = SplitReport {
+        source: "parent".parse().unwrap(),
+        target: "child".parse().unwrap(),
+        section: "Rules".to_string(),
+        target_title: "Rules".to_string(),
+        target_path: PathBuf::from("child.md"),
+        extracted_lines_count: 10,
+        moved_sources_count: 1,
+        affected_files: vec![PathBuf::from("parent.md"), PathBuf::from("child.md")],
+        dry_run: false,
+    };
+    let split_text = split_report.to_string();
+    assert!(split_text.contains("extracted section 'Rules' from parent -> child"));
+    assert!(split_text.contains("extracted 10 line(s)"));
+    assert!(split_text.contains("moved 1 source/footnote(s)"));
+
+    let merge_report = MergeReport {
+        source: "old_mod".parse().unwrap(),
+        target: "main_mod".parse().unwrap(),
+        removed_path: PathBuf::from("old_mod.md"),
+        updated_path: PathBuf::from("main_mod.md"),
+        rewritten_links_count: 4,
+        merged_sources_count: 2,
+        affected_files: vec![PathBuf::from("main_mod.md")],
+        dry_run: false,
+    };
+    let merge_text = merge_report.to_string();
+    assert!(merge_text.contains("merged concept old_mod -> main_mod"));
+    assert!(merge_text.contains("rewrote 4 incoming link(s)"));
+    assert!(merge_text.contains("merged 2 source(s)"));
+
+    let sec_report = RenameSectionReport {
+        concept: "auth".parse().unwrap(),
+        old_section: "Old Sec".to_string(),
+        new_section: "New Sec".to_string(),
+        old_slug: "old-sec".to_string(),
+        new_slug: "new-sec".to_string(),
+        internal_links_updated: 2,
+        external_links_updated: 1,
+        affected_files: vec![PathBuf::from("auth.md")],
+        dry_run: false,
+    };
+    let sec_text = sec_report.to_string();
+    assert!(sec_text.contains("renamed section 'Old Sec' -> 'New Sec' in auth"));
+    assert!(sec_text.contains("updated 2 internal link(s)"));
+    assert!(sec_text.contains("updated 1 external backlink(s)"));
+}
