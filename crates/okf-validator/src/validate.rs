@@ -8,7 +8,7 @@
 //!
 //! Accordingly, [`validate_bundle`] reports only true conformance violations as
 //! [`Severity::Error`]. Material soft-guidance deviations, data integrity issues,
-//! temporal inconsistencies, and contract discrepancies are
+//! temporal inconsistencies, contract discrepancies, and syntax errors are
 //! reported as [`Severity::Warning`] (producer mistakes worth fixing)
 //! or [`Severity::Info`] (permitted states worth noting).
 //!
@@ -41,6 +41,8 @@
 //! | V21  | warning  | missing `runtime` or `computation` source on `Attested Computation`                |
 //! | V22  | warning  | contract `parameters`, `executor`, or `attester` missing required fields           |
 //! | V23  | warning  | `executor`, `attester`, or `computation` resource missing on disk                  |
+//! | V24  | warning  | code block syntax error in concept body                                            |
+//! | V25  | warning  | computation, executor, or attester script syntax error                             |
 //! | V26  | info     | computation fields on non-computation concept type                                 |
 //! | V27  | info     | explicit path field does not resolve to a file in the bundle                       |
 //! | V28  | info     | broken link (target does not resolve to a concept in the bundle)                   |
@@ -212,6 +214,8 @@ pub fn validate_bundle_at(bundle: &Bundle, today: Option<Date>) -> Report {
         check_attribution(&mut cx, &concept.document);
         check_legacy(&mut cx, &concept.document);
         check_computation(&mut cx, bundle, &concept.document);
+        check_code_block_syntax(&mut cx, &concept.document);
+        check_computation_script_syntax(&mut cx, bundle, &concept.document);
         check_path_fields(&mut cx, bundle, fm);
         check_links_to_deprecated(&mut cx, bundle);
     }
@@ -478,6 +482,80 @@ fn check_verification_event(
                     "`verified[{i}].at` timestamp `{dt}` is in the future"
                 ));
             }
+        }
+    }
+}
+
+/// Validates syntax of fenced code blocks inside concept bodies.
+fn check_code_block_syntax(cx: &mut Context, doc: &Document) {
+    let blocks = crate::syntax::extract_fenced_code_blocks(&doc.body);
+    for block in blocks {
+        if let Some(lang_tag) = &block.language
+            && crate::syntax::Language::from_tag(lang_tag) != crate::syntax::Language::Unknown
+            && let Err(err) = crate::syntax::check_syntax(lang_tag, &block.code)
+        {
+            cx.warn(format!(
+                "code block syntax check failed ({}): {err}",
+                err.language
+            ));
+        }
+    }
+}
+
+/// Validates syntax of external script files referenced by Attested Computation contracts.
+fn check_computation_script_syntax(cx: &mut Context, bundle: &Bundle, doc: &Document) {
+    let Some(contract) = doc.attested_computation() else {
+        return;
+    };
+
+    if let okf_core::computation::ComputationSource::File(path) = &contract.computation
+        && let Some(resolved_path) = bundle.resolve_path_field(&cx.id, path)
+        && let Ok(content) = fs::read_to_string(&resolved_path)
+    {
+        let ext = std::path::Path::new(path)
+            .extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or_default();
+        let lang_tag = contract.runtime.as_deref().unwrap_or(ext);
+        if let Err(err) = crate::syntax::check_syntax(lang_tag, &content) {
+            cx.warn(format!(
+                "computation script `{path}` syntax check failed ({}): {err}",
+                err.language
+            ));
+        }
+    }
+
+    if let Some(executor) = &contract.executor
+        && let Some(res) = &executor.resource
+        && let Some(resolved_path) = bundle.resolve_path_field(&cx.id, res)
+        && let Ok(content) = fs::read_to_string(&resolved_path)
+    {
+        let ext = std::path::Path::new(res)
+            .extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or_default();
+        if let Err(err) = crate::syntax::check_syntax(ext, &content) {
+            cx.warn(format!(
+                "executor script `{res}` syntax check failed ({}): {err}",
+                err.language
+            ));
+        }
+    }
+
+    if let Some(attester) = &contract.attester
+        && let Some(res) = &attester.resource
+        && let Some(resolved_path) = bundle.resolve_path_field(&cx.id, res)
+        && let Ok(content) = fs::read_to_string(&resolved_path)
+    {
+        let ext = std::path::Path::new(res)
+            .extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or_default();
+        if let Err(err) = crate::syntax::check_syntax(ext, &content) {
+            cx.warn(format!(
+                "attester script `{res}` syntax check failed ({}): {err}",
+                err.language
+            ));
         }
     }
 }

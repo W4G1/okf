@@ -4,12 +4,14 @@
 //! implementation of the [Open Knowledge Format (OKF) v0.2][spec]. This crate
 //! judges bundles; okf-core models them.
 //!
-//! - [`validate`] checks conformance: [`validate_bundle`] reports only
-//!   true spec violations as [`Severity::Error`], with optional-family
-//!   problems surfaced as warnings and infos, never as rejections.
-//! - [`lint`] is the opinionated companion: [`lint_bundle`] goes beyond
-//!   conformance and flags the hygiene issues a continuously-authored corpus
-//!   drifts into, each finding tagged with a stable rule code.
+//! - [`validate`] checks conformance: [`validate_bundle`] reports true spec
+//!   violations as [`Severity::Error`], and material data integrity issues,
+//!   temporal checks, broken references, contract discrepancies, and script syntax
+//!   errors as [`Severity::Warning`] or [`Severity::Info`].
+//! - [`lint`] is the opinionated companion: [`lint_bundle`] evaluates 12
+//!   bundle formatting, structure, and authoring hygiene rules, each finding tagged with a stable rule code (`L1`..`L12`).
+//! - [`syntax`] provides in-process syntax checking for Python,
+//!   JavaScript, TypeScript, Rust, SQL, JSON, YAML, and Bash.
 //!
 //! Staleness checks depend on the wall clock, so they are opt-in via
 //! [`validate_bundle_at`] and [`lint_bundle_at`], which take the date to
@@ -40,9 +42,14 @@
 #![warn(clippy::pedantic, clippy::nursery)]
 
 pub mod lint;
+pub mod syntax;
 pub mod validate;
 
 #[doc(inline)]
 pub use lint::{lint_bundle, lint_bundle_at};
+#[doc(inline)]
+pub use syntax::{
+    FencedCodeBlock, Language, SyntaxError, check_syntax, extract_fenced_code_blocks,
+};
 #[doc(inline)]
 pub use validate::{Diagnostic, Report, Severity, validate_bundle, validate_bundle_at};
