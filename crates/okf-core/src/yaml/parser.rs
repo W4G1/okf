@@ -843,8 +843,8 @@ impl FlowParser {
 ///
 /// YAML only treats `:` as a separator in flow context when it is followed by
 /// whitespace, a flow indicator, or the end of the collection. OKF v0.2 relies
-/// on this: `{ by: human:ahormati, at: 2026-06-25T09:00:00Z }` is one mapping
-/// of two entries, not a parse error: the colons in `human:ahormati` and
+/// on this: `{ by: human:walter, at: 2026-06-25T09:00:00Z }` is one mapping
+/// of two entries, not a parse error: the colons in `human:walter` and
 /// `09:00:00` are content.
 fn is_separator_colon(chars: &[char], i: usize) -> bool {
     chars

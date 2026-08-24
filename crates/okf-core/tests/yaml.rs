@@ -120,7 +120,7 @@ fn flow_mapping() {
 
 #[test]
 fn colons_inside_flow_scalars_are_content() {
-    // OKF v0.2 frontmatter depends on this: `human:ahormati` and an ISO-8601
+    // OKF v0.2 frontmatter depends on this: `human:walter` and an ISO-8601
     // time both carry colons that do not separate a key from a value.
     let v =
         roundtrip("generated: { by: reference_agent/gemini-2.5-pro, at: 2026-06-20T22:53:05Z }\n");
@@ -140,7 +140,7 @@ fn colons_inside_flow_scalars_are_content() {
         Some("2026-06-20T22:53:05Z")
     );
 
-    let verified = roundtrip("verified: { by: human:ahormati, at: 2026-06-25T09:00:00Z }\n");
+    let verified = roundtrip("verified: { by: human:walter, at: 2026-06-25T09:00:00Z }\n");
     let by = verified
         .as_mapping()
         .unwrap()
@@ -148,7 +148,7 @@ fn colons_inside_flow_scalars_are_content() {
         .unwrap()
         .as_mapping()
         .unwrap();
-    assert_eq!(by.get("by").unwrap().as_str(), Some("human:ahormati"));
+    assert_eq!(by.get("by").unwrap().as_str(), Some("human:walter"));
 
     // A URL in a flow scalar survives too.
     let url = Value::parse("{ resource: https://wiki.acme/finance/revenue-recognition }").unwrap();

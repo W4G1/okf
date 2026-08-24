@@ -102,7 +102,7 @@ fn a_legacy_timestamp_stands_in_for_generated() {
 fn an_attested_computation_should_carry_a_runtime() {
     let without = with_frontmatter(
         "type: Attested Computation\ntitle: Revenue\ndescription: Recognized revenue.\n\
-         generated: { by: human:ahormati, at: 2026-06-20T22:53:05Z }",
+         generated: { by: human:walter, at: 2026-06-20T22:53:05Z }",
     );
     assert_eq!(without.missing_recommended(), ["runtime"]);
     // `runtime` is a SHOULD like the rest of the families.
@@ -111,18 +111,17 @@ fn an_attested_computation_should_carry_a_runtime() {
     let with = with_frontmatter(
         "type: Attested Computation\ntitle: Revenue\ndescription: Recognized revenue.\n\
          runtime: bigquery\n\
-         generated: { by: human:ahormati, at: 2026-06-20T22:53:05Z }",
+         generated: { by: human:walter, at: 2026-06-20T22:53:05Z }",
     );
     assert!(with.missing_recommended().is_empty());
 }
 
 #[test]
 fn a_bare_verified_mapping_is_read_as_a_one_element_list() {
-    let doc =
-        with_frontmatter("type: X\nverified: { by: human:ahormati, at: 2026-06-25T09:00:00Z }");
+    let doc = with_frontmatter("type: X\nverified: { by: human:walter, at: 2026-06-25T09:00:00Z }");
     let events = doc.frontmatter.verified();
     assert_eq!(events.len(), 1);
-    assert_eq!(events[0].by.as_ref().unwrap().as_str(), "human:ahormati");
+    assert_eq!(events[0].by.as_ref().unwrap().as_str(), "human:walter");
     assert_eq!(events[0].at.as_ref().unwrap().raw, "2026-06-25T09:00:00Z");
 
     assert!(
@@ -149,14 +148,14 @@ fn trust_tiers_derive_from_the_verifying_actors() {
 
     let both = tier(
         "type: X\nverified:\n  - { by: process:finance-nightly, at: 2026-06-26T02:00:00Z }\n  \
-         - { by: human:ahormati, at: 2026-06-25T09:00:00Z }",
+         - { by: human:walter, at: 2026-06-25T09:00:00Z }",
     );
     assert_eq!(both, TrustTier::HumanReviewed);
     assert_eq!(both.to_string(), "human-reviewed");
 
     // A bare mapping is treated as a one-element list.
     assert_eq!(
-        tier("type: X\nverified: { by: human:ahormati, at: 2026-06-25T09:00:00Z }"),
+        tier("type: X\nverified: { by: human:walter, at: 2026-06-25T09:00:00Z }"),
         TrustTier::HumanReviewed
     );
 }

@@ -264,7 +264,7 @@ mod tests {
     #[test]
     fn bare_verified_mapping_is_a_one_element_list() {
         let bare =
-            Verification::list_from_value(&v("{ by: human:ahormati, at: 2026-06-25T09:00:00Z }"));
+            Verification::list_from_value(&v("{ by: human:walter, at: 2026-06-25T09:00:00Z }"));
         assert_eq!(bare.len(), 1);
         assert!(bare[0].by.as_ref().unwrap().is_human());
         assert_eq!(TrustTier::derive(&bare), TrustTier::HumanReviewed);
@@ -279,10 +279,9 @@ mod tests {
         ));
         assert_eq!(TrustTier::derive(&machine), TrustTier::MachineConfirmed);
 
-        let both = Verification::list_from_value(&v(
-            "- { by: human:ahormati, at: 2026-06-25T09:00:00Z }\n\
-             - { by: process:finance-nightly, at: 2026-06-26T02:00:00Z }",
-        ));
+        let both =
+            Verification::list_from_value(&v("- { by: human:walter, at: 2026-06-25T09:00:00Z }\n\
+             - { by: process:finance-nightly, at: 2026-06-26T02:00:00Z }"));
         assert_eq!(both.len(), 2);
         assert_eq!(TrustTier::derive(&both), TrustTier::HumanReviewed);
         assert!(TrustTier::HumanReviewed > TrustTier::MachineConfirmed);
@@ -295,7 +294,7 @@ mod tests {
     #[test]
     fn malformed_verification_events_do_not_raise_trust() {
         let malformed =
-            Verification::list_from_value(&v("- { by: human:ahormati, at: yesterday }\n\
+            Verification::list_from_value(&v("- { by: human:walter, at: yesterday }\n\
              - { by: human:other, at: 2026-06-26 }\n\
              - { by: human:third }"));
         assert_eq!(malformed.len(), 3);

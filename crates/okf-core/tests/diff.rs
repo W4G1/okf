@@ -132,7 +132,7 @@ fn trust_tier_and_status_changes_are_reported() {
     let b = TempDir::new();
     b.write(
         "metric.md",
-        "---\ntype: Metric\nverified: { by: human:ahormati, at: 2026-06-25T09:00:00Z }\nstatus: stable\n---\n\n# Definition\n\nx\n",
+        "---\ntype: Metric\nverified: { by: human:walter, at: 2026-06-25T09:00:00Z }\nstatus: stable\n---\n\n# Definition\n\nx\n",
     );
 
     let diff = bundle_diff(&load(&a), &load(&b));

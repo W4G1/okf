@@ -70,7 +70,7 @@
 //!      title: Revenue\n\
 //!      status: stable\n\
 //!      generated: { by: reference_agent/gemini-2.5-pro, at: 2026-06-20T22:53:05Z }\n\
-//!      verified: { by: human:ahormati, at: 2026-06-25T09:00:00Z }\n\
+//!      verified: { by: human:walter, at: 2026-06-25T09:00:00Z }\n\
 //!      stale_after: 2026-12-31\n\
 //!      ---\n\n\
 //!      # Definition\n",

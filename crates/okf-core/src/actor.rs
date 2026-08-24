@@ -6,7 +6,7 @@
 //! | Form                    | Meaning                | Example                          |
 //! |-------------------------|------------------------|----------------------------------|
 //! | `<producer>/<version>`  | an agent or tool       | `reference_agent/gemini-2.5-pro` |
-//! | `human:<id>`            | a person               | `human:ahormati`                 |
+//! | `human:<id>`            | a person               | `human:walter`                 |
 //! | `process:<id>`          | an automated process   | `process:finance-nightly`        |
 //!
 //! The `human:` prefix is significant: trust tiers are derived from it,
@@ -153,10 +153,10 @@ mod tests {
         assert_eq!(agent.version(), Some("gemini-2.5-pro"));
         assert!(!agent.is_human());
 
-        let human = Actor::parse("human:ahormati");
+        let human = Actor::parse("human:walter");
         assert_eq!(human.kind(), ActorKind::Human);
         assert!(human.is_human());
-        assert_eq!(human.id(), "ahormati");
+        assert_eq!(human.id(), "walter");
 
         let process = Actor::parse("process:finance-nightly");
         assert_eq!(process.kind(), ActorKind::Process);
@@ -178,11 +178,7 @@ mod tests {
 
     #[test]
     fn display_round_trips_the_raw_string() {
-        for s in [
-            "human:ahormati",
-            "reference_agent/gemini-2.5-pro",
-            "anything",
-        ] {
+        for s in ["human:walter", "reference_agent/gemini-2.5-pro", "anything"] {
             assert_eq!(Actor::parse(s).to_string(), s);
         }
     }
