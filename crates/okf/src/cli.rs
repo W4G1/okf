@@ -64,11 +64,19 @@ fn parse_date(raw: &str) -> Result<Date, String> {
     Date::parse(raw).ok_or_else(|| format!("--today is not a YYYY-MM-DD date: {raw}"))
 }
 
+static CLI_VERSION: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+    format!(
+        "{} (OKF spec v{})",
+        env!("CARGO_PKG_VERSION"),
+        crate::OKF_VERSION
+    )
+});
+
 #[derive(Parser, Debug)]
 #[command(
     name = "okf",
     about = "okf: Open Knowledge Format toolkit",
-    version = concat!(env!("CARGO_PKG_VERSION"), " (OKF spec v0.2)"),
+    version = CLI_VERSION.as_str(),
     subcommand_required = true,
     arg_required_else_help = true,
     styles = Styles::plain()
@@ -980,7 +988,8 @@ fn cmd_fmt(args: &FmtArgs) -> Result<ExitCode, CliError> {
             Ok(ExitCode::SUCCESS)
         }
     } else {
-        let text = std::fs::read_to_string(target_path).map_err(|e| CliError::no_input(e.to_string()))?;
+        let text =
+            std::fs::read_to_string(target_path).map_err(|e| CliError::no_input(e.to_string()))?;
         let out =
             format_markdown_file(target_path, &text).map_err(|e| CliError::data(e.to_string()))?;
 
@@ -1153,7 +1162,6 @@ fn cmd_diff(args: &DiffArgs) -> Result<ExitCode, CliError> {
     Ok(ExitCode::SUCCESS)
 }
 
-
 fn print_validate_json(
     bundle: &Bundle,
     report: &Report,
@@ -1194,7 +1202,6 @@ fn print_validate_json(
 
     println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());
 }
-
 
 fn print_lint_json(
     bundle: &Bundle,
@@ -1334,7 +1341,6 @@ fn section_reference_end(chars: &[char], start: usize) -> Option<usize> {
     Some(i)
 }
 
-
 fn print_info_json(bundle: &Bundle, today_date: Option<Date>) {
     let mut by_type: BTreeMap<String, usize> = BTreeMap::new();
     for c in bundle.concepts() {
@@ -1412,7 +1418,6 @@ fn print_info_json(bundle: &Bundle, today_date: Option<Date>) {
     println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());
 }
 
-
 fn print_trust_json(bundle: &Bundle, today_date: Option<Date>) {
     let mut counts: BTreeMap<String, usize> = BTreeMap::new();
     for c in bundle.concepts() {
@@ -1476,7 +1481,6 @@ fn print_trust_json(bundle: &Bundle, today_date: Option<Date>) {
     println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());
 }
 
-
 fn print_computations_json(bundle: &Bundle) {
     let comps: Vec<serde_json::Value> = bundle
         .attested_computations()
@@ -1531,7 +1535,6 @@ fn print_computations_json(bundle: &Bundle) {
 
     println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());
 }
-
 
 fn print_graph_text(bundle: &Bundle, sources: bool) {
     for c in bundle.concepts() {
@@ -1663,7 +1666,6 @@ fn print_graph_json(bundle: &Bundle, sources: bool) {
 
     println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());
 }
-
 
 fn print_parse_json(doc: &Document, path: &str, today_date: Option<Date>) {
     let fm = &doc.frontmatter;
@@ -2012,7 +2014,6 @@ fn collect_markdown_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), Cl
     Ok(())
 }
 
-
 fn print_links_text(
     bundle: &Bundle,
     broken_only: bool,
@@ -2166,7 +2167,6 @@ fn print_links_json(
         ExitCode::SUCCESS
     }
 }
-
 
 #[allow(clippy::too_many_lines)]
 fn print_diff_json(a: &Bundle, b: &Bundle, diff: &crate::BundleDiff) {
