@@ -28,9 +28,7 @@
 //! | L11  | info     | no `verified` events, trust tier is `unverified`                   |
 //! | L12  | info     | `status: draft`                                                    |
 
-use crate::validate::{
-    Diagnostic, Report, Severity, index_listed_targets, is_concept_link,
-};
+use crate::validate::{Diagnostic, Report, Severity, index_listed_targets, is_concept_link};
 use okf_core::bundle::Bundle;
 use okf_core::concept_id::ConceptId;
 use okf_core::date::Date;
@@ -129,10 +127,7 @@ impl Cx<'_> {
 
 /// Whether a lint finding can be automatically remediated by `okf fix`.
 const fn is_fixable_lint(code: &str) -> bool {
-    matches!(
-        code.as_bytes(),
-        b"L1" | b"L2" | b"L7" | b"L8"
-    )
+    matches!(code.as_bytes(), b"L1" | b"L2" | b"L7" | b"L8")
 }
 
 fn check_unverified(cx: &mut Cx, fm: &Frontmatter) {

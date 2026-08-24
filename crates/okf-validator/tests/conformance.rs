@@ -892,7 +892,11 @@ fn test_validate_warns_when_verified_predates_generated() {
         .of(Severity::Warning)
         .filter(|d| d.message.contains("predates `generated.at`"))
         .collect();
-    assert_eq!(warnings.len(), 1, "expected warning for verified predating generated: {warnings:#?}");
+    assert_eq!(
+        warnings.len(),
+        1,
+        "expected warning for verified predating generated: {warnings:#?}"
+    );
 }
 
 #[test]
@@ -913,7 +917,11 @@ fn test_validate_warns_on_future_timestamp() {
         .of(Severity::Warning)
         .filter(|d| d.message.contains("is in the future"))
         .collect();
-    assert_eq!(warnings.len(), 1, "expected warning for future timestamp: {warnings:#?}");
+    assert_eq!(
+        warnings.len(),
+        1,
+        "expected warning for future timestamp: {warnings:#?}"
+    );
 }
 
 #[test]
@@ -932,7 +940,11 @@ fn test_validate_warns_on_empty_body() {
         .of(Severity::Warning)
         .filter(|d| d.message.contains("body is empty"))
         .collect();
-    assert_eq!(warnings.len(), 1, "expected warning for empty body: {warnings:#?}");
+    assert_eq!(
+        warnings.len(),
+        1,
+        "expected warning for empty body: {warnings:#?}"
+    );
 }
 
 #[test]
@@ -959,7 +971,10 @@ fn test_validate_warns_on_circular_derivation() {
         .of(Severity::Warning)
         .filter(|d| d.message.contains("circular concept derivation"))
         .collect();
-    assert!(!warnings.is_empty(), "expected warning for circular derivation: {warnings:#?}");
+    assert!(
+        !warnings.is_empty(),
+        "expected warning for circular derivation: {warnings:#?}"
+    );
 }
 
 #[test]
@@ -982,7 +997,11 @@ fn test_validate_warns_on_missing_attestation_resource_on_disk() {
         .of(Severity::Warning)
         .filter(|d| d.message.contains("which does not exist on disk"))
         .collect();
-    assert_eq!(warnings.len(), 2, "expected 2 warnings for missing resources on disk: {warnings:#?}");
+    assert_eq!(
+        warnings.len(),
+        2,
+        "expected 2 warnings for missing resources on disk: {warnings:#?}"
+    );
 }
 
 #[test]
@@ -1026,7 +1045,11 @@ fn test_validate_warns_on_link_to_deprecated_concept() {
         .of(Severity::Warning)
         .filter(|d| d.message.contains("links to deprecated concept `old`"))
         .collect();
-    assert_eq!(warnings.len(), 1, "expected warning for linking to deprecated concept: {warnings:#?}");
+    assert_eq!(
+        warnings.len(),
+        1,
+        "expected warning for linking to deprecated concept: {warnings:#?}"
+    );
 }
 
 #[test]
@@ -1045,9 +1068,16 @@ fn test_validate_warns_on_duplicate_concept_titles() {
     let report = validate_bundle(&bundle);
     let warnings: Vec<_> = report
         .of(Severity::Warning)
-        .filter(|d| d.message.contains("`title` \"Same title\" is shared with another concept"))
+        .filter(|d| {
+            d.message
+                .contains("`title` \"Same title\" is shared with another concept")
+        })
         .collect();
-    assert_eq!(warnings.len(), 2, "expected 2 warnings for duplicate titles: {warnings:#?}");
+    assert_eq!(
+        warnings.len(),
+        2,
+        "expected 2 warnings for duplicate titles: {warnings:#?}"
+    );
 }
 
 #[test]
@@ -1070,8 +1100,15 @@ fn test_validate_warns_on_duplicate_log_dates() {
         .of(Severity::Warning)
         .filter(|d| d.message.contains("duplicate date heading `## 2026-05-22`"))
         .collect();
-    assert_eq!(warnings.len(), 1, "expected warning for duplicate log date: {warnings:#?}");
-    assert!(warnings[0].fixable, "duplicate log date warning should be fixable");
+    assert_eq!(
+        warnings.len(),
+        1,
+        "expected warning for duplicate log date: {warnings:#?}"
+    );
+    assert!(
+        warnings[0].fixable,
+        "duplicate log date warning should be fixable"
+    );
 }
 
 #[test]
@@ -1094,8 +1131,15 @@ fn test_validate_warns_on_stale_index() {
     let report = validate_bundle(&bundle);
     let warnings: Vec<_> = report
         .of(Severity::Warning)
-        .filter(|d| d.message.contains("index.md is out of sync with its directory"))
+        .filter(|d| {
+            d.message
+                .contains("index.md is out of sync with its directory")
+        })
         .collect();
-    assert_eq!(warnings.len(), 1, "expected warning for stale index: {warnings:#?}");
+    assert_eq!(
+        warnings.len(),
+        1,
+        "expected warning for stale index: {warnings:#?}"
+    );
     assert!(warnings[0].fixable, "stale index warning should be fixable");
 }
