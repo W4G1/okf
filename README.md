@@ -2,7 +2,7 @@
 
 # okf
 
-A **pure-Rust, zero-dependency** implementation and CLI toolkit for the [Open Knowledge Format (OKF) v0.2](https://github.com/GoogleCloudPlatform/open-knowledge-format/blob/main/SPEC.md) specification: Google's open, human- and agent-friendly format for representing knowledge as a directory of Markdown files with YAML frontmatter.
+A **pure-Rust** implementation and CLI toolkit for the [Open Knowledge Format (OKF) v0.2](https://github.com/GoogleCloudPlatform/open-knowledge-format/blob/main/SPEC.md) specification: Google's open, human- and agent-friendly format for representing knowledge as a directory of Markdown files with YAML frontmatter.
 
 [![crates.io](https://img.shields.io/crates/v/okf.svg?label=okf)](https://crates.io/crates/okf)
 [![crates.io](https://img.shields.io/crates/v/okf-core.svg?label=okf-core)](https://crates.io/crates/okf-core)
@@ -38,12 +38,14 @@ A **pure-Rust, zero-dependency** implementation and CLI toolkit for the [Open Kn
   - [Quality gate: validate and lint](#quality-gate-validate-and-lint)
   - [Auditing trust: trust and info](#auditing-trust-trust-and-info)
   - [Link graph and discovery: links and graph](#link-graph-and-discovery-links-and-graph)
+  - [Listing computations: computations](#listing-computations-computations)
   - [Semantic diffs: diff](#semantic-diffs-diff)
   - [Formatting and indexing: fmt, index, and parse](#formatting-and-indexing-fmt-index-and-parse)
 - [CI/CD integration](#cicd-integration)
 - [Using as a Rust library](#using-as-a-rust-library)
   - [1. Loading and validating a bundle](#1-loading-and-validating-a-bundle)
   - [2. Inspecting attested computations](#2-inspecting-attested-computations)
+  - [3. Multi-language syntax checking](#3-multi-language-syntax-checking)
 - [Workspace crates](#workspace-crates)
 - [Design choices](#design-choices)
 - [Mapping to the spec](#mapping-to-the-spec)
@@ -304,7 +306,7 @@ okf validate ./company_knowledge --today 2026-12-01
 okf validate ./company_knowledge --fix
 ```
 
-`okf lint` evaluates 28 opinionated hygiene rules (missing headings, broken links, orphan concepts, key ordering, whitespace issues):
+`okf lint` evaluates 12 opinionated hygiene rules (missing headings, orphan concepts, key ordering, heading hierarchy, whitespace issues):
 
 ```sh
 # Lint bundle
@@ -359,6 +361,15 @@ okf graph ./company_knowledge --format mermaid --sources
 
 # Export full dependency graph as JSON
 okf graph ./company_knowledge --format json
+```
+
+### Listing computations: computations
+
+Inspect and list all `Attested Computation` contracts declared in the bundle:
+
+```sh
+# List all attested computation contracts
+okf computations ./company_knowledge
 ```
 
 ### Semantic diffs: diff
@@ -509,15 +520,37 @@ assert!(contract.computation.code().unwrap().contains("calculate_reimbursement")
 
 ---
 
+### 3. Multi-language syntax checking
+
+```rust,no_run
+use okf::{Bundle, check_syntax, lint_bundle};
+
+let bundle = Bundle::load("./company_knowledge")?;
+let report = lint_bundle(&bundle);
+
+for diagnostic in report.diagnostics {
+    println!("{diagnostic}");
+}
+
+// Check syntax directly for any supported language
+assert!(check_syntax("python", "def calculate(total):
+    return total * 0.2
+").is_ok());
+assert!(check_syntax("typescript", "const add = (a: number, b: number): number => a + b;").is_ok());
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+---
+
 ## Workspace crates
 
-This repository is structured as a zero-dependency Rust workspace:
+This repository is structured as a multi-crate Rust workspace:
 
 | Crate | Description | Documentation |
 |-------|-------------|---------------|
 | [`okf`](https://crates.io/crates/okf) | CLI binary and re-exports of all core and validator APIs. | [![docs.rs](https://img.shields.io/docsrs/okf)](https://docs.rs/okf) |
 | [`okf-core`](https://crates.io/crates/okf-core) | Pure-Rust OKF engine (YAML subset parser, AST, link graphs, diff, fix engine). | [![docs.rs](https://img.shields.io/docsrs/okf-core)](https://docs.rs/okf-core) |
-| [`okf-validator`](https://crates.io/crates/okf-validator) | Conformance validator and 28 opinionated linting rules. | [![docs.rs](https://img.shields.io/docsrs/okf-validator)](https://docs.rs/okf-validator) |
+| [`okf-validator`](https://crates.io/crates/okf-validator) | Conformance validator, multi-language syntax checker, and 12 opinionated linting rules. | [![docs.rs](https://img.shields.io/docsrs/okf-validator)](https://docs.rs/okf-validator) |
 | [`cargo-okf`](https://crates.io/crates/cargo-okf) | Cargo plugin wrapper allowing `cargo okf <cmd>`. | [![docs.rs](https://img.shields.io/docsrs/cargo-okf)](https://docs.rs/cargo-okf) |
 
 ---
@@ -547,7 +580,7 @@ This repository is structured as a zero-dependency Rust workspace:
 | §7 Actor convention | `human:<id>`, `process:<id>`, `<producer>/<ver>` | [`actor::Actor`](https://docs.rs/okf/latest/okf/actor/struct.Actor.html) |
 | §8 Index files | Auto-generation of directory `index.md` listings | [`index::regenerate_indexes`](https://docs.rs/okf/latest/okf/index/fn.regenerate_indexes.html) |
 | §9 Log files | Parsing and formatting `log.md` histories | [`log::Log`](https://docs.rs/okf/latest/okf/log/struct.Log.html) |
-| §10 Attested computations | Contract models, parameters, receipts, attesters | [`computation::AttestedComputation`](https://docs.rs/okf/latest/okf/computation/struct.AttestedComputation.html) |
+| §10 Attested computations | Contract models, parameters, and inline/external script syntax validation | [`computation::AttestedComputation`](https://docs.rs/okf/latest/okf/computation/struct.AttestedComputation.html), [`syntax::check_syntax`](https://docs.rs/okf/latest/okf/syntax/fn.check_syntax.html) |
 | §11 Conformance | Conformance testing engine & diagnostic reporting | [`validate::validate_bundle`](https://docs.rs/okf/latest/okf/validate/fn.validate_bundle.html) |
 
 ---

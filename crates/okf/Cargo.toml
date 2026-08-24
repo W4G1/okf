@@ -1,6 +1,6 @@
 [package]
 name = "okf"
-description = "The Open Knowledge Format (OKF) v0.2 in pure Rust: the `okf` CLI (validate, lint, inspect, index, graph, format, diff) plus the full okf-core library API re-exported, with zero dependencies."
+description = "The Open Knowledge Format (OKF) v0.2 in pure Rust: the `okf` CLI (validate, lint, inspect, index, graph, format, diff) plus the full okf-core and okf-validator library APIs re-exported."
 documentation = "https://docs.rs/okf"
 readme = "../../README.md"
 version.workspace = true
@@ -18,9 +18,10 @@ okf-validator = { workspace = true, optional = true }
 
 [features]
 default = ["validator"]
-# Conformance validation and linting: the validate and lint modules, and the
-# okf validate / okf lint subcommands. On by default; opt out with
-# default-features = false for a parse-only dependency.
+# Conformance validation, multi-language syntax checking, and linting:
+# the validate, syntax, and lint modules, and the okf validate / okf lint
+# subcommands. On by default; opt out with default-features = false for a
+# parse-only dependency.
 validator = ["dep:okf-validator"]
 
 # The lib target re-exports all of okf-core, so `cargo add okf` keeps working
