@@ -9,7 +9,7 @@ members = [
 resolver = "3"
 
 [workspace.package]
-version = "0.2.4"
+version = "0.2.5"
 edition = "2024"
 authors = ["Walter Higgins <walter.higgins@gmail.com>"]
 license = "Apache-2.0"
@@ -19,8 +19,8 @@ keywords = ["okf", "knowledge-base", "markdown", "frontmatter", "agents"]
 categories = ["command-line-utilities", "parser-implementations", "data-structures"]
 
 [workspace.dependencies]
-okf-core = { path = "crates/okf-core", version = "0.2.4" }
-okf-validator = { path = "crates/okf-validator", version = "0.2.4" }
-okf = { path = "crates/okf", version = "0.2.4" }
+okf-core = { path = "crates/okf-core", version = "0.2.5" }
+okf-validator = { path = "crates/okf-validator", version = "0.2.5" }
+okf = { path = "crates/okf", version = "0.2.5" }
 serde_json = "1.0.151"
 clap = { version = "4.6.6", features = ["derive"] }
