@@ -2,19 +2,19 @@
 //!
 //! Subcommands:
 //! ```text
-//!   init         [dir]      Initialize a new OKF bundle (--title, --bare).
-//!   new          <path>     Create a new concept document (--type, --title, --attested).
-//!   validate     <bundle>   Check a bundle against OKF v0.2 conformance.
-//!   info         <bundle>   Print a summary of a bundle.
-//!   trust        <bundle>   Report trust tier, status, and staleness per concept.
-//!   links        <bundle>   Inspect internal, broken, and external cross-links.
-//!   computations <bundle>   List Attested Computation contracts.
-//!   index        <bundle>   (Re)generate every index.md in a bundle.
-//!   graph        <bundle>   Print the cross-link graph (text, mermaid, or json).
-//!   parse        <file>     Parse one concept document and print its structure.
-//!   fmt          <path>     Normalize document(s) by parse + re-serialize (-w writes).
-//!   lint         <bundle>   Opinionated bundle health checks.
-//!   diff         <a> <b>    OKF-semantics diff between two bundles.
+//!   init         [dir]      Initialize a new OKF bundle (--title, --bare, --json).
+//!   new          <path>     Create a new concept document (--type, --title, --attested, --json).
+//!   validate     <bundle>   Check a bundle against OKF v0.2 conformance (--fix, --json).
+//!   info         <bundle>   Print a summary of a bundle (--json).
+//!   trust        <bundle>   Report trust tier, status, and staleness per concept (--json).
+//!   links        <bundle>   Inspect internal, broken, and external cross-links (--json).
+//!   computations <bundle>   List Attested Computation contracts (--json).
+//!   index        <bundle>   (Re)generate every index.md in a bundle (--json).
+//!   graph        <bundle>   Print the cross-link graph (--format text|mermaid|json, --json).
+//!   parse        <file>     Parse one concept document and print its structure (--json).
+//!   fmt          <path>     Normalize document(s) by parse + re-serialize (-w writes, --check verifies).
+//!   lint         <bundle>   Opinionated bundle health checks (--fix, --json).
+//!   diff         <a> <b>    OKF-semantics diff between two bundles (--json).
 //! ```
 //!
 //! Argument parsing is hand-rolled to keep the crate dependency-free.
@@ -22,12 +22,11 @@
 #![warn(clippy::pedantic, clippy::nursery)]
 
 use crate::{
-    Bundle, BundleInitOptions, ConceptOptions, Date, Document, FixOptions, Link, Severity,
-    TrustTier, Value, bundle_diff, create_concept, init_bundle, lint_bundle_at, remediate_bundle,
-    validate_bundle_at,
+    Bundle, BundleInitOptions, ConceptOptions, Date, Document, DocumentError, FixOptions, Link,
+    Report, Severity, TrustTier, Value, bundle_diff, create_concept, init_bundle, lint_bundle_at,
+    remediate_bundle, validate_bundle_at,
 };
 use std::collections::BTreeMap;
-use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -130,23 +129,24 @@ USAGE:
     okf <command> [args]
 
 COMMANDS:
-    init         [dir]       Initialize a new OKF bundle (--title, --bare)
-    new          <path>      Create a new concept document (--type, --title, --attested)
-    validate     <bundle>    Check a bundle against OKF v0.2 conformance (--fix)
-    info         <bundle>    Summarize a bundle (concepts, types, trust, links)
-    trust        <bundle>    Report trust tier, status, and staleness per concept
-    links        <bundle>    Inspect internal, broken, and external cross-links
-    computations <bundle>    List Attested Computation contracts
-    index        <bundle>    (Re)generate every index.md in the bundle
-    graph        <bundle>    Print the cross-link graph (--format text|mermaid|json)
-    parse        <file>      Parse one concept document and print its structure
-    fmt          <path>      Normalize document(s) by parse + re-serialize (-w writes)
-    lint         <bundle>    Opinionated bundle health checks (--fix)
-    diff         <a> <b>     OKF-semantics diff between two bundles
+    init         [dir]       Initialize a new OKF bundle (--title, --bare, --json)
+    new          <path>      Create a new concept document (--type, --title, --attested, --json)
+    validate     <bundle>    Check a bundle against OKF v0.2 conformance (--fix, --json)
+    info         <bundle>    Summarize a bundle (concepts, types, trust, links, --json)
+    trust        <bundle>    Report trust tier, status, and staleness per concept (--json)
+    links        <bundle>    Inspect internal, broken, and external cross-links (--json)
+    computations <bundle>    List Attested Computation contracts (--json)
+    index        <bundle>    (Re)generate every index.md in the bundle (--json)
+    graph        <bundle>    Print the cross-link graph (--format text|mermaid|json, --json)
+    parse        <file>      Parse one concept document and print its structure (--json)
+    fmt          <path>      Normalize document(s) by parse + re-serialize (-w writes, --check verifies)
+    lint         <bundle>    Opinionated bundle health checks (--fix, --json)
+    diff         <a> <b>     OKF-semantics diff between two bundles (--json)
 
 OPTIONS:
     -h, --help               Show this help
     -V, --version            Show version
+    -j, --json               Output results as JSON (or --format json)
         --today <YYYY-MM-DD> Evaluate staleness against this date instead of today";
 
 /// Flags that consume the argument after them, so it is not mistaken for a
@@ -223,6 +223,20 @@ fn flag_value<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
     None
 }
 
+/// Checks if JSON output mode was requested via `--json`, `-j`, or `--format json`.
+fn is_json(args: &[String]) -> Result<bool, CliError> {
+    if has_flag(args, "--json") || has_flag(args, "-j") {
+        return Ok(true);
+    }
+    match flag_value(args, "--format") {
+        None | Some("text") => Ok(false),
+        Some("json") => Ok(true),
+        Some(other) => Err(CliError::usage(format!(
+            "unknown --format: {other} (expected text|json)"
+        ))),
+    }
+}
+
 /// The date staleness is evaluated against: `--today YYYY-MM-DD`, else the
 /// system clock in UTC.
 fn today(args: &[String]) -> Result<Option<Date>, CliError> {
@@ -247,6 +261,10 @@ fn cmd_validate(args: &[String]) -> Result<ExitCode, CliError> {
     let path = positional(args, "<bundle>")?;
     let fix = has_flag(args, "--fix");
     let author = flag_value(args, "--author").map(ToString::to_string);
+    let json = is_json(args)?;
+
+    let mut applied_fixes = 0;
+    let mut written_files = 0;
 
     if fix {
         let options = FixOptions::validation_only(author);
@@ -255,52 +273,104 @@ fn cmd_validate(args: &[String]) -> Result<ExitCode, CliError> {
         let (written, regenerated) = fix_report
             .apply()
             .map_err(|e| CliError::data(format!("could not write fixes: {e}")))?;
-        if written > 0 || !regenerated.is_empty() {
-            println!(
-                "Applied {} fix(es) across {} file(s).\n",
-                fix_report.total_remediations(),
-                written
-            );
+        applied_fixes = fix_report.total_remediations();
+        written_files = written;
+        if !json && (written > 0 || !regenerated.is_empty()) {
+            println!("Applied {applied_fixes} fix(es) across {written} file(s).\n");
         }
     }
 
     let bundle = load(path)?;
     let report = validate_bundle_at(&bundle, today(args)?);
 
-    for d in &report.diagnostics {
-        print_diagnostic(d);
-    }
-
-    let errors = report.error_count();
-    let warnings = report.warning_count();
-    let infos = report.of(Severity::Info).count();
-    let fixable = report.fixable_count();
-
-    if fixable > 0 {
-        println!(
-            "\n{} concept(s); {errors} error(s), {warnings} warning(s) ({fixable} fixable with `--fix`), {infos} info.",
-            bundle.len()
-        );
+    if json {
+        print_validate_json(&bundle, &report, fix, applied_fixes, written_files);
+        if report.is_conformant() {
+            Ok(ExitCode::SUCCESS)
+        } else {
+            Ok(ExitCode::from(EX_DATAERR))
+        }
     } else {
-        println!(
-            "\n{} concept(s); {errors} error(s), {warnings} warning(s), {infos} info.",
-            bundle.len()
-        );
+        for d in &report.diagnostics {
+            print_diagnostic(d);
+        }
+
+        let errors = report.error_count();
+        let warnings = report.warning_count();
+        let infos = report.of(Severity::Info).count();
+        let fixable = report.fixable_count();
+
+        if fixable > 0 {
+            println!(
+                "\n{} concept(s); {errors} error(s), {warnings} warning(s) ({fixable} fixable with `--fix`), {infos} info.",
+                bundle.len()
+            );
+        } else {
+            println!(
+                "\n{} concept(s); {errors} error(s), {warnings} warning(s), {infos} info.",
+                bundle.len()
+            );
+        }
+
+        if report.is_conformant() {
+            println!("✓ conformant with OKF v{}", crate::OKF_VERSION);
+            Ok(ExitCode::SUCCESS)
+        } else {
+            println!("✗ not conformant with OKF v{}", crate::OKF_VERSION);
+            Ok(ExitCode::from(EX_DATAERR))
+        }
+    }
+}
+
+fn print_validate_json(
+    bundle: &Bundle,
+    report: &Report,
+    fix: bool,
+    fixes_applied: usize,
+    files_written: usize,
+) {
+    let diagnostics: Vec<serde_json::Value> = report
+        .diagnostics
+        .iter()
+        .map(|d| {
+            serde_json::json!({
+                "severity": d.severity.to_string(),
+                "message": strip_spec_references(&d.message),
+                "path": d.path.as_ref().map(|p| p.to_string_lossy()),
+                "concept": d.concept.as_ref().map(ToString::to_string),
+                "fixable": d.fixable,
+            })
+        })
+        .collect();
+
+    let mut val = serde_json::json!({
+        "okf_version": crate::OKF_VERSION,
+        "bundle": bundle.root().to_string_lossy(),
+        "conformant": report.is_conformant(),
+        "concepts_count": bundle.len(),
+        "error_count": report.error_count(),
+        "warning_count": report.warning_count(),
+        "info_count": report.of(Severity::Info).count(),
+        "fixable_count": report.fixable_count(),
+        "diagnostics": diagnostics,
+    });
+
+    if fix {
+        val["fixes_applied"] = serde_json::json!(fixes_applied);
+        val["files_written"] = serde_json::json!(files_written);
     }
 
-    if report.is_conformant() {
-        println!("✓ conformant with OKF v{}", crate::OKF_VERSION);
-        Ok(ExitCode::SUCCESS)
-    } else {
-        println!("✗ not conformant with OKF v{}", crate::OKF_VERSION);
-        Ok(ExitCode::from(EX_DATAERR))
-    }
+    println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());
 }
 
 fn cmd_lint(args: &[String]) -> Result<ExitCode, CliError> {
     let path = positional(args, "<bundle>")?;
     let fix = has_flag(args, "--fix");
     let author = flag_value(args, "--author").map(ToString::to_string);
+    let json = is_json(args)?;
+
+    let mut applied_fixes = 0;
+    let mut written_files = 0;
 
     if fix {
         let options = FixOptions {
@@ -312,48 +382,96 @@ fn cmd_lint(args: &[String]) -> Result<ExitCode, CliError> {
         let (written, regenerated) = fix_report
             .apply()
             .map_err(|e| CliError::data(format!("could not write fixes: {e}")))?;
-        if written > 0 || !regenerated.is_empty() {
-            println!(
-                "Applied {} fix(es) across {} file(s).\n",
-                fix_report.total_remediations(),
-                written
-            );
+        applied_fixes = fix_report.total_remediations();
+        written_files = written;
+        if !json && (written > 0 || !regenerated.is_empty()) {
+            println!("Applied {applied_fixes} fix(es) across {written} file(s).\n");
         }
     }
 
     let bundle = load(path)?;
     let report = lint_bundle_at(&bundle, today(args)?);
 
-    for d in &report.diagnostics {
-        print_diagnostic(d);
-    }
-
-    let warnings = report.warning_count();
-    let infos = report.of(Severity::Info).count();
-    let fixable = report.fixable_count();
-
-    if fixable > 0 {
-        println!(
-            "\n{} concept(s); {warnings} warning(s) ({fixable} fixable with `--fix`), {infos} info.",
-            bundle.len()
-        );
+    if json {
+        print_lint_json(&bundle, &report, fix, applied_fixes, written_files);
+        let warnings = report.warning_count();
+        if warnings == 0 {
+            Ok(ExitCode::SUCCESS)
+        } else {
+            Ok(ExitCode::from(EX_DATAERR))
+        }
     } else {
-        println!(
-            "\n{} concept(s); {warnings} warning(s), {infos} info.",
-            bundle.len()
-        );
+        for d in &report.diagnostics {
+            print_diagnostic(d);
+        }
+
+        let warnings = report.warning_count();
+        let infos = report.of(Severity::Info).count();
+        let fixable = report.fixable_count();
+
+        if fixable > 0 {
+            println!(
+                "\n{} concept(s); {warnings} warning(s) ({fixable} fixable with `--fix`), {infos} info.",
+                bundle.len()
+            );
+        } else {
+            println!(
+                "\n{} concept(s); {warnings} warning(s), {infos} info.",
+                bundle.len()
+            );
+        }
+
+        if warnings == 0 {
+            println!("✓ clean lint");
+            Ok(ExitCode::SUCCESS)
+        } else if fixable > 0 {
+            println!("✗ {warnings} lint warning(s) ({fixable} fixable with `--fix`)");
+            Ok(ExitCode::from(EX_DATAERR))
+        } else {
+            println!("✗ {warnings} lint warning(s)");
+            Ok(ExitCode::from(EX_DATAERR))
+        }
+    }
+}
+
+fn print_lint_json(
+    bundle: &Bundle,
+    report: &Report,
+    fix: bool,
+    fixes_applied: usize,
+    files_written: usize,
+) {
+    let diagnostics: Vec<serde_json::Value> = report
+        .diagnostics
+        .iter()
+        .map(|d| {
+            serde_json::json!({
+                "severity": d.severity.to_string(),
+                "message": strip_spec_references(&d.message),
+                "path": d.path.as_ref().map(|p| p.to_string_lossy()),
+                "concept": d.concept.as_ref().map(ToString::to_string),
+                "fixable": d.fixable,
+            })
+        })
+        .collect();
+
+    let mut val = serde_json::json!({
+        "okf_version": crate::OKF_VERSION,
+        "bundle": bundle.root().to_string_lossy(),
+        "clean": report.warning_count() == 0,
+        "concepts_count": bundle.len(),
+        "warning_count": report.warning_count(),
+        "info_count": report.of(Severity::Info).count(),
+        "fixable_count": report.fixable_count(),
+        "diagnostics": diagnostics,
+    });
+
+    if fix {
+        val["fixes_applied"] = serde_json::json!(fixes_applied);
+        val["files_written"] = serde_json::json!(files_written);
     }
 
-    if warnings == 0 {
-        println!("✓ clean lint");
-        Ok(ExitCode::SUCCESS)
-    } else if fixable > 0 {
-        println!("✗ {warnings} lint warning(s) ({fixable} fixable with `--fix`)");
-        Ok(ExitCode::from(EX_DATAERR))
-    } else {
-        println!("✗ {warnings} lint warning(s)");
-        Ok(ExitCode::from(EX_DATAERR))
-    }
+    println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());
 }
 
 /// Prints diagnostics without implementation-specific OKF section citations.
@@ -457,6 +575,12 @@ fn section_reference_end(chars: &[char], start: usize) -> Option<usize> {
 fn cmd_info(args: &[String]) -> Result<ExitCode, CliError> {
     let path = positional(args, "<bundle>")?;
     let bundle = load(path)?;
+    let json = is_json(args)?;
+
+    if json {
+        print_info_json(&bundle, today(args)?);
+        return Ok(ExitCode::SUCCESS);
+    }
 
     println!("bundle:      {}", bundle.root().display());
     println!(
@@ -540,10 +664,93 @@ fn cmd_info(args: &[String]) -> Result<ExitCode, CliError> {
     Ok(ExitCode::SUCCESS)
 }
 
+fn print_info_json(bundle: &Bundle, today_date: Option<Date>) {
+    let mut by_type: BTreeMap<String, usize> = BTreeMap::new();
+    for c in bundle.concepts() {
+        let t = c.type_().as_deref().unwrap_or("(none)").to_string();
+        *by_type.entry(t).or_default() += 1;
+    }
+
+    let mut by_tier: BTreeMap<String, usize> = BTreeMap::new();
+    let mut by_status: BTreeMap<String, usize> = BTreeMap::new();
+    for c in bundle.concepts() {
+        *by_tier.entry(c.trust_tier().to_string()).or_default() += 1;
+        *by_status.entry(c.status().to_string()).or_default() += 1;
+    }
+
+    let (stale_count, stale_concepts) = today_date.map_or_else(
+        || (0, Vec::new()),
+        |today| {
+            let stale = bundle.stale_on(today);
+            let ids: Vec<String> = stale.iter().map(|c| c.id.to_string()).collect();
+            (stale.len(), ids)
+        },
+    );
+
+    let with_sources = bundle
+        .concepts()
+        .iter()
+        .filter(|c| !c.sources().is_empty())
+        .count();
+    let derivation_edges: usize = bundle
+        .concepts()
+        .iter()
+        .map(|c| bundle.derived_from(&c.id).len())
+        .sum();
+
+    let broken = bundle.broken_links();
+    let total_links: usize = bundle
+        .concepts()
+        .iter()
+        .map(|c| bundle.links_from(&c.id).len())
+        .sum();
+
+    let parse_errors: Vec<serde_json::Value> = bundle
+        .parse_errors()
+        .iter()
+        .map(|(p, e)| {
+            serde_json::json!({
+                "path": p.to_string_lossy(),
+                "error": e.to_string(),
+            })
+        })
+        .collect();
+
+    let val = serde_json::json!({
+        "bundle": bundle.root().to_string_lossy(),
+        "okf_version": bundle.okf_version(),
+        "concepts_count": bundle.len(),
+        "index_files": bundle.index_files().iter().map(|p| p.to_string_lossy()).collect::<Vec<_>>(),
+        "log_files": bundle.log_files().iter().map(|p| p.to_string_lossy()).collect::<Vec<_>>(),
+        "types": by_type,
+        "trust_tiers": by_tier,
+        "status": by_status,
+        "stale_count": stale_count,
+        "stale_concepts": stale_concepts,
+        "sources_count": with_sources,
+        "derivation_edges_count": derivation_edges,
+        "computations_count": bundle.attested_computations().count(),
+        "links": {
+            "internal": total_links,
+            "broken": broken.len(),
+        },
+        "tags": bundle.tags().keys().collect::<Vec<_>>(),
+        "parse_errors": parse_errors,
+    });
+
+    println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());
+}
+
 fn cmd_trust(args: &[String]) -> Result<ExitCode, CliError> {
     let path = positional(args, "<bundle>")?;
     let bundle = load(path)?;
     let today = today(args)?;
+    let json = is_json(args)?;
+
+    if json {
+        print_trust_json(&bundle, today);
+        return Ok(ExitCode::SUCCESS);
+    }
 
     for c in bundle.concepts() {
         let fm = &c.document.frontmatter;
@@ -582,9 +789,78 @@ fn cmd_trust(args: &[String]) -> Result<ExitCode, CliError> {
     Ok(ExitCode::SUCCESS)
 }
 
+fn print_trust_json(bundle: &Bundle, today_date: Option<Date>) {
+    let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+    for c in bundle.concepts() {
+        *counts.entry(c.trust_tier().to_string()).or_default() += 1;
+    }
+
+    let concepts: Vec<serde_json::Value> = bundle
+        .concepts()
+        .iter()
+        .map(|c| {
+            let fm = &c.document.frontmatter;
+            let is_stale = today_date.is_some_and(|t| c.is_stale_on(t));
+            let generated = fm.generated().map(|g| {
+                serde_json::json!({
+                    "by": g.by.as_ref().map(ToString::to_string),
+                    "at": g.at.as_ref().map(ToString::to_string),
+                })
+            });
+            let verified: Vec<serde_json::Value> = fm
+                .verified()
+                .iter()
+                .map(|v| {
+                    serde_json::json!({
+                        "by": v.by.as_ref().map(ToString::to_string),
+                        "at": v.at.as_ref().map(ToString::to_string),
+                    })
+                })
+                .collect();
+            let sources: Vec<serde_json::Value> = bundle
+                .sources_of(&c.id)
+                .iter()
+                .map(|s| {
+                    serde_json::json!({
+                        "id": s.source.id,
+                        "resource": s.source.resource,
+                        "target_concept": s.concept.as_ref().map(ToString::to_string),
+                    })
+                })
+                .collect();
+
+            serde_json::json!({
+                "id": c.id.to_string(),
+                "status": c.status().to_string(),
+                "trust_tier": c.trust_tier().to_string(),
+                "stale": is_stale,
+                "stale_after": fm.stale_after().map(|d| d.to_string()),
+                "generated": generated,
+                "verified": verified,
+                "sources": sources,
+            })
+        })
+        .collect();
+
+    let val = serde_json::json!({
+        "bundle": bundle.root().to_string_lossy(),
+        "concepts_count": bundle.len(),
+        "summary": counts,
+        "concepts": concepts,
+    });
+
+    println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());
+}
+
 fn cmd_computations(args: &[String]) -> Result<ExitCode, CliError> {
     let path = positional(args, "<bundle>")?;
     let bundle = load(path)?;
+    let json = is_json(args)?;
+
+    if json {
+        print_computations_json(&bundle);
+        return Ok(ExitCode::SUCCESS);
+    }
 
     let mut found = 0;
     for c in bundle.attested_computations() {
@@ -641,6 +917,61 @@ fn cmd_computations(args: &[String]) -> Result<ExitCode, CliError> {
     Ok(ExitCode::SUCCESS)
 }
 
+fn print_computations_json(bundle: &Bundle) {
+    let comps: Vec<serde_json::Value> = bundle
+        .attested_computations()
+        .filter_map(|c| {
+            let contract = c.attested_computation()?;
+            let parameters: Vec<serde_json::Value> = contract
+                .parameters
+                .iter()
+                .map(|p| {
+                    serde_json::json!({
+                        "name": p.name,
+                        "type": p.type_,
+                        "required": p.required,
+                    })
+                })
+                .collect();
+            let executor = contract.executor.as_ref().map(|exec| {
+                serde_json::json!({
+                    "resource": exec.resource,
+                    "receipt": exec.receipt,
+                })
+            });
+            let attester = contract.attester.as_ref().map(|att| {
+                serde_json::json!({
+                    "resource": att.resource,
+                })
+            });
+            let used_by: Vec<String> = bundle
+                .backlinks(&c.id)
+                .iter()
+                .map(ToString::to_string)
+                .collect();
+
+            Some(serde_json::json!({
+                "id": c.id.to_string(),
+                "title": c.display_title(),
+                "runtime": contract.runtime,
+                "computation": contract.computation.to_string(),
+                "parameters": parameters,
+                "executor": executor,
+                "attester": attester,
+                "used_by": used_by,
+            }))
+        })
+        .collect();
+
+    let val = serde_json::json!({
+        "bundle": bundle.root().to_string_lossy(),
+        "computations_count": comps.len(),
+        "computations": comps,
+    });
+
+    println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());
+}
+
 fn cmd_index(args: &[String]) -> Result<ExitCode, CliError> {
     let path = positional(args, "<bundle>")?;
     if !Path::new(path).is_dir() {
@@ -648,9 +979,17 @@ fn cmd_index(args: &[String]) -> Result<ExitCode, CliError> {
             "bundle root is not a directory: {path}"
         )));
     }
+    let json = is_json(args)?;
     let written =
         crate::index::regenerate_indexes(path).map_err(|e| CliError::no_input(e.to_string()))?;
-    if written.is_empty() {
+    if json {
+        let val = serde_json::json!({
+            "bundle": path,
+            "regenerated_count": written.len(),
+            "regenerated": written.iter().map(|p| p.to_string_lossy()).collect::<Vec<_>>(),
+        });
+        println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());
+    } else if written.is_empty() {
         println!("no index files written (empty bundle?)");
     } else {
         for p in &written {
@@ -683,6 +1022,9 @@ enum GraphFormat {
 }
 
 fn graph_format(args: &[String]) -> Result<GraphFormat, CliError> {
+    if has_flag(args, "--json") || has_flag(args, "-j") {
+        return Ok(GraphFormat::Json);
+    }
     match flag_value(args, "--format") {
         None | Some("text") => Ok(GraphFormat::Text),
         Some("mermaid") => Ok(GraphFormat::Mermaid),
@@ -783,92 +1125,58 @@ fn mermaid_label(s: &str) -> String {
 }
 
 fn print_graph_json(bundle: &Bundle, sources: bool) {
-    let mut out = String::new();
-    out.push_str("{\n");
-    out.push_str("  \"concepts\": [\n");
-
-    let concepts = bundle.concepts();
-    for (i, c) in concepts.iter().enumerate() {
-        let _ = writeln!(out, "    {{");
-        let _ = writeln!(out, "      \"id\": {},", json_str(&c.id.to_string()));
-
-        let links = bundle.links_from(&c.id);
-        out.push_str("      \"links\": [");
-        if links.is_empty() {
-            out.push_str("],\n");
-        } else {
-            out.push('\n');
-            for (j, link) in links.iter().enumerate() {
-                let _ = writeln!(out, "        {{");
-                let _ = writeln!(
-                    out,
-                    "          \"target\": {},",
-                    json_str(&link.target.to_string())
-                );
-                let _ = writeln!(out, "          \"exists\": {},", link.exists);
-                let _ = writeln!(out, "          \"text\": {},", json_str(&link.text));
-                let _ = writeln!(out, "          \"raw\": {}", json_str(&link.raw));
-                out.push_str(if j + 1 == links.len() {
-                    "        }\n"
-                } else {
-                    "        },\n"
-                });
-            }
-            out.push_str("      ],\n");
-        }
-
-        if sources {
-            let derived: Vec<String> = bundle
-                .derived_from(&c.id)
+    let concepts: Vec<serde_json::Value> = bundle
+        .concepts()
+        .iter()
+        .map(|c| {
+            let links: Vec<serde_json::Value> = bundle
+                .links_from(&c.id)
                 .iter()
-                .map(|t| json_str(&t.to_string()))
+                .map(|l| {
+                    serde_json::json!({
+                        "target": l.target.to_string(),
+                        "exists": l.exists,
+                        "text": l.text,
+                        "raw": l.raw,
+                    })
+                })
                 .collect();
-            out.push_str("      \"sources\": [");
-            out.push_str(&derived.join(", "));
-            out.push_str("]\n");
-        } else {
-            out.push_str("      \"sources\": []\n");
-        }
+            let source_targets: Vec<String> = if sources {
+                bundle
+                    .derived_from(&c.id)
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect()
+            } else {
+                Vec::new()
+            };
 
-        out.push_str(if i + 1 == concepts.len() {
-            "    }\n"
-        } else {
-            "    },\n"
-        });
-    }
-    out.push_str("  ]\n");
-    out.push_str("}\n");
-    print!("{out}");
-}
+            serde_json::json!({
+                "id": c.id.to_string(),
+                "links": links,
+                "sources": source_targets,
+            })
+        })
+        .collect();
 
-/// A minimal JSON string escaper (RFC 8259). The crate is zero-dependency,
-/// so the escaping is hand-rolled rather than delegating to `serde_json`.
-fn json_str(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 2);
-    out.push('"');
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            '\u{08}' => out.push_str("\\b"),
-            '\u{0c}' => out.push_str("\\f"),
-            c if (c as u32) < 0x20 => {
-                let _ = write!(out, "\\u{:04x}", c as u32);
-            }
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-    out
+    let val = serde_json::json!({
+        "concepts": concepts,
+    });
+
+    println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());
 }
 
 fn cmd_parse(args: &[String]) -> Result<ExitCode, CliError> {
     let path = positional(args, "<file>")?;
     let text = std::fs::read_to_string(path).map_err(|e| CliError::no_input(e.to_string()))?;
     let doc = Document::parse(&text).map_err(|e| CliError::data(e.to_string()))?;
+    let json = is_json(args)?;
+
+    if json {
+        print_parse_json(&doc, path, today(args)?);
+        return Ok(ExitCode::SUCCESS);
+    }
+
     let fm = &doc.frontmatter;
 
     println!("frontmatter ({} key(s)):", fm.as_mapping().len());
@@ -878,23 +1186,104 @@ fn cmd_parse(args: &[String]) -> Result<ExitCode, CliError> {
     println!("body: {} byte(s)", doc.body.len());
     let missing = doc.missing_recommended();
     if !missing.is_empty() {
-        println!("missing recommended: {}", missing.join(", "));
+        println!("\nmissing recommended keys: {}", missing.join(", "));
     }
-
     print_parse_trust(fm);
     print_parse_sources(fm);
     print_parse_attributions(&doc);
     print_parse_computation(&doc);
     print_parse_links(&doc);
-
-    if conformant {
-        Ok(ExitCode::SUCCESS)
-    } else {
-        Ok(ExitCode::from(EX_DATAERR))
-    }
+    Ok(ExitCode::SUCCESS)
 }
 
-/// The trust block: tier, status, `generated`, `verified`, and `stale_after`.
+fn print_parse_json(doc: &Document, path: &str, today_date: Option<Date>) {
+    let fm = &doc.frontmatter;
+    let is_stale = today_date.is_some_and(|t| fm.is_stale_on(t));
+    let generated = fm.generated().map(|g| {
+        serde_json::json!({
+            "by": g.by.as_ref().map(ToString::to_string),
+            "at": g.at.as_ref().map(ToString::to_string),
+        })
+    });
+    let verified: Vec<serde_json::Value> = fm
+        .verified()
+        .iter()
+        .map(|v| {
+            serde_json::json!({
+                "by": v.by.as_ref().map(ToString::to_string),
+                "at": v.at.as_ref().map(ToString::to_string),
+            })
+        })
+        .collect();
+    let sources: Vec<serde_json::Value> = fm
+        .sources()
+        .iter()
+        .map(|s| {
+            serde_json::json!({
+                "id": s.id,
+                "resource": s.resource,
+                "title": s.title,
+                "resource_kind": format!("{:?}", s.resource_kind()).to_lowercase(),
+                "author": s.author.as_ref().map(ToString::to_string),
+                "last_modified": s.last_modified.as_ref().map(ToString::to_string),
+                "usage_count": s.usage_count,
+            })
+        })
+        .collect();
+    let attributions: Vec<serde_json::Value> = doc
+        .attributions()
+        .iter()
+        .map(|a| {
+            serde_json::json!({
+                "label": a.label,
+                "references": a.references,
+                "source_id": a.source.as_ref().and_then(|s| s.id.as_deref()),
+            })
+        })
+        .collect();
+    let attested_comp = doc.attested_computation().map(|comp| {
+        serde_json::json!({
+            "runtime": comp.runtime,
+            "computation": comp.computation.to_string(),
+        })
+    });
+    let links: Vec<serde_json::Value> = doc
+        .links()
+        .iter()
+        .map(|l| {
+            serde_json::json!({
+                "text": l.text,
+                "target": l.target,
+                "kind": format!("{:?}", l.kind).to_lowercase(),
+            })
+        })
+        .collect();
+
+    let val = serde_json::json!({
+        "file": path,
+        "conformant": doc.validate().is_ok(),
+        "missing_recommended": doc.missing_recommended(),
+        "type": fm.type_(),
+        "title": fm.title(),
+        "description": fm.description(),
+        "tags": fm.tags(),
+        "status": fm.status().to_string(),
+        "trust_tier": fm.trust_tier().to_string(),
+        "stale": is_stale,
+        "stale_after": fm.stale_after().map(|d| d.to_string()),
+        "generated": generated,
+        "verified": verified,
+        "sources": sources,
+        "attributions": attributions,
+        "attested_computation": attested_comp,
+        "links": links,
+        "body_bytes": doc.body.len(),
+    });
+
+    println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());
+}
+
+/// The `generated` and `verified` blocks, trust tier, and status.
 fn print_parse_trust(fm: &crate::Frontmatter) {
     println!("\ntrust:");
     println!("  tier:      {}", fm.trust_tier());
@@ -1031,9 +1420,21 @@ fn scalar(value: &Value) -> String {
     value.to_yaml_string().trim_end().to_string()
 }
 
+fn format_markdown_file(file_path: &Path, text: &str) -> Result<String, DocumentError> {
+    if file_path.file_name().and_then(|n| n.to_str()) == Some("log.md") {
+        Ok(crate::log::Log::parse(text).to_markdown())
+    } else {
+        let doc = Document::parse(text)?;
+        Ok(doc.serialize())
+    }
+}
+
+#[allow(clippy::too_many_lines)]
 fn cmd_fmt(args: &[String]) -> Result<ExitCode, CliError> {
     let path = positional(args, "<path>")?;
     let write = has_flag(args, "-w") || has_flag(args, "--write");
+    let check = has_flag(args, "-c") || has_flag(args, "--check");
+    let json = is_json(args)?;
     let target_path = Path::new(path);
 
     if !target_path.exists() {
@@ -1042,18 +1443,33 @@ fn cmd_fmt(args: &[String]) -> Result<ExitCode, CliError> {
         )));
     }
 
+    if check {
+        return cmd_fmt_check(target_path, path, json);
+    }
+
     if target_path.is_dir() {
         let mut md_files = Vec::new();
         collect_markdown_files(target_path, &mut md_files)?;
         md_files.sort();
 
         if md_files.is_empty() {
-            println!("no markdown files found in {}", target_path.display());
+            if json {
+                let val = serde_json::json!({
+                    "formatted_count": 0,
+                    "error_count": 0,
+                    "written": write,
+                    "files": Vec::<String>::new(),
+                });
+                println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());
+            } else {
+                println!("no markdown files found in {}", target_path.display());
+            }
             return Ok(ExitCode::SUCCESS);
         }
 
         let mut formatted_count = 0;
         let mut error_count = 0;
+        let mut formatted_files = Vec::new();
 
         for file_path in &md_files {
             let text = match std::fs::read_to_string(file_path) {
@@ -1064,30 +1480,40 @@ fn cmd_fmt(args: &[String]) -> Result<ExitCode, CliError> {
                     continue;
                 }
             };
-            let doc = match Document::parse(&text) {
-                Ok(d) => d,
+            let out = match format_markdown_file(file_path, &text) {
+                Ok(out) => out,
                 Err(e) => {
                     eprintln!("error parsing {}: {e}", file_path.display());
                     error_count += 1;
                     continue;
                 }
             };
-            let out = doc.serialize();
             if write {
                 if let Err(e) = std::fs::write(file_path, &out) {
                     eprintln!("error writing {}: {e}", file_path.display());
                     error_count += 1;
                     continue;
                 }
-                println!("formatted {}", file_path.display());
-            } else {
+                if !json {
+                    println!("formatted {}", file_path.display());
+                }
+            } else if !json {
                 println!("--- {} ---", file_path.display());
                 print!("{out}");
             }
             formatted_count += 1;
+            formatted_files.push(file_path.to_string_lossy().into_owned());
         }
 
-        if write {
+        if json {
+            let val = serde_json::json!({
+                "formatted_count": formatted_count,
+                "error_count": error_count,
+                "written": write,
+                "files": formatted_files,
+            });
+            println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());
+        } else if write {
             println!(
                 "\n{formatted_count} file(s) formatted in {}.",
                 target_path.display()
@@ -1101,16 +1527,130 @@ fn cmd_fmt(args: &[String]) -> Result<ExitCode, CliError> {
         }
     } else {
         let text = std::fs::read_to_string(path).map_err(|e| CliError::no_input(e.to_string()))?;
-        let doc = Document::parse(&text).map_err(|e| CliError::data(e.to_string()))?;
-        let out = doc.serialize();
+        let out =
+            format_markdown_file(target_path, &text).map_err(|e| CliError::data(e.to_string()))?;
 
         if write {
             std::fs::write(target_path, &out).map_err(|e| CliError::no_input(e.to_string()))?;
-            println!("formatted {path}");
+            if json {
+                let val = serde_json::json!({
+                    "formatted_count": 1,
+                    "error_count": 0,
+                    "written": true,
+                    "file": path,
+                });
+                println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());
+            } else {
+                println!("formatted {path}");
+            }
+        } else if json {
+            let val = serde_json::json!({
+                "formatted_count": 1,
+                "error_count": 0,
+                "written": false,
+                "file": path,
+            });
+            println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());
         } else {
             print!("{out}");
         }
         Ok(ExitCode::SUCCESS)
+    }
+}
+
+fn cmd_fmt_check(target_path: &Path, path_str: &str, json: bool) -> Result<ExitCode, CliError> {
+    let mut files = Vec::new();
+    if target_path.is_dir() {
+        collect_markdown_files(target_path, &mut files)?;
+        files.sort();
+    } else {
+        files.push(target_path.to_path_buf());
+    }
+
+    if files.is_empty() {
+        if json {
+            let val = serde_json::json!({
+                "clean": true,
+                "total_files": 0,
+                "unformatted_count": 0,
+                "unformatted": Vec::<String>::new(),
+            });
+            println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());
+        } else {
+            println!("no markdown files found in {}", target_path.display());
+        }
+        return Ok(ExitCode::SUCCESS);
+    }
+
+    let mut unformatted = Vec::new();
+    let mut parse_errors = 0;
+
+    for file_path in &files {
+        let text = match std::fs::read_to_string(file_path) {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("error reading {}: {e}", file_path.display());
+                parse_errors += 1;
+                unformatted.push(file_path.clone());
+                continue;
+            }
+        };
+        let formatted = match format_markdown_file(file_path, &text) {
+            Ok(f) => f,
+            Err(e) => {
+                eprintln!("error parsing {}: {e}", file_path.display());
+                parse_errors += 1;
+                unformatted.push(file_path.clone());
+                continue;
+            }
+        };
+        if text != formatted {
+            unformatted.push(file_path.clone());
+        }
+    }
+
+    let clean = unformatted.is_empty() && parse_errors == 0;
+    let unformatted_count = unformatted.len();
+
+    if json {
+        let unformatted_paths: Vec<String> = unformatted
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect();
+        let val = serde_json::json!({
+            "clean": clean,
+            "total_files": files.len(),
+            "unformatted_count": unformatted_count,
+            "unformatted": unformatted_paths,
+        });
+        println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());
+    } else if clean {
+        if target_path.is_dir() {
+            println!(
+                "✓ all {} file(s) formatted in {}",
+                files.len(),
+                target_path.display()
+            );
+        } else {
+            println!("✓ {} is formatted", target_path.display());
+        }
+    } else {
+        for p in &unformatted {
+            println!("needs formatting: {}", p.display());
+        }
+        if unformatted_count == 1 {
+            println!("\n1 file would be reformatted. Run 'okf fmt -w {path_str}' to format.");
+        } else {
+            println!(
+                "\n{unformatted_count} file(s) would be reformatted. Run 'okf fmt -w {path_str}' to format."
+            );
+        }
+    }
+
+    if clean {
+        Ok(ExitCode::SUCCESS)
+    } else {
+        Ok(ExitCode::from(EX_DATAERR))
     }
 }
 
@@ -1139,6 +1679,7 @@ fn cmd_init(args: &[String]) -> Result<ExitCode, CliError> {
     let sample_name = flag_value(args, "--sample-name").unwrap_or("overview");
     let author = flag_value(args, "--author").map(ToString::to_string);
     let force = has_flag(args, "-f") || has_flag(args, "--force");
+    let json = is_json(args)?;
 
     let options = BundleInitOptions {
         title: title.to_string(),
@@ -1151,9 +1692,23 @@ fn cmd_init(args: &[String]) -> Result<ExitCode, CliError> {
     let created = init_bundle(dir, &options)
         .map_err(|e| CliError::data(format!("could not initialize bundle: {e}")))?;
 
-    println!("initialized OKF bundle at {dir}");
-    for p in &created {
-        println!("  created {}", p.display());
+    if json {
+        let created_paths: Vec<String> = created
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect();
+        let val = serde_json::json!({
+            "status": "ok",
+            "bundle": dir,
+            "title": title,
+            "created": created_paths,
+        });
+        println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());
+    } else {
+        println!("initialized OKF bundle at {dir}");
+        for p in &created {
+            println!("  created {}", p.display());
+        }
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -1183,12 +1738,13 @@ fn cmd_new(args: &[String]) -> Result<ExitCode, CliError> {
     };
     let attested = has_flag(args, "--attested");
     let force = has_flag(args, "-f") || has_flag(args, "--force");
+    let json = is_json(args)?;
 
     let options = ConceptOptions {
         type_: type_.to_string(),
-        title,
+        title: title.clone(),
         description,
-        status,
+        status: status.clone(),
         author,
         attested,
         tags: Vec::new(),
@@ -1198,7 +1754,25 @@ fn cmd_new(args: &[String]) -> Result<ExitCode, CliError> {
     let created = create_concept(&target_path, &options)
         .map_err(|e| CliError::data(format!("could not create concept: {e}")))?;
 
-    println!("created concept at {}", created.display());
+    if json {
+        let title_val = title.unwrap_or_else(|| {
+            created
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .map_or_else(|| "Untitled".to_string(), crate::scaffold::title_from_name)
+        });
+        let val = serde_json::json!({
+            "status": "ok",
+            "path": created.to_string_lossy(),
+            "type": type_,
+            "title": title_val,
+            "lifecycle_status": status.to_string(),
+            "attested": attested,
+        });
+        println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());
+    } else {
+        println!("created concept at {}", created.display());
+    }
     Ok(ExitCode::SUCCESS)
 }
 
@@ -1208,14 +1782,12 @@ fn cmd_links(args: &[String]) -> Result<ExitCode, CliError> {
     let broken_only = has_flag(args, "--broken");
     let check = has_flag(args, "--check");
     let show_external = has_flag(args, "--all") || has_flag(args, "--external");
-    let format = flag_value(args, "--format").unwrap_or("text");
+    let json = is_json(args)?;
 
-    match format {
-        "text" => Ok(print_links_text(&bundle, broken_only, show_external, check)),
-        "json" => Ok(print_links_json(&bundle, broken_only, show_external, check)),
-        other => Err(CliError::usage(format!(
-            "unknown --format: {other} (expected text|json)"
-        ))),
+    if json {
+        Ok(print_links_json(&bundle, broken_only, show_external, check))
+    } else {
+        Ok(print_links_text(&bundle, broken_only, show_external, check))
     }
 }
 
@@ -1312,85 +1884,59 @@ fn print_links_json(
     let broken = bundle.broken_links();
     let broken_count = broken.len();
 
-    let mut out = String::new();
-    out.push_str("{\n");
-    let _ = writeln!(out, "  \"concepts_count\": {},", bundle.len());
-    let _ = writeln!(out, "  \"broken_count\": {broken_count},");
-    out.push_str("  \"concepts\": [\n");
-
-    let concepts = bundle.concepts();
-    let mut first_c = true;
-    for c in concepts {
-        let links = bundle.links_from(&c.id);
-        let doc_links = c.document.links();
-        let ext_links: Vec<&Link> = doc_links
-            .iter()
-            .filter(|l| l.kind == crate::LinkKind::External)
-            .collect();
-
-        if broken_only && !links.iter().any(|l| !l.exists) {
-            continue;
-        }
-
-        if !first_c {
-            out.push_str(",\n");
-        }
-        first_c = false;
-
-        let _ = writeln!(out, "    {{");
-        let _ = writeln!(out, "      \"id\": {},", json_str(&c.id.to_string()));
-        out.push_str("      \"links\": [");
-
-        let mut first_l = true;
-        for l in links {
-            if broken_only && l.exists {
-                continue;
+    let concepts: Vec<serde_json::Value> = bundle
+        .concepts()
+        .iter()
+        .filter_map(|c| {
+            let links = bundle.links_from(&c.id);
+            if broken_only && !links.iter().any(|l| !l.exists) {
+                return None;
             }
-            if !first_l {
-                out.push(',');
-            }
-            first_l = false;
-            out.push('\n');
-            let _ = writeln!(out, "        {{");
-            let _ = writeln!(
-                out,
-                "          \"target\": {},",
-                json_str(&l.target.to_string())
-            );
-            let _ = writeln!(out, "          \"raw\": {},", json_str(&l.raw));
-            let _ = writeln!(out, "          \"exists\": {},", l.exists);
-            let _ = writeln!(out, "          \"kind\": \"internal\",");
-            let _ = writeln!(out, "          \"text\": {}", json_str(&l.text));
-            out.push_str("        }");
-        }
 
-        if show_external && !broken_only {
-            for ext in ext_links {
-                if !first_l {
-                    out.push(',');
+            let mut link_values: Vec<serde_json::Value> = links
+                .iter()
+                .filter(|l| !broken_only || !l.exists)
+                .map(|l| {
+                    serde_json::json!({
+                        "target": l.target.to_string(),
+                        "raw": l.raw,
+                        "exists": l.exists,
+                        "kind": "internal",
+                        "text": l.text,
+                    })
+                })
+                .collect();
+
+            if show_external && !broken_only {
+                let doc_links = c.document.links();
+                for ext in doc_links
+                    .iter()
+                    .filter(|l| l.kind == crate::LinkKind::External)
+                {
+                    link_values.push(serde_json::json!({
+                        "target": ext.target,
+                        "raw": ext.target,
+                        "exists": true,
+                        "kind": "external",
+                        "text": ext.text,
+                    }));
                 }
-                first_l = false;
-                out.push('\n');
-                let _ = writeln!(out, "        {{");
-                let _ = writeln!(out, "          \"target\": {},", json_str(&ext.target));
-                let _ = writeln!(out, "          \"raw\": {},", json_str(&ext.target));
-                let _ = writeln!(out, "          \"exists\": true,");
-                let _ = writeln!(out, "          \"kind\": \"external\",");
-                let _ = writeln!(out, "          \"text\": {}", json_str(&ext.text));
-                out.push_str("        }");
             }
-        }
 
-        if first_l {
-            out.push_str("]\n");
-        } else {
-            out.push('\n');
-            out.push_str("      ]\n");
-        }
-        out.push_str("    }");
-    }
-    out.push_str("\n  ]\n}\n");
-    print!("{out}");
+            Some(serde_json::json!({
+                "id": c.id.to_string(),
+                "links": link_values,
+            }))
+        })
+        .collect();
+
+    let val = serde_json::json!({
+        "concepts_count": bundle.len(),
+        "broken_count": broken_count,
+        "concepts": concepts,
+    });
+
+    println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());
 
     if check && broken_count > 0 {
         ExitCode::from(EX_DATAERR)
@@ -1407,6 +1953,12 @@ fn cmd_diff(args: &[String]) -> Result<ExitCode, CliError> {
     let a = load(paths[0])?;
     let b = load(paths[1])?;
     let diff = bundle_diff(&a, &b);
+    let json = is_json(args)?;
+
+    if json {
+        print_diff_json(&a, &b, &diff);
+        return Ok(ExitCode::SUCCESS);
+    }
 
     println!("{} -> {}", a.root().display(), b.root().display());
     println!("{diff}");
@@ -1423,4 +1975,116 @@ fn cmd_diff(args: &[String]) -> Result<ExitCode, CliError> {
         + diff.broken_links.len();
     println!("\n{changes} change(s).");
     Ok(ExitCode::SUCCESS)
+}
+
+#[allow(clippy::too_many_lines)]
+fn print_diff_json(a: &Bundle, b: &Bundle, diff: &crate::BundleDiff) {
+    let changes_count = diff.added.len()
+        + diff.removed.len()
+        + diff.renamed.len()
+        + diff.content.len()
+        + diff.frontmatter.len()
+        + diff.trust.len()
+        + diff.added_links.len()
+        + diff.removed_links.len()
+        + diff.mended_links.len()
+        + diff.broken_links.len();
+
+    let renamed: Vec<serde_json::Value> = diff
+        .renamed
+        .iter()
+        .map(|r| {
+            serde_json::json!({
+                "from": r.from.to_string(),
+                "to": r.to.to_string(),
+            })
+        })
+        .collect();
+
+    let frontmatter: Vec<serde_json::Value> = diff
+        .frontmatter
+        .iter()
+        .map(|fc| {
+            let changed: Vec<serde_json::Value> = fc
+                .changed
+                .iter()
+                .map(|(k, old, new)| {
+                    serde_json::json!({
+                        "key": k,
+                        "old": old,
+                        "new": new,
+                    })
+                })
+                .collect();
+            serde_json::json!({
+                "concept": fc.id.to_string(),
+                "added": fc.added,
+                "removed": fc.removed,
+                "changed": changed,
+            })
+        })
+        .collect();
+
+    let trust: Vec<serde_json::Value> = diff
+        .trust
+        .iter()
+        .map(|tc| {
+            let tier = tc.tier.as_ref().map(|(f, t)| {
+                serde_json::json!({
+                    "from": f.to_string(),
+                    "to": t.to_string(),
+                })
+            });
+            let status = tc.status.as_ref().map(|(f, t)| {
+                serde_json::json!({
+                    "from": f.to_string(),
+                    "to": t.to_string(),
+                })
+            });
+            serde_json::json!({
+                "concept": tc.id.to_string(),
+                "tier": tier,
+                "status": status,
+            })
+        })
+        .collect();
+
+    let added_links: Vec<serde_json::Value> = diff
+        .added_links
+        .iter()
+        .map(|(f, t)| serde_json::json!({ "from": f.to_string(), "target": t.to_string() }))
+        .collect();
+    let removed_links: Vec<serde_json::Value> = diff
+        .removed_links
+        .iter()
+        .map(|(f, t)| serde_json::json!({ "from": f.to_string(), "target": t.to_string() }))
+        .collect();
+    let mended_links: Vec<serde_json::Value> = diff
+        .mended_links
+        .iter()
+        .map(|(f, t)| serde_json::json!({ "from": f.to_string(), "target": t }))
+        .collect();
+    let broken_links: Vec<serde_json::Value> = diff
+        .broken_links
+        .iter()
+        .map(|(f, t)| serde_json::json!({ "from": f.to_string(), "target": t }))
+        .collect();
+
+    let val = serde_json::json!({
+        "bundle_a": a.root().to_string_lossy(),
+        "bundle_b": b.root().to_string_lossy(),
+        "changes_count": changes_count,
+        "added": diff.added.iter().map(ToString::to_string).collect::<Vec<_>>(),
+        "removed": diff.removed.iter().map(ToString::to_string).collect::<Vec<_>>(),
+        "renamed": renamed,
+        "content_changed": diff.content.iter().map(ToString::to_string).collect::<Vec<_>>(),
+        "frontmatter_changed": frontmatter,
+        "trust_changed": trust,
+        "added_links": added_links,
+        "removed_links": removed_links,
+        "mended_links": mended_links,
+        "broken_links": broken_links,
+    });
+
+    println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());
 }

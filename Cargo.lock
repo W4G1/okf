@@ -363,6 +363,7 @@ version = "0.2.4"
 dependencies = [
  "okf-core",
  "okf-validator",
+ "serde_json",
 ]
 
 [[package]]

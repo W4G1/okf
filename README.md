@@ -41,6 +41,7 @@ A **pure-Rust** implementation and CLI toolkit for the [Open Knowledge Format (O
   - [Listing computations: computations](#listing-computations-computations)
   - [Semantic diffs: diff](#semantic-diffs-diff)
   - [Formatting and indexing: fmt, index, and parse](#formatting-and-indexing-fmt-index-and-parse)
+  - [Universal JSON output: --json / -j](#universal-json-output---json---j)
 - [CI/CD integration](#cicd-integration)
 - [Using as a Rust library](#using-as-a-rust-library)
   - [1. Loading and validating a bundle](#1-loading-and-validating-a-bundle)
@@ -398,6 +399,9 @@ added links (1):
 ### Formatting and indexing: fmt, index, and parse
 
 ```sh
+# Dry-run format check for CI (exits with non-zero code if files need formatting)
+okf fmt ./company_knowledge --check
+
 # Format frontmatter and body in place across all markdown files
 okf fmt ./company_knowledge -w
 
@@ -406,6 +410,19 @@ okf index ./company_knowledge
 
 # Inspect AST and parsed frontmatter structure of a single document
 okf parse ./company_knowledge/policies/travel_expenses.md
+```
+
+### Universal JSON output: `--json` / `-j`
+
+Every CLI subcommand supports machine-readable JSON output via `--json` (or `-j` / `--format json`) for automated pipelines and AI agent tool calling:
+
+```sh
+okf validate ./company_knowledge --json
+okf lint ./company_knowledge --json
+okf info ./company_knowledge --json
+okf trust ./company_knowledge --json
+okf fmt ./company_knowledge --check --json
+okf diff ./bundle_v1 ./bundle_v2 --json
 ```
 
 ---
@@ -437,6 +454,9 @@ jobs:
 
       - name: Install okf
         run: cargo install okf
+
+      - name: Check formatting
+        run: okf fmt ./company_knowledge --check
 
       - name: Validate OKF conformance
         run: okf validate ./company_knowledge

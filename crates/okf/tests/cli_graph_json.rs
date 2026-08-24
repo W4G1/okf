@@ -17,22 +17,23 @@ fn graph_json(bundle: &TempDir) -> String {
 #[test]
 fn graph_json_is_valid_for_empty_and_linkless_bundles() {
     let empty = TempDir::new();
-    assert_eq!(graph_json(&empty), "{\n  \"concepts\": [\n  ]\n}\n");
+    let val: serde_json::Value = serde_json::from_str(&graph_json(&empty)).unwrap();
+    assert_eq!(val["concepts"], serde_json::json!([]));
 
     let linkless = TempDir::new();
     linkless.write("plain.md", "---\ntype: Metric\n---\n\nNo links.\n");
+    let val: serde_json::Value = serde_json::from_str(&graph_json(&linkless)).unwrap();
     assert_eq!(
-        graph_json(&linkless),
-        r#"{
-  "concepts": [
-    {
-      "id": "plain",
-      "links": [],
-      "sources": []
-    }
-  ]
-}
-"#
+        val,
+        serde_json::json!({
+            "concepts": [
+                {
+                    "id": "plain",
+                    "links": [],
+                    "sources": []
+                }
+            ]
+        })
     );
 }
 
@@ -45,35 +46,35 @@ fn graph_json_separates_and_escapes_every_link_field() {
     );
     bundle.write("target.md", "---\ntype: Metric\n---\n\nTarget.\n");
 
+    let val: serde_json::Value = serde_json::from_str(&graph_json(&bundle)).unwrap();
     assert_eq!(
-        graph_json(&bundle),
-        r#"{
-  "concepts": [
-    {
-      "id": "source",
-      "links": [
-        {
-          "target": "target",
-          "exists": true,
-          "text": "say \"hi\"",
-          "raw": "target.md"
-        },
-        {
-          "target": "missing\"target",
-          "exists": false,
-          "text": "missing",
-          "raw": "missing\"target.md"
-        }
-      ],
-      "sources": []
-    },
-    {
-      "id": "target",
-      "links": [],
-      "sources": []
-    }
-  ]
-}
-"#
+        val,
+        serde_json::json!({
+            "concepts": [
+                {
+                    "id": "source",
+                    "links": [
+                        {
+                            "target": "target",
+                            "exists": true,
+                            "text": "say \"hi\"",
+                            "raw": "target.md"
+                        },
+                        {
+                            "target": "missing\"target",
+                            "exists": false,
+                            "text": "missing",
+                            "raw": "missing\"target.md"
+                        }
+                    ],
+                    "sources": []
+                },
+                {
+                    "id": "target",
+                    "links": [],
+                    "sources": []
+                }
+            ]
+        })
     );
 }
