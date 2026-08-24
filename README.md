@@ -2,7 +2,7 @@
 
 # okf
 
-A **pure-Rust** implementation and CLI toolkit for the [Open Knowledge Format (OKF) v0.2](https://github.com/GoogleCloudPlatform/open-knowledge-format/blob/main/SPEC.md) specification: Google's open, human- and agent-friendly format for representing knowledge as a directory of Markdown files with YAML frontmatter.
+A **pure-Rust** implementation and CLI toolkit for the [Open Knowledge Format (OKF) v0.2](https://github.com/GoogleCloudPlatform/open-knowledge-format/blob/main/SPEC.md): Google's open, human- and agent-friendly format for representing knowledge as a directory of Markdown files with YAML frontmatter.
 
 [![crates.io](https://img.shields.io/crates/v/okf.svg?label=okf)](https://crates.io/crates/okf)
 [![crates.io](https://img.shields.io/crates/v/okf-core.svg?label=okf-core)](https://crates.io/crates/okf-core)
