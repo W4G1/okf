@@ -31,14 +31,53 @@ pub enum ActorKind {
     Other,
 }
 
-impl fmt::Display for ActorKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
+impl ActorKind {
+    /// String representation of this actor kind.
+    #[must_use]
+    pub const fn as_str(&self) -> &'static str {
+        match self {
             Self::Human => "human",
             Self::Process => "process",
             Self::Agent => "agent",
             Self::Other => "other",
-        })
+        }
+    }
+}
+
+impl AsRef<str> for ActorKind {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+/// Error returned when a string cannot be parsed into an [`ActorKind`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ParseActorKindError(pub String);
+
+impl fmt::Display for ParseActorKindError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "unknown actor kind: {:?}", self.0)
+    }
+}
+
+impl std::error::Error for ParseActorKindError {}
+
+impl std::str::FromStr for ActorKind {
+    type Err = ParseActorKindError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "human" => Ok(Self::Human),
+            "process" => Ok(Self::Process),
+            "agent" => Ok(Self::Agent),
+            "other" => Ok(Self::Other),
+            other => Err(ParseActorKindError(other.to_string())),
+        }
+    }
+}
+
+impl fmt::Display for ActorKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
     }
 }
 
@@ -127,6 +166,32 @@ impl fmt::Display for Actor {
 impl From<&str> for Actor {
     fn from(s: &str) -> Self {
         Self::parse(s)
+    }
+}
+
+impl From<String> for Actor {
+    fn from(s: String) -> Self {
+        Self::parse(s)
+    }
+}
+
+impl std::str::FromStr for Actor {
+    type Err = std::convert::Infallible;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Self::parse(s))
+    }
+}
+
+impl AsRef<str> for Actor {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl std::ops::Deref for Actor {
+    type Target = str;
+    fn deref(&self) -> &str {
+        self.as_str()
     }
 }
 

@@ -135,9 +135,25 @@ impl Mapping {
         self.entries.iter().map(|(k, v)| (k, v))
     }
 
+    /// Iterates over mutable `(key, value)` pairs in order.
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (&mut Value, &mut Value)> {
+        self.entries.iter_mut().map(|(k, v)| (k, v))
+    }
+
     /// Iterates over string keys (skipping any non-string keys).
     pub fn keys(&self) -> impl Iterator<Item = &str> {
         self.entries.iter().filter_map(|(k, _)| k.as_str())
+    }
+
+    /// Iterates over values in order.
+    pub fn values(&self) -> impl Iterator<Item = &Value> {
+        self.entries.iter().map(|(_, v)| v)
+    }
+
+    /// Borrows the underlying slice of key-value entry pairs.
+    #[must_use]
+    pub fn entries(&self) -> &[(Value, Value)] {
+        &self.entries
     }
 }
 
@@ -200,6 +216,15 @@ impl Value {
     pub const fn as_int(&self) -> Option<i64> {
         match self {
             Self::Int(i) => Some(*i),
+            _ => None,
+        }
+    }
+
+    /// Returns the floating-point number if this is a [`Value::Float`].
+    #[must_use]
+    pub const fn as_float(&self) -> Option<f64> {
+        match self {
+            Self::Float(f) => Some(*f),
             _ => None,
         }
     }
@@ -310,5 +335,188 @@ impl<T: Into<Self>> From<Vec<T>> for Value {
 impl From<Mapping> for Value {
     fn from(m: Mapping) -> Self {
         Self::Mapping(m)
+    }
+}
+
+impl std::str::FromStr for Value {
+    type Err = YamlError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::parse(s)
+    }
+}
+
+impl From<i32> for Value {
+    fn from(i: i32) -> Self {
+        Self::Int(i64::from(i))
+    }
+}
+
+impl From<i16> for Value {
+    fn from(i: i16) -> Self {
+        Self::Int(i64::from(i))
+    }
+}
+
+impl From<i8> for Value {
+    fn from(i: i8) -> Self {
+        Self::Int(i64::from(i))
+    }
+}
+
+impl From<u32> for Value {
+    fn from(u: u32) -> Self {
+        Self::Int(i64::from(u))
+    }
+}
+
+impl From<u16> for Value {
+    fn from(u: u16) -> Self {
+        Self::Int(i64::from(u))
+    }
+}
+
+impl From<u8> for Value {
+    fn from(u: u8) -> Self {
+        Self::Int(i64::from(u))
+    }
+}
+
+impl From<u64> for Value {
+    fn from(u: u64) -> Self {
+        Self::Int(i64::try_from(u).unwrap_or(i64::MAX))
+    }
+}
+
+impl From<usize> for Value {
+    fn from(u: usize) -> Self {
+        Self::Int(i64::try_from(u).unwrap_or(i64::MAX))
+    }
+}
+
+impl From<f64> for Value {
+    fn from(f: f64) -> Self {
+        Self::Float(f)
+    }
+}
+
+impl From<f32> for Value {
+    fn from(f: f32) -> Self {
+        Self::Float(f64::from(f))
+    }
+}
+
+impl From<&String> for Value {
+    fn from(s: &String) -> Self {
+        Self::String(s.clone())
+    }
+}
+
+impl From<std::borrow::Cow<'_, str>> for Value {
+    fn from(s: std::borrow::Cow<'_, str>) -> Self {
+        Self::String(s.into_owned())
+    }
+}
+
+impl From<()> for Value {
+    fn from((): ()) -> Self {
+        Self::Null
+    }
+}
+
+impl<T: Into<Self>> From<Option<T>> for Value {
+    fn from(opt: Option<T>) -> Self {
+        opt.map_or(Self::Null, Into::into)
+    }
+}
+
+impl fmt::Display for Mapping {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&Value::Mapping(self.clone()).to_yaml_string())
+    }
+}
+
+impl IntoIterator for Mapping {
+    type Item = (Value, Value);
+    type IntoIter = std::vec::IntoIter<(Value, Value)>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.entries.into_iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a Mapping {
+    type Item = (&'a Value, &'a Value);
+    type IntoIter = std::iter::Map<
+        std::slice::Iter<'a, (Value, Value)>,
+        fn(&(Value, Value)) -> (&Value, &Value),
+    >;
+    fn into_iter(self) -> Self::IntoIter {
+        const fn map_ref(entry: &(Value, Value)) -> (&Value, &Value) {
+            (&entry.0, &entry.1)
+        }
+        self.entries.iter().map(map_ref)
+    }
+}
+
+impl<'a> IntoIterator for &'a mut Mapping {
+    type Item = (&'a mut Value, &'a mut Value);
+    type IntoIter = std::iter::Map<
+        std::slice::IterMut<'a, (Value, Value)>,
+        fn(&mut (Value, Value)) -> (&mut Value, &mut Value),
+    >;
+    fn into_iter(self) -> Self::IntoIter {
+        const fn map_mut(entry: &mut (Value, Value)) -> (&mut Value, &mut Value) {
+            (&mut entry.0, &mut entry.1)
+        }
+        self.entries.iter_mut().map(map_mut)
+    }
+}
+
+impl FromIterator<(Value, Value)> for Mapping {
+    fn from_iter<T: IntoIterator<Item = (Value, Value)>>(iter: T) -> Self {
+        Self {
+            entries: iter.into_iter().collect(),
+        }
+    }
+}
+
+impl FromIterator<(String, Value)> for Mapping {
+    fn from_iter<T: IntoIterator<Item = (String, Value)>>(iter: T) -> Self {
+        let mut map = Self::new();
+        for (k, v) in iter {
+            map.insert(k, v);
+        }
+        map
+    }
+}
+
+impl<'a> FromIterator<(&'a str, Value)> for Mapping {
+    fn from_iter<T: IntoIterator<Item = (&'a str, Value)>>(iter: T) -> Self {
+        let mut map = Self::new();
+        for (k, v) in iter {
+            map.insert(k, v);
+        }
+        map
+    }
+}
+
+impl Extend<(Value, Value)> for Mapping {
+    fn extend<T: IntoIterator<Item = (Value, Value)>>(&mut self, iter: T) {
+        self.entries.extend(iter);
+    }
+}
+
+impl Extend<(String, Value)> for Mapping {
+    fn extend<T: IntoIterator<Item = (String, Value)>>(&mut self, iter: T) {
+        for (k, v) in iter {
+            self.insert(k, v);
+        }
+    }
+}
+
+impl<'a> Extend<(&'a str, Value)> for Mapping {
+    fn extend<T: IntoIterator<Item = (&'a str, Value)>>(&mut self, iter: T) {
+        for (k, v) in iter {
+            self.insert(k, v);
+        }
     }
 }

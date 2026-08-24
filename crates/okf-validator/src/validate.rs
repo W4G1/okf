@@ -66,27 +66,68 @@ use okf_core::provenance::{ResourceKind, Source};
 use okf_core::trust::{STATUS_VALUES, Verification};
 use okf_core::yaml::Value;
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 /// Severity of a diagnostic.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+///
+/// Ordered by increasing severity: `Info < Warning < Error`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Severity {
-    /// A conformance violation.
-    Error,
-    /// A soft-guidance deviation (the bundle is still conformant).
-    Warning,
     /// Informational note, for example a permitted but noteworthy cross-link or draft state.
     Info,
+    /// A soft-guidance deviation (the bundle is still conformant).
+    Warning,
+    /// A conformance violation.
+    Error,
 }
 
-impl std::fmt::Display for Severity {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            Self::Error => "error",
-            Self::Warning => "warning",
+impl Severity {
+    /// The string representation of this severity level (`"info"`, `"warning"`, `"error"`).
+    #[must_use]
+    pub const fn as_str(&self) -> &'static str {
+        match self {
             Self::Info => "info",
-        })
+            Self::Warning => "warning",
+            Self::Error => "error",
+        }
+    }
+}
+
+impl AsRef<str> for Severity {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+/// Error returned when a string cannot be parsed into a [`Severity`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ParseSeverityError(pub String);
+
+impl fmt::Display for ParseSeverityError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "unknown severity: {:?}", self.0)
+    }
+}
+
+impl std::error::Error for ParseSeverityError {}
+
+impl std::str::FromStr for Severity {
+    type Err = ParseSeverityError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "info" => Ok(Self::Info),
+            "warning" | "warn" => Ok(Self::Warning),
+            "error" => Ok(Self::Error),
+            other => Err(ParseSeverityError(other.to_string())),
+        }
+    }
+}
+
+impl fmt::Display for Severity {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
     }
 }
 

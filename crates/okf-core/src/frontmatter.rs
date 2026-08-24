@@ -27,7 +27,9 @@ use crate::computation::{ATTESTED_COMPUTATION_TYPE, Attester, Executor, Paramete
 use crate::date::{Date, DateTime, DateTimeField};
 use crate::provenance::{Source, UsageWindow};
 use crate::trust::{self, Generated, Status, TrustTier, Verification};
+use crate::error::DocumentError;
 use crate::yaml::{Mapping, Value};
+use std::fmt;
 use std::borrow::Cow;
 
 /// The only frontmatter key OKF always requires: a concept carrying
@@ -143,10 +145,37 @@ impl Frontmatter {
         self.map
     }
 
+    /// Number of frontmatter keys.
+    #[must_use]
+    pub const fn len(&self) -> usize {
+        self.map.len()
+    }
+
     /// `true` if there are no keys.
     #[must_use]
     pub const fn is_empty(&self) -> bool {
         self.map.is_empty()
+    }
+
+    /// `true` if frontmatter contains the given key.
+    #[must_use]
+    pub fn contains_key(&self, key: &str) -> bool {
+        self.map.contains_key(key)
+    }
+
+    /// Iterates over frontmatter `(key, value)` pairs in order.
+    pub fn iter(&self) -> impl Iterator<Item = (&Value, &Value)> {
+        self.map.iter()
+    }
+
+    /// Iterates over frontmatter string keys in order.
+    pub fn keys(&self) -> impl Iterator<Item = &str> {
+        self.map.keys()
+    }
+
+    /// Iterates over frontmatter values in order.
+    pub fn values(&self) -> impl Iterator<Item = &Value> {
+        self.map.values()
     }
 
     /// Raw value for an arbitrary key (including producer extensions).
@@ -432,5 +461,65 @@ impl Frontmatter {
 impl From<Mapping> for Frontmatter {
     fn from(map: Mapping) -> Self {
         Self { map }
+    }
+}
+
+impl From<Frontmatter> for Mapping {
+    fn from(fm: Frontmatter) -> Self {
+        fm.into_mapping()
+    }
+}
+
+impl fmt::Display for Frontmatter {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&Value::Mapping(self.map.clone()).to_yaml_string())
+    }
+}
+
+impl std::str::FromStr for Frontmatter {
+    type Err = DocumentError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let value = Value::parse(s)?;
+        match value {
+            Value::Null => Ok(Self::new()),
+            Value::Mapping(m) => Ok(Self::from_mapping(m)),
+            _ => Err(DocumentError::FrontmatterNotMapping),
+        }
+    }
+}
+
+impl FromIterator<(String, Value)> for Frontmatter {
+    fn from_iter<T: IntoIterator<Item = (String, Value)>>(iter: T) -> Self {
+        Self::from_mapping(Mapping::from_iter(iter))
+    }
+}
+
+impl<'a> FromIterator<(&'a str, Value)> for Frontmatter {
+    fn from_iter<T: IntoIterator<Item = (&'a str, Value)>>(iter: T) -> Self {
+        Self::from_mapping(Mapping::from_iter(iter))
+    }
+}
+
+impl FromIterator<(Value, Value)> for Frontmatter {
+    fn from_iter<T: IntoIterator<Item = (Value, Value)>>(iter: T) -> Self {
+        Self::from_mapping(Mapping::from_iter(iter))
+    }
+}
+
+impl Extend<(String, Value)> for Frontmatter {
+    fn extend<T: IntoIterator<Item = (String, Value)>>(&mut self, iter: T) {
+        self.map.extend(iter);
+    }
+}
+
+impl<'a> Extend<(&'a str, Value)> for Frontmatter {
+    fn extend<T: IntoIterator<Item = (&'a str, Value)>>(&mut self, iter: T) {
+        self.map.extend(iter);
+    }
+}
+
+impl Extend<(Value, Value)> for Frontmatter {
+    fn extend<T: IntoIterator<Item = (Value, Value)>>(&mut self, iter: T) {
+        self.map.extend(iter);
     }
 }

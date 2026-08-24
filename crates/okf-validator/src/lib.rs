@@ -52,4 +52,4 @@ pub use syntax::{
     FencedCodeBlock, Language, SyntaxError, check_syntax, extract_fenced_code_blocks,
 };
 #[doc(inline)]
-pub use validate::{Diagnostic, Report, Severity, validate_bundle, validate_bundle_at};
+pub use validate::{Diagnostic, ParseSeverityError, Report, Severity, validate_bundle, validate_bundle_at};

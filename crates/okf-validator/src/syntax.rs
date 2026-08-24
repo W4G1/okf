@@ -53,6 +53,12 @@ impl Language {
     /// Display name of the language.
     #[must_use]
     pub const fn name(&self) -> &'static str {
+        self.as_str()
+    }
+
+    /// Returns the canonical name of the language as a string slice.
+    #[must_use]
+    pub const fn as_str(&self) -> &'static str {
         match self {
             Self::Python => "python",
             Self::JavaScript => "javascript",
@@ -64,6 +70,25 @@ impl Language {
             Self::Bash => "bash",
             Self::Unknown => "unknown",
         }
+    }
+}
+
+impl fmt::Display for Language {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl AsRef<str> for Language {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl std::str::FromStr for Language {
+    type Err = std::convert::Infallible;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Self::from_tag(s))
     }
 }
 

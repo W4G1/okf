@@ -145,9 +145,10 @@ pub fn latest_verification(events: &[Verification]) -> Option<&Verification> {
 /// Ordering is by increasing trust, so tiers can be compared directly
 /// (`tier >= TrustTier::MachineConfirmed`). Tiers are advisory signals, not
 /// access control.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum TrustTier {
     /// No `verified` key.
+    #[default]
     Unverified,
     /// `verified` by non-`human:` actors only.
     MachineConfirmed,
@@ -168,25 +169,62 @@ impl TrustTier {
             Self::MachineConfirmed
         }
     }
+
+    /// The string representation of this trust tier.
+    #[must_use]
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Unverified => "unverified",
+            Self::MachineConfirmed => "machine-confirmed",
+            Self::HumanReviewed => "human-reviewed",
+        }
+    }
+}
+
+impl AsRef<str> for TrustTier {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+/// Error returned when a string cannot be parsed into a [`TrustTier`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ParseTrustTierError(pub String);
+
+impl fmt::Display for ParseTrustTierError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "unknown trust tier: {:?}", self.0)
+    }
+}
+
+impl std::error::Error for ParseTrustTierError {}
+
+impl std::str::FromStr for TrustTier {
+    type Err = ParseTrustTierError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim() {
+            "unverified" => Ok(Self::Unverified),
+            "machine-confirmed" | "machine_confirmed" => Ok(Self::MachineConfirmed),
+            "human-reviewed" | "human_reviewed" => Ok(Self::HumanReviewed),
+            other => Err(ParseTrustTierError(other.to_string())),
+        }
+    }
 }
 
 impl fmt::Display for TrustTier {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::Unverified => "unverified",
-            Self::MachineConfirmed => "machine-confirmed",
-            Self::HumanReviewed => "human-reviewed",
-        })
+        f.write_str(self.as_str())
     }
 }
 
 /// A concept's lifecycle `status`. An absent key means
 /// [`Status::Stable`].
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum Status {
     /// Not yet reviewed; possibly incomplete.
     Draft,
     /// The default: ready for consumption.
+    #[default]
     Stable,
     /// Kept for links and history; no longer current.
     Deprecated,
@@ -210,6 +248,17 @@ impl Status {
         })
     }
 
+    /// Returns the string representation of this status.
+    #[must_use]
+    pub const fn as_str(&self) -> &str {
+        match self {
+            Self::Draft => "draft",
+            Self::Stable => "stable",
+            Self::Deprecated => "deprecated",
+            Self::Other(s) => s.as_str(),
+        }
+    }
+
     /// `true` for one of the three values the spec defines.
     #[must_use]
     pub const fn is_known(&self) -> bool {
@@ -224,14 +273,22 @@ impl Status {
     }
 }
 
+impl AsRef<str> for Status {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl std::str::FromStr for Status {
+    type Err = std::convert::Infallible;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Self::parse(Some(s)))
+    }
+}
+
 impl fmt::Display for Status {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Draft => f.write_str("draft"),
-            Self::Stable => f.write_str("stable"),
-            Self::Deprecated => f.write_str("deprecated"),
-            Self::Other(s) => f.write_str(s),
-        }
+        f.write_str(self.as_str())
     }
 }
 

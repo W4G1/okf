@@ -16,9 +16,10 @@
 //! which consumers MAY keep reading for legacy documents.
 
 use crate::concept_id::ConceptId;
+use std::fmt;
 
 /// How a link target is interpreted.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum LinkKind {
     /// Begins with `/`: resolved relative to the bundle root (recommended).
     Absolute,
@@ -30,6 +31,58 @@ pub enum LinkKind {
     Anchor,
     /// Anything else (e.g. an empty target).
     Other,
+}
+
+impl LinkKind {
+    /// Returns the string representation of this link kind.
+    #[must_use]
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Absolute => "absolute",
+            Self::Relative => "relative",
+            Self::External => "external",
+            Self::Anchor => "anchor",
+            Self::Other => "other",
+        }
+    }
+}
+
+impl fmt::Display for LinkKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl AsRef<str> for LinkKind {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+/// Error returned when a string cannot be parsed into a [`LinkKind`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ParseLinkKindError(pub String);
+
+impl fmt::Display for ParseLinkKindError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "unknown link kind: {:?}", self.0)
+    }
+}
+
+impl std::error::Error for ParseLinkKindError {}
+
+impl std::str::FromStr for LinkKind {
+    type Err = ParseLinkKindError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "absolute" => Ok(Self::Absolute),
+            "relative" => Ok(Self::Relative),
+            "external" => Ok(Self::External),
+            "anchor" => Ok(Self::Anchor),
+            "other" => Ok(Self::Other),
+            other => Err(ParseLinkKindError(other.to_string())),
+        }
+    }
 }
 
 /// A markdown link found in a concept body.

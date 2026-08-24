@@ -183,6 +183,39 @@ impl std::str::FromStr for ConceptId {
     }
 }
 
+impl TryFrom<&str> for ConceptId {
+    type Error = ConceptIdError;
+    fn try_from(s: &str) -> Result<Self, Self::Error> {
+        Self::parse(s)
+    }
+}
+
+impl TryFrom<String> for ConceptId {
+    type Error = ConceptIdError;
+    fn try_from(s: String) -> Result<Self, Self::Error> {
+        Self::parse(&s)
+    }
+}
+
+impl From<ConceptId> for String {
+    fn from(id: ConceptId) -> Self {
+        id.to_string()
+    }
+}
+
+impl AsRef<[String]> for ConceptId {
+    fn as_ref(&self) -> &[String] {
+        self.segments()
+    }
+}
+
+impl std::ops::Deref for ConceptId {
+    type Target = [String];
+    fn deref(&self) -> &[String] {
+        self.segments()
+    }
+}
+
 /// Validates a single path segment, rejecting only what cannot be a concept id.
 ///
 /// The reference `bundle/paths.py` restricts segments to

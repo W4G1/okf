@@ -283,3 +283,16 @@ impl Document {
         !self.citations().is_empty()
     }
 }
+
+impl std::fmt::Display for Document {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.serialize())
+    }
+}
+
+impl std::str::FromStr for Document {
+    type Err = DocumentError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::parse(s)
+    }
+}

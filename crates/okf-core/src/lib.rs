@@ -121,7 +121,7 @@ pub const OKF_VERSION: &str = "0.2";
 pub const SUPPORTED_OKF_VERSIONS: [&str; 2] = ["0.1", "0.2"];
 
 #[doc(inline)]
-pub use actor::{Actor, ActorKind};
+pub use actor::{Actor, ActorKind, ParseActorKindError};
 #[doc(inline)]
 pub use bundle::{Bundle, Concept, RESERVED_FILENAMES, ResolvedLink, ResolvedSource};
 #[doc(inline)]
@@ -152,7 +152,7 @@ pub use frontmatter::{
     RECOMMENDED_FRONTMATTER_KEYS, REQUIRED_FRONTMATTER_KEYS,
 };
 #[doc(inline)]
-pub use links::{Citation, Link, LinkKind};
+pub use links::{Citation, Link, LinkKind, ParseLinkKindError};
 #[doc(inline)]
 pub use log::Log;
 #[doc(inline)]
@@ -162,6 +162,6 @@ pub use scaffold::{
     BundleInitOptions, ConceptOptions, create_concept, default_author, init_bundle,
 };
 #[doc(inline)]
-pub use trust::{Generated, Status, TrustTier, Verification};
+pub use trust::{Generated, ParseTrustTierError, Status, TrustTier, Verification};
 #[doc(inline)]
 pub use yaml::{Mapping, Value};
