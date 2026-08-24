@@ -64,6 +64,38 @@ impl CliError {
             code: EX_NOINPUT,
         }
     }
+
+    fn is_broken_pipe(&self) -> bool {
+        self.message.contains("Broken pipe") || self.message.contains("os error 32")
+    }
+}
+
+static INIT_BROKEN_PIPE_HOOK: std::sync::Once = std::sync::Once::new();
+
+#[allow(clippy::option_if_let_else)]
+fn install_broken_pipe_hook() {
+    INIT_BROKEN_PIPE_HOOK.call_once(|| {
+        let default_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |panic_info| {
+            let msg = if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
+                *s
+            } else if let Some(s) = panic_info.payload().downcast_ref::<String>() {
+                s.as_str()
+            } else {
+                ""
+            };
+            if msg.contains("Broken pipe")
+                || msg.contains("failed printing to stdout")
+                || msg.contains("failed printing to stderr")
+                || msg.contains("os error 32")
+                || msg.contains("os error 109")
+                || msg.contains("os error 232")
+            {
+                std::process::exit(0);
+            }
+            default_hook(panic_info);
+        }));
+    });
 }
 
 fn parse_date(raw: &str) -> Result<Date, String> {
@@ -641,6 +673,8 @@ pub struct MergeArgs {
 /// (the `cargo-okf` crate) are both thin wrappers around it.
 #[must_use]
 pub fn run(args: &[String]) -> ExitCode {
+    install_broken_pipe_hook();
+
     let parse_result =
         Cli::try_parse_from(std::iter::once("okf").chain(args.iter().map(String::as_str)));
 
@@ -675,6 +709,9 @@ pub fn run(args: &[String]) -> ExitCode {
     match result {
         Ok(code) => code,
         Err(e) => {
+            if e.is_broken_pipe() {
+                return ExitCode::SUCCESS;
+            }
             eprintln!("error: {}", e.message);
             ExitCode::from(e.code)
         }

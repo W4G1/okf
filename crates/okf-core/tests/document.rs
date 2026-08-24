@@ -201,7 +201,26 @@ fn empty_frontmatter_block_is_empty_mapping() {
     // The trailing newline is dropped on parse (matching the reference's
     // splitlines/join); serialize restores it.
     assert_eq!(doc.body, "body");
-    assert!(doc.serialize().ends_with("body\n"));
+    assert_eq!(doc.serialize(), "body\n");
+}
+
+#[test]
+fn serialize_empty_frontmatter_omits_delimiters() {
+    let no_fm = Document::parse("# Title\n\nSome body text.\n").unwrap();
+    assert!(no_fm.frontmatter.is_empty());
+    assert_eq!(no_fm.serialize(), "# Title\n\nSome body text.\n");
+
+    let empty_fm = Document::parse("---\n---\n# Sub Title\n\nBody.\n").unwrap();
+    assert!(empty_fm.frontmatter.is_empty());
+    assert_eq!(empty_fm.serialize(), "# Sub Title\n\nBody.\n");
+
+    let with_fm = Document::parse("---\ntype: Metric\n---\n\n# Metric\n\nBody.\n").unwrap();
+    assert!(!with_fm.frontmatter.is_empty());
+    assert!(
+        with_fm
+            .serialize()
+            .starts_with("---\ntype: Metric\n---\n\n")
+    );
 }
 
 #[test]

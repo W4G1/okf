@@ -246,3 +246,74 @@ fn cli_universal_json_flags() {
     assert!(diff_json.contains("\"bundle_b\":"));
     assert!(diff_json.contains("\"changes_count\":"));
 }
+
+#[test]
+fn cli_index_and_fmt_do_not_oscillate_on_subdirectories() {
+    let tmp = TempDir::new();
+    let bundle_path = tmp.path().join("oscillation_bundle");
+
+    // Initialize bundle
+    let init_status = okf()
+        .args(["init", bundle_path.to_str().unwrap()])
+        .status()
+        .unwrap();
+    assert_eq!(code(init_status), 0);
+
+    // Create a concept inside a subdirectory
+    let sub_concept = bundle_path.join("metrics/revenue.md");
+    std::fs::create_dir_all(sub_concept.parent().unwrap()).unwrap();
+    std::fs::write(
+        &sub_concept,
+        "---\ntype: Metric\ntitle: Revenue\ndescription: Recognized revenue.\nstatus: stable\n---\n\n# Revenue\n\nRevenue concept body.\n",
+    )
+    .unwrap();
+
+    // 1. Run okf index to generate subdirectory index.md
+    let idx_output1 = okf()
+        .args(["index", bundle_path.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert_eq!(idx_output1.status.code(), Some(0));
+
+    let sub_index_path = bundle_path.join("metrics/index.md");
+    assert!(sub_index_path.exists());
+    let sub_index_content1 = std::fs::read_to_string(&sub_index_path).unwrap();
+    assert!(!sub_index_content1.starts_with("---"));
+
+    // 2. okf fmt --check should pass cleanly without flagging subdirectory index.md
+    let fmt_check1 = okf()
+        .args(["fmt", bundle_path.to_str().unwrap(), "--check"])
+        .output()
+        .unwrap();
+    assert_eq!(
+        fmt_check1.status.code(),
+        Some(0),
+        "fmt --check should pass after index: {}",
+        String::from_utf8_lossy(&fmt_check1.stderr)
+    );
+
+    // 3. okf fmt -w should keep subdirectory index.md unchanged
+    let fmt_write = okf()
+        .args(["fmt", bundle_path.to_str().unwrap(), "-w"])
+        .output()
+        .unwrap();
+    assert_eq!(fmt_write.status.code(), Some(0));
+    let sub_index_content2 = std::fs::read_to_string(&sub_index_path).unwrap();
+    assert_eq!(sub_index_content1, sub_index_content2);
+
+    // 4. Running okf index again should not alter content
+    let idx_output2 = okf()
+        .args(["index", bundle_path.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert_eq!(idx_output2.status.code(), Some(0));
+    let sub_index_content3 = std::fs::read_to_string(&sub_index_path).unwrap();
+    assert_eq!(sub_index_content1, sub_index_content3);
+
+    // 5. okf fmt --check still passes cleanly
+    let fmt_check2 = okf()
+        .args(["fmt", bundle_path.to_str().unwrap(), "--check"])
+        .output()
+        .unwrap();
+    assert_eq!(fmt_check2.status.code(), Some(0));
+}

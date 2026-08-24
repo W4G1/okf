@@ -99,7 +99,9 @@ impl Document {
     }
 
     /// Serializes the document back to text: frontmatter delimited by `---`,
-    /// a blank line, then the body (terminated by a newline).
+    /// a blank line, then the body (terminated by a newline). If the
+    /// frontmatter is empty, the delimiters are omitted and only the body is
+    /// emitted.
     ///
     /// `parse` followed by `serialize` preserves frontmatter key order and the
     /// body (modulo trailing-newline normalization), matching the reference.
@@ -107,16 +109,20 @@ impl Document {
     /// written differently.
     #[must_use]
     pub fn serialize(&self) -> String {
-        let fm_text = Value::Mapping(self.frontmatter.as_mapping().clone())
-            .to_yaml_string()
-            .trim_end()
-            .to_string();
         let body = if self.body.ends_with('\n') {
             self.body.clone()
         } else {
             format!("{}\n", self.body)
         };
-        format!("{FRONTMATTER_DELIM}\n{fm_text}\n{FRONTMATTER_DELIM}\n\n{body}")
+        if self.frontmatter.is_empty() {
+            body
+        } else {
+            let fm_text = Value::Mapping(self.frontmatter.as_mapping().clone())
+                .to_yaml_string()
+                .trim_end()
+                .to_string();
+            format!("{FRONTMATTER_DELIM}\n{fm_text}\n{FRONTMATTER_DELIM}\n\n{body}")
+        }
     }
 
     /// Validates the document: the frontmatter must carry a

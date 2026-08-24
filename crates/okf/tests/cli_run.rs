@@ -127,3 +127,88 @@ Calculation description.
 
     let _ = std::fs::remove_dir_all(&temp_dir);
 }
+
+#[test]
+fn cli_trust_and_links_handle_broken_pipe_cleanly() {
+    let temp_dir = std::env::temp_dir().join(format!("okf_pipe_test_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    std::fs::create_dir_all(&temp_dir).unwrap();
+
+    let init_status = Command::new(okf_bin())
+        .args(["init", temp_dir.to_str().unwrap()])
+        .status()
+        .unwrap();
+    assert!(init_status.success());
+
+    // Populate enough concepts to generate output larger than the pipe buffer
+    for i in 0..400 {
+        let content = format!(
+            "---\ntype: Metric\ntitle: Metric {i} with a very long title and lots of extra description\ndescription: Extensive description for metric {i} to fill pipe buffer\nstatus: stable\n---\n\n# Metric {i}\nBody text.\n"
+        );
+        std::fs::write(temp_dir.join(format!("metric_{i}.md")), content).unwrap();
+    }
+
+    // 1. Test okf trust piped
+    {
+        let mut child = Command::new(okf_bin())
+            .args(["trust", temp_dir.to_str().unwrap()])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+
+        {
+            use std::io::BufRead;
+            let stdout = child.stdout.take().unwrap();
+            let mut reader = std::io::BufReader::new(stdout);
+            let mut line = String::new();
+            let _ = reader.read_line(&mut line);
+            // Drop reader to close the read end of the pipe
+        }
+
+        let output = child.wait_with_output().unwrap();
+        assert_eq!(output.status.code(), Some(0));
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !stderr.contains("panicked"),
+            "trust stderr had panic: {stderr}"
+        );
+        assert!(
+            !stderr.contains("Broken pipe"),
+            "trust stderr had broken pipe: {stderr}"
+        );
+    }
+
+    // 2. Test okf links piped
+    {
+        let mut child = Command::new(okf_bin())
+            .args(["links", temp_dir.to_str().unwrap()])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+
+        {
+            use std::io::BufRead;
+            let stdout = child.stdout.take().unwrap();
+            let mut reader = std::io::BufReader::new(stdout);
+            let mut line = String::new();
+            let _ = reader.read_line(&mut line);
+            // Drop reader to close the read end of the pipe
+        }
+
+        let output = child.wait_with_output().unwrap();
+        assert_eq!(output.status.code(), Some(0));
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !stderr.contains("panicked"),
+            "links stderr had panic: {stderr}"
+        );
+        assert!(
+            !stderr.contains("Broken pipe"),
+            "links stderr had broken pipe: {stderr}"
+        );
+    }
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}
