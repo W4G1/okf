@@ -17,7 +17,7 @@
 //! This module only finds the footnotes. Joining them to `sources` is
 //! [`provenance::attributions`](crate::provenance::attributions).
 
-use crate::links::code_free_lines;
+use crate::markdown::code_free_lines;
 
 /// A `[^label]` reference in the body prose.
 #[derive(Clone, Debug, PartialEq, Eq)]

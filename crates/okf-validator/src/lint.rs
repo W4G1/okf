@@ -213,51 +213,8 @@ fn check_key_order(cx: &mut Cx, fm: &Frontmatter) {
     }
 }
 
-struct MarkdownHeading<'a> {
-    level: usize,
-    text: &'a str,
-    line_num: usize,
-}
-
-fn parse_heading_line(line: &str) -> Option<(usize, &str)> {
-    let t = line.trim_start();
-    if !t.starts_with('#') {
-        return None;
-    }
-    let count = t.chars().take_while(|&c| c == '#').count();
-    if (1..=6).contains(&count) && t[count..].starts_with(' ') {
-        Some((count, t[count..].trim()))
-    } else {
-        None
-    }
-}
-
-fn parse_markdown_headings(body: &str) -> Vec<MarkdownHeading<'_>> {
-    let mut headings = Vec::new();
-    let mut in_code_block = false;
-
-    for (i, line) in body.lines().enumerate() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
-            in_code_block = !in_code_block;
-            continue;
-        }
-        if in_code_block {
-            continue;
-        }
-        if let Some((level, text)) = parse_heading_line(trimmed) {
-            headings.push(MarkdownHeading {
-                level,
-                text,
-                line_num: i + 1,
-            });
-        }
-    }
-    headings
-}
-
 fn check_heading_hierarchy(cx: &mut Cx, doc: &Document) {
-    let headings = parse_markdown_headings(&doc.body);
+    let headings = okf_core::extract_headings(&doc.body);
     if headings.is_empty() {
         return;
     }
@@ -295,45 +252,26 @@ fn check_heading_hierarchy(cx: &mut Cx, doc: &Document) {
 
 fn check_empty_headings(cx: &mut Cx, doc: &Document) {
     let lines: Vec<&str> = doc.body.lines().collect();
-    let mut in_code_block = false;
+    let headings = okf_core::extract_headings(&doc.body);
 
-    let mut headings_with_line: Vec<(usize, usize, &str)> = Vec::new();
-    for (i, line) in lines.iter().enumerate() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
-            in_code_block = !in_code_block;
-            continue;
-        }
-        if in_code_block {
-            continue;
-        }
-        if let Some((level, text)) = parse_heading_line(trimmed) {
-            headings_with_line.push((i, level, text));
-        }
-    }
-
-    for (k, &(line_idx, level, text)) in headings_with_line.iter().enumerate() {
-        let next_heading = headings_with_line
-            .get(k + 1)
-            .map(|&(next_idx, next_level, _)| (next_idx, next_level));
-
-        let content_end = match next_heading {
-            Some((next_idx, next_level)) => {
-                if next_level > level {
+    for (k, h) in headings.iter().enumerate() {
+        let content_end = match headings.get(k + 1) {
+            Some(next_h) => {
+                if next_h.level > h.level {
                     continue;
                 }
-                next_idx
+                next_h.line_index
             }
             None => lines.len(),
         };
 
-        let has_content = (line_idx + 1..content_end).any(|idx| {
+        let has_content = (h.line_index + 1..content_end).any(|idx| {
             let l = lines[idx].trim();
             !l.is_empty() && !l.starts_with("<!--")
         });
 
         if !has_content {
-            cx.warn("L4", format!("heading `{text}` has no content"));
+            cx.warn("L4", format!("heading `{}` has no content", h.text));
         }
     }
 }

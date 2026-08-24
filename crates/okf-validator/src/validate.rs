@@ -1360,31 +1360,12 @@ fn check_link_anchors(cx: &mut Context, bundle: &Bundle, doc: &Document) {
 
 fn concept_heading_slugs(doc: &Document) -> std::collections::HashSet<String> {
     let mut slugs = std::collections::HashSet::new();
-    let mut fence: Option<char> = None;
-
-    for line in doc.body.lines() {
-        let trimmed_start = line.trim_start();
-        if let Some(f) = fence {
-            if trimmed_start.starts_with(&f.to_string().repeat(3)) {
-                fence = None;
-            }
-            continue;
-        }
-        if trimmed_start.starts_with("```") {
-            fence = Some('`');
-            continue;
-        }
-        if trimmed_start.starts_with("~~~") {
-            fence = Some('~');
-            continue;
-        }
-        if trimmed_start.starts_with('#') {
-            let text = trimmed_start.trim_start_matches('#').trim();
-            if !text.is_empty() {
-                slugs.insert(okf_core::heading_slug(text));
-                slugs.insert(text.to_lowercase());
-                slugs.insert(text.replace(['-', '_'], " ").to_lowercase());
-            }
+    for heading in okf_core::extract_headings(&doc.body) {
+        let text = heading.text;
+        if !text.is_empty() {
+            slugs.insert(heading.slug());
+            slugs.insert(text.to_lowercase());
+            slugs.insert(text.replace(['-', '_'], " ").to_lowercase());
         }
     }
     slugs

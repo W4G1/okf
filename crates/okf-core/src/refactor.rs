@@ -19,7 +19,6 @@ use crate::document::Document;
 use crate::frontmatter::Frontmatter;
 use crate::index::regenerate_indexes;
 use crate::links::{self, Link, LinkKind};
-use crate::log::{Log, LogDay, LogEntry};
 use crate::provenance::Source;
 use crate::scaffold::{current_iso_timestamp, default_author};
 use crate::yaml::Value;
@@ -28,8 +27,12 @@ use std::fmt;
 use std::fmt::Write as _;
 use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
+pub use crate::log::append_log_entry;
+pub use crate::markdown::{
+    LinkRewriteAction, heading_slug, matches_heading, rewrite_markdown_links,
+};
 /// Error returned when a refactoring operation fails.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RefactorError {
@@ -548,7 +551,7 @@ pub fn compute_relative_path(from_concept: &ConceptId, to_concept: &ConceptId) -
 #[must_use]
 pub fn rebase_relative_path(old_dir: &[String], new_dir: &[String], rel_path: &str) -> String {
     let trimmed = rel_path.trim();
-    if trimmed.starts_with('/') || links::Link::classify(trimmed) == LinkKind::External {
+    if trimmed.starts_with('/') || Link::classify(trimmed) == LinkKind::External {
         return trimmed.to_string();
     }
 
@@ -573,7 +576,6 @@ pub fn rebase_relative_path(old_dir: &[String], new_dir: &[String], rel_path: &s
         }
     }
 
-    // Compute relative path from new_dir to resolved segments
     let resolved_dir = if resolved.is_empty() {
         &[][..]
     } else {
@@ -581,6 +583,7 @@ pub fn rebase_relative_path(old_dir: &[String], new_dir: &[String], rel_path: &s
     };
     let filename = resolved.last().map_or("", String::as_str);
 
+    // Compute relative path from new_dir to resolved segments
     let mut common_len = 0;
     while common_len < new_dir.len()
         && common_len < resolved_dir.len()
@@ -605,288 +608,6 @@ pub fn rebase_relative_path(old_dir: &[String], new_dir: &[String], rel_path: &s
         parts.join("/")
     };
     format!("{rebased}{anchor_part}")
-}
-
-/// Action to perform on a detected markdown link during rewrite.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum LinkRewriteAction {
-    /// Keep the link destination as-is.
-    Keep,
-    /// Rewrite the destination URL to a new target (preserving title and brackets).
-    Rewrite(String),
-    /// Unlink: replace `[Text](dest)` with plain `Text`.
-    Unlink,
-}
-
-/// Rewrites inline markdown links in a document body using a callback function.
-///
-/// Preserves fenced code blocks and inline code spans untouched.
-pub fn rewrite_markdown_links<F>(body: &str, mut rewrite_fn: F) -> (String, usize)
-where
-    F: FnMut(&Link, &str) -> LinkRewriteAction,
-{
-    let mut out_lines = Vec::new();
-    let mut total_rewritten = 0;
-    let mut fence: Option<char> = None;
-
-    for line in body.lines() {
-        let trimmed_start = line.trim_start();
-        if let Some(f) = fence {
-            if trimmed_start.starts_with(&f.to_string().repeat(3)) {
-                fence = None;
-            }
-            out_lines.push(line.to_string());
-            continue;
-        }
-        if trimmed_start.starts_with("```") {
-            fence = Some('`');
-            out_lines.push(line.to_string());
-            continue;
-        }
-        if trimmed_start.starts_with("~~~") {
-            fence = Some('~');
-            out_lines.push(line.to_string());
-            continue;
-        }
-
-        // Process non-code line
-        let (new_line, count) = rewrite_line_links(line, &mut rewrite_fn);
-        total_rewritten += count;
-        out_lines.push(new_line);
-    }
-
-    let mut result = out_lines.join("\n");
-    if body.ends_with('\n') {
-        result.push('\n');
-    }
-    (result, total_rewritten)
-}
-
-fn rewrite_line_links<F>(line_text: &str, rewrite_fn: &mut F) -> (String, usize)
-where
-    F: FnMut(&Link, &str) -> LinkRewriteAction,
-{
-    let chars: Vec<char> = line_text.chars().collect();
-    let mut out = String::with_capacity(line_text.len());
-    let mut i = 0;
-    let mut in_code_span = false;
-    let mut count = 0;
-
-    while i < chars.len() {
-        if chars[i] == '`' && !is_escaped(&chars, i) {
-            in_code_span = !in_code_span;
-            out.push(chars[i]);
-            i += 1;
-            continue;
-        }
-
-        if !in_code_span
-            && chars[i] == '['
-            && !is_escaped(&chars, i)
-            && chars.get(i + 1) != Some(&'^')
-            && let Some((text, dest_raw, next_i)) = parse_inline_link_raw(&chars, i)
-        {
-            let clean_dest = clean_destination(&dest_raw);
-            let parsed_link = Link {
-                text: text.clone(),
-                kind: Link::classify(&clean_dest),
-                target: clean_dest.clone(),
-            };
-
-            match rewrite_fn(&parsed_link, &dest_raw) {
-                LinkRewriteAction::Keep => {
-                    let slice: String = chars[i..next_i].iter().collect();
-                    out.push_str(&slice);
-                }
-                LinkRewriteAction::Rewrite(new_dest) => {
-                    let title_suffix = extract_title_suffix(&dest_raw);
-                    let formatted_dest = if new_dest.contains(' ') && !new_dest.starts_with('<') {
-                        format!("<{new_dest}>")
-                    } else {
-                        new_dest
-                    };
-                    let _ = write!(out, "[{text}]({formatted_dest}{title_suffix})");
-                    count += 1;
-                }
-                LinkRewriteAction::Unlink => {
-                    out.push_str(&text);
-                    count += 1;
-                }
-            }
-            i = next_i;
-            continue;
-        }
-
-        out.push(chars[i]);
-        i += 1;
-    }
-
-    (out, count)
-}
-
-fn parse_inline_link_raw(chars: &[char], start: usize) -> Option<(String, String, usize)> {
-    let mut i = start + 1;
-    let mut depth = 1;
-    let text_start = i;
-    while i < chars.len() {
-        match chars[i] {
-            '\\' => i += 1,
-            '[' => depth += 1,
-            ']' => {
-                depth -= 1;
-                if depth == 0 {
-                    break;
-                }
-            }
-            _ => {}
-        }
-        i += 1;
-    }
-    if depth != 0 || i >= chars.len() {
-        return None;
-    }
-    let text: String = chars[text_start..i].iter().collect();
-
-    let mut j = i + 1;
-    if j >= chars.len() || chars[j] != '(' {
-        return None;
-    }
-    j += 1;
-    let dest_start = j;
-    let mut paren = 1;
-    while j < chars.len() {
-        match chars[j] {
-            '\\' => j += 1,
-            '(' => paren += 1,
-            ')' => {
-                paren -= 1;
-                if paren == 0 {
-                    break;
-                }
-            }
-            _ => {}
-        }
-        j += 1;
-    }
-    if paren != 0 || j >= chars.len() {
-        return None;
-    }
-    let dest: String = chars[dest_start..j].iter().collect();
-    Some((text, dest, j + 1))
-}
-
-const fn is_escaped(chars: &[char], index: usize) -> bool {
-    let mut backslashes = 0;
-    let mut i = index;
-    while i > 0 && chars[i - 1] == '\\' {
-        backslashes += 1;
-        i -= 1;
-    }
-    backslashes % 2 == 1
-}
-
-fn clean_destination(dest: &str) -> String {
-    let d = dest.trim();
-    if let Some(rest) = d.strip_prefix('<')
-        && let Some(end) = rest.find('>')
-    {
-        return rest[..end].to_string();
-    }
-    strip_title(d)
-}
-
-fn strip_title(dest: &str) -> String {
-    let d = dest.trim();
-    if let Some(idx) = d.find([' ', '\t']) {
-        let (url, rest) = d.split_at(idx);
-        let rest = rest.trim_start();
-        if rest.starts_with('"') || rest.starts_with('\'') {
-            return url.to_string();
-        }
-    }
-    d.to_string()
-}
-
-fn extract_title_suffix(dest: &str) -> String {
-    let d = dest.trim();
-    let after_dest = if let Some(rest) = d.strip_prefix('<')
-        && let Some(end) = rest.find('>')
-    {
-        &rest[end + 1..]
-    } else if let Some(idx) = d.find([' ', '\t']) {
-        &d[idx..]
-    } else {
-        ""
-    };
-    let trimmed_suffix = after_dest.trim();
-    if trimmed_suffix.starts_with('"') || trimmed_suffix.starts_with('\'') {
-        format!(" {trimmed_suffix}")
-    } else {
-        String::new()
-    }
-}
-
-/// Appends or prepends a structured entry to `log.md` under today's date.
-///
-/// # Errors
-///
-/// Returns an [`io::Error`] if `log.md` cannot be read or written.
-pub fn append_log_entry(
-    bundle_root: &Path,
-    date: Date,
-    kind: &str,
-    text: &str,
-) -> io::Result<PathBuf> {
-    let log_path = bundle_root.join("log.md");
-    let mut log = if log_path.exists() {
-        let content = fs::read_to_string(&log_path)?;
-        Log::parse(&content)
-    } else {
-        Log {
-            title: Some("Update Log".to_string()),
-            ..Default::default()
-        }
-    };
-
-    let date_str = date.to_string();
-    let new_entry = LogEntry {
-        kind: Some(kind.to_string()),
-        text: text.to_string(),
-    };
-
-    if let Some(first_day) = log.days.first_mut()
-        && first_day.date == date_str
-    {
-        first_day.entries.push(new_entry);
-    } else {
-        log.days.insert(
-            0,
-            LogDay {
-                date: date_str,
-                entries: vec![new_entry],
-            },
-        );
-    }
-
-    fs::write(&log_path, log.to_markdown())?;
-    Ok(log_path)
-}
-
-/// Derives a standard Markdown anchor slug from a heading text.
-///
-/// Example: `"## Pricing Tiers"` -> `"pricing-tiers"`
-#[must_use]
-pub fn heading_slug(text: &str) -> String {
-    let clean = text.trim().trim_start_matches('#').trim();
-    let mut slug = String::with_capacity(clean.len());
-    for c in clean.chars() {
-        if c.is_alphanumeric() {
-            slug.push(c.to_ascii_lowercase());
-        } else if (c.is_whitespace() || c == '-' || c == '_') && !slug.ends_with('-') {
-            slug.push('-');
-        }
-    }
-    slug.trim_matches('-').to_string()
 }
 
 /// Renames a section heading within a concept and updates all internal and external anchor links.

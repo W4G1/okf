@@ -105,6 +105,7 @@ pub mod frontmatter;
 pub mod index;
 pub mod links;
 pub mod log;
+pub mod markdown;
 pub mod provenance;
 pub mod refactor;
 pub mod scaffold;
@@ -153,17 +154,21 @@ pub use frontmatter::{
     RECOMMENDED_FRONTMATTER_KEYS, REQUIRED_FRONTMATTER_KEYS,
 };
 #[doc(inline)]
-pub use links::{Citation, Link, LinkKind, ParseLinkKindError};
+pub use links::{Citation, Link, LinkKind, ParseLinkKindError, field_path_candidates};
 #[doc(inline)]
-pub use log::Log;
+pub use log::{Log, LogDay, LogEntry, append_log_entry};
+#[doc(inline)]
+pub use markdown::{
+    LinkRewriteAction, MarkdownHeading, extract_headings, heading_slug, matches_heading,
+    parse_heading_line, rewrite_markdown_links,
+};
 #[doc(inline)]
 pub use provenance::{Attribution, ResourceKind, Source, UsageWindow};
 #[doc(inline)]
 pub use refactor::{
-    LinkRewriteAction, MergeOptions, MergeReport, MoveOptions, MoveReport, RefactorError,
-    RemoveOptions, RemoveReport, RenameSectionOptions, RenameSectionReport, SplitOptions,
-    SplitReport, append_log_entry, compute_relative_path, heading_slug, merge_concepts,
-    move_concept, rebase_relative_path, remove_concept, rename_section, rewrite_markdown_links,
+    MergeOptions, MergeReport, MoveOptions, MoveReport, RefactorError, RemoveOptions, RemoveReport,
+    RenameSectionOptions, RenameSectionReport, SplitOptions, SplitReport, compute_relative_path,
+    merge_concepts, move_concept, rebase_relative_path, remove_concept, rename_section,
     split_concept,
 };
 #[doc(inline)]

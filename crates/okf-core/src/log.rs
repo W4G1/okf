@@ -1,4 +1,4 @@
-//! Parsing and building `log.md` update histories.
+//! Parsing, building, and updating `log.md` update histories.
 //!
 //! A log is a flat list of date-grouped entries, newest first:
 //!
@@ -13,9 +13,13 @@
 //! Date headings use ISO-8601 `YYYY-MM-DD`. The leading bold word
 //! (`**Update**`, `**Creation**`, …) is a convention, not a requirement.
 
+use crate::date::Date;
 use crate::document::Document;
 use crate::frontmatter::Frontmatter;
 use std::fmt::Write as _;
+use std::fs;
+use std::io;
+use std::path::{Path, PathBuf};
 
 /// A parsed `log.md`.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -122,6 +126,31 @@ impl Log {
         out
     }
 
+    /// Appends a new entry under the given date heading.
+    ///
+    /// If the top (most recent) date heading matches `date`, the entry is appended
+    /// to it. Otherwise, a new date section is inserted at the top of the log.
+    pub fn append_entry(&mut self, date: &str, kind: Option<&str>, text: &str) {
+        let new_entry = LogEntry {
+            kind: kind.map(ToString::to_string),
+            text: text.to_string(),
+        };
+
+        if let Some(first_day) = self.days.first_mut()
+            && first_day.date == date
+        {
+            first_day.entries.push(new_entry);
+        } else {
+            self.days.insert(
+                0,
+                LogDay {
+                    date: date.to_string(),
+                    entries: vec![new_entry],
+                },
+            );
+        }
+    }
+
     /// Returns the date headings that are not valid ISO-8601 `YYYY-MM-DD`
     /// (the spec requires this form).
     #[must_use]
@@ -139,6 +168,7 @@ impl Log {
     /// that want to recover entries from imperfect Markdown. Conformance
     /// validation uses this stricter pass to ensure that ignored content is
     /// not mistaken for a valid log.
+    #[must_use]
     pub fn structural_errors(&self, text: &str) -> Vec<String> {
         let mut errors = Vec::new();
 
@@ -235,6 +265,33 @@ impl Log {
         }
         errors
     }
+}
+
+/// Appends an entry to `log.md` in the bundle root, creating the file if needed.
+///
+/// # Errors
+///
+/// Returns an [`io::Error`] if reading or writing `log.md` fails.
+pub fn append_log_entry(
+    bundle_root: &Path,
+    date: Date,
+    kind: &str,
+    text: &str,
+) -> io::Result<PathBuf> {
+    let log_path = bundle_root.join("log.md");
+    let mut log = if log_path.exists() {
+        let content = fs::read_to_string(&log_path)?;
+        Log::parse(&content)
+    } else {
+        Log {
+            title: Some("Update Log".to_string()),
+            ..Default::default()
+        }
+    };
+
+    log.append_entry(&date.to_string(), Some(kind), text);
+    fs::write(&log_path, log.to_markdown())?;
+    Ok(log_path)
 }
 
 /// Returns the text after a `*` or `-` bullet marker, if the line is a bullet.

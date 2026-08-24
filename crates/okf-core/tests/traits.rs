@@ -347,3 +347,24 @@ fn test_refactor_report_display_traits() {
     assert!(sec_text.contains("updated 2 internal link(s)"));
     assert!(sec_text.contains("updated 1 external backlink(s)"));
 }
+
+#[test]
+fn test_markdown_traits() {
+    use okf_core::markdown::{LinkRewriteAction, MarkdownHeading};
+
+    let heading = MarkdownHeading {
+        level: 2,
+        text: "My Heading",
+        line_num: 10,
+        line_index: 9,
+    };
+    let cloned = heading.clone();
+    assert_eq!(heading, cloned);
+    assert_eq!(format!("{heading:?}"), format!("{cloned:?}"));
+    assert_eq!(heading.slug(), "my-heading");
+
+    let action = LinkRewriteAction::Rewrite("dest.md".to_string());
+    let cloned_action = action.clone();
+    assert_eq!(action, cloned_action);
+    assert_eq!(format!("{action:?}"), format!("{cloned_action:?}"));
+}

@@ -16,6 +16,7 @@
 //! which consumers MAY keep reading for legacy documents.
 
 use crate::concept_id::ConceptId;
+use crate::markdown::{clean_destination, code_free_lines, is_escaped, parse_inline_link};
 use std::fmt;
 
 /// How a link target is interpreted.
@@ -160,6 +161,18 @@ impl Link {
             push(&decoded);
         }
         out
+    }
+
+    /// Returns the target with any anchor fragment removed.
+    #[must_use]
+    pub fn target_without_anchor(&self) -> &str {
+        strip_anchor(&self.target)
+    }
+
+    /// Returns the anchor fragment, if one was present.
+    #[must_use]
+    pub fn anchor(&self) -> Option<&str> {
+        self.target.find('#').map(|i| &self.target[i + 1..])
     }
 }
 
@@ -355,54 +368,6 @@ pub fn extract_links(body: &str) -> Vec<Link> {
     links
 }
 
-/// Returns the body's lines, as `(1-based line number, text)`, with fenced
-/// code blocks removed and inline code spans blanked out.
-///
-/// Shared with [`footnotes`](crate::footnotes), which needs the same
-/// "prose only" view of the body to find attribution markers.
-pub(crate) fn code_free_lines(body: &str) -> Vec<(usize, String)> {
-    let mut out = Vec::new();
-    let mut fence: Option<char> = None;
-    for (i, line) in body.lines().enumerate() {
-        let trimmed = line.trim_start();
-        if let Some(f) = fence {
-            // Inside a fence; look for the closing marker.
-            if trimmed.starts_with(&f.to_string().repeat(3)) {
-                fence = None;
-            }
-            continue;
-        }
-        if trimmed.starts_with("```") {
-            fence = Some('`');
-            continue;
-        }
-        if trimmed.starts_with("~~~") {
-            fence = Some('~');
-            continue;
-        }
-        out.push((i + 1, blank_inline_code(line)));
-    }
-    out
-}
-
-/// Replaces inline code spans (backtick-delimited) with spaces so links inside
-/// them are not extracted.
-fn blank_inline_code(line: &str) -> String {
-    let mut out = String::with_capacity(line.len());
-    let mut in_code = false;
-    for c in line.chars() {
-        if c == '`' {
-            in_code = !in_code;
-            out.push(' ');
-        } else if in_code {
-            out.push(' ');
-        } else {
-            out.push(c);
-        }
-    }
-    out
-}
-
 /// Scans a single (code-free) line for `[text](dest)` links.
 fn scan_line_links(line: &str, out: &mut Vec<Link>) {
     let chars: Vec<char> = line.chars().collect();
@@ -423,101 +388,6 @@ fn scan_line_links(line: &str, out: &mut Vec<Link>) {
         }
         i += 1;
     }
-}
-
-/// Whether the character at `index` is preceded by an odd number of
-/// backslashes, and is therefore escaped in Markdown.
-const fn is_escaped(chars: &[char], index: usize) -> bool {
-    let mut backslashes = 0;
-    let mut i = index;
-    while i > 0 && chars[i - 1] == '\\' {
-        backslashes += 1;
-        i -= 1;
-    }
-    backslashes % 2 == 1
-}
-
-/// Attempts to parse `[text](dest)` starting at `start` (the `[`). Returns the
-/// text, destination, and index just past the closing `)`.
-fn parse_inline_link(chars: &[char], start: usize) -> Option<(String, String, usize)> {
-    // Match the link text up to a balanced `]`.
-    let mut i = start + 1;
-    let mut depth = 1;
-    let text_start = i;
-    while i < chars.len() {
-        match chars[i] {
-            '\\' => i += 1, // skip escaped char
-            '[' => depth += 1,
-            ']' => {
-                depth -= 1;
-                if depth == 0 {
-                    break;
-                }
-            }
-            _ => {}
-        }
-        i += 1;
-    }
-    if depth != 0 || i >= chars.len() {
-        return None;
-    }
-    let text: String = chars[text_start..i].iter().collect();
-    // Next non-space char must be '('.
-    let mut j = i + 1;
-    if j >= chars.len() || chars[j] != '(' {
-        return None;
-    }
-    j += 1;
-    let dest_start = j;
-    let mut paren = 1;
-    while j < chars.len() {
-        match chars[j] {
-            '\\' => j += 1,
-            '(' => paren += 1,
-            ')' => {
-                paren -= 1;
-                if paren == 0 {
-                    break;
-                }
-            }
-            _ => {}
-        }
-        j += 1;
-    }
-    if paren != 0 || j >= chars.len() {
-        return None;
-    }
-    let dest: String = chars[dest_start..j].iter().collect();
-    Some((text, dest, j + 1))
-}
-
-/// Normalizes a raw link destination.
-///
-/// Unwraps the `CommonMark` `<...>` form, which is how a destination is allowed
-/// to contain spaces, and otherwise removes an optional title suffix. A
-/// bracketed destination is taken literally, since a space inside it is part of
-/// the path rather than a separator before a title.
-fn clean_destination(dest: &str) -> String {
-    let d = dest.trim();
-    if let Some(rest) = d.strip_prefix('<')
-        && let Some(end) = rest.find('>')
-    {
-        return rest[..end].to_string();
-    }
-    strip_title(d)
-}
-
-/// Removes an optional `"title"` (or `'title'`) suffix from a link destination.
-fn strip_title(dest: &str) -> String {
-    let d = dest.trim();
-    if let Some(idx) = d.find([' ', '\t']) {
-        let (url, rest) = d.split_at(idx);
-        let rest = rest.trim_start();
-        if rest.starts_with('"') || rest.starts_with('\'') {
-            return url.to_string();
-        }
-    }
-    d.to_string()
 }
 
 /// Extracts numbered citation entries from the `# Citations` section.
