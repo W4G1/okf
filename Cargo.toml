@@ -11,7 +11,7 @@ resolver = "3"
 [workspace.package]
 version = "0.2.5"
 edition = "2024"
-authors = ["Walter Higgins <walter.higgins@gmail.com>"]
+authors = ["Walter van der Giessen <waltervdgiessen@gmail.com>"]
 license = "Apache-2.0"
 repository = "https://github.com/W4G1/okf"
 homepage = "https://github.com/W4G1/okf"
