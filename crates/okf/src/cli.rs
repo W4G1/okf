@@ -24,6 +24,7 @@ use crate::{
     Report, Severity, TrustTier, Value, bundle_diff, create_concept, init_bundle, lint_bundle_at,
     remediate_bundle, validate_bundle_at,
 };
+use clap::builder::styling::Styles;
 use clap::{Args, Parser, Subcommand};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -69,7 +70,8 @@ fn parse_date(raw: &str) -> Result<Date, String> {
     about = "okf: Open Knowledge Format toolkit",
     version = concat!(env!("CARGO_PKG_VERSION"), " (OKF spec v0.2)"),
     subcommand_required = true,
-    arg_required_else_help = true
+    arg_required_else_help = true,
+    styles = Styles::plain()
 )]
 pub struct Cli {
     #[command(subcommand)]
