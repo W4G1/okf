@@ -113,6 +113,41 @@ pub struct Source {
 }
 
 impl Source {
+    /// Converts this source entry back into a YAML [`Value::Mapping`].
+    #[must_use]
+    pub fn to_yaml_value(&self) -> Value {
+        let mut map = crate::yaml::Mapping::new();
+        if let Some(id) = &self.id {
+            map.insert("id", Value::String(id.clone()));
+        }
+        if let Some(res) = &self.resource {
+            map.insert("resource", Value::String(res.clone()));
+        }
+        if let Some(title) = &self.title {
+            map.insert("title", Value::String(title.clone()));
+        }
+        if let Some(author) = &self.author {
+            map.insert("author", Value::String(author.as_str().to_string()));
+        }
+        if let Some(count) = self.usage_count {
+            map.insert("usage_count", Value::Int(count));
+        }
+        if let Some(last_mod) = &self.last_modified {
+            map.insert("last_modified", Value::String(last_mod.raw.clone()));
+        }
+        if let Some(window) = &self.usage_window {
+            let mut w_map = crate::yaml::Mapping::new();
+            if let Some(from) = &window.from {
+                w_map.insert("from", Value::String(from.raw.clone()));
+            }
+            if let Some(to) = &window.to {
+                w_map.insert("to", Value::String(to.raw.clone()));
+            }
+            map.insert("usage_window", Value::Mapping(w_map));
+        }
+        Value::Mapping(map)
+    }
+
     /// Reads one `sources` entry. Returns `None` when the value is not a
     /// mapping.
     pub fn from_value(value: &Value) -> Option<Self> {

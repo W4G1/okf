@@ -184,6 +184,11 @@ impl Frontmatter {
         self.map.get(key)
     }
 
+    /// Looks up a mutable value by string key.
+    pub fn get_mut(&mut self, key: &str) -> Option<&mut Value> {
+        self.map.get_mut(key)
+    }
+
     /// Sets a raw value for a key, preserving position if it already exists.
     pub fn set(&mut self, key: impl Into<String>, value: Value) {
         self.map.insert(key, value);

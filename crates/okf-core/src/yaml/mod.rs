@@ -95,6 +95,14 @@ impl Mapping {
             .map(|(_, v)| v)
     }
 
+    /// Looks up a mutable value by string key.
+    pub fn get_mut(&mut self, key: &str) -> Option<&mut Value> {
+        self.entries
+            .iter_mut()
+            .find(|(k, _)| k.as_str() == Some(key))
+            .map(|(_, v)| v)
+    }
+
     /// Returns `true` if the mapping contains the given string key.
     #[must_use]
     pub fn contains_key(&self, key: &str) -> bool {

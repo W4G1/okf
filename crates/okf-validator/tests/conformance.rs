@@ -1143,3 +1143,36 @@ fn test_validate_warns_on_stale_index() {
     );
     assert!(warnings[0].fixable, "stale index warning should be fixable");
 }
+
+#[test]
+fn test_validate_warns_on_broken_link_anchors() {
+    let tmp = common::TempDir::new();
+    tmp.write(
+        "index.md",
+        "---\nokf_version: \"0.2\"\n---\n\n# Test\n\n* [Pricing](pricing.md)\n* [Overview](overview.md)\n",
+    );
+    tmp.write(
+        "pricing.md",
+        "---\ntype: Concept\ntitle: Pricing\ngenerated:\n  by: human:alice\n  at: 2026-01-01T00:00:00Z\n---\n\n# Pricing\n\n## Valid Section\nContent.\n",
+    );
+    tmp.write(
+        "overview.md",
+        "---\ntype: Concept\ntitle: Overview\ngenerated:\n  by: human:alice\n  at: 2026-01-01T00:00:00Z\n---\n\n# Overview\n\nSee [Good](pricing.md#valid-section) and [Bad](pricing.md#non-existent-section).\nAlso see [Bad Internal](#broken-internal).\n",
+    );
+
+    let bundle = Bundle::load(tmp.path()).unwrap();
+    let report = validate_bundle(&bundle);
+
+    let warnings: Vec<_> = report
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == okf_validator::Severity::Warning)
+        .collect();
+
+    assert!(warnings.iter().any(|d| d.message.contains(
+        "link anchor `#non-existent-section` does not match any heading in target concept `pricing`"
+    )));
+    assert!(warnings.iter().any(|d| d.message.contains(
+        "internal link anchor `#broken-internal` does not match any heading in this document"
+    )));
+}

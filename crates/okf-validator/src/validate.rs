@@ -259,6 +259,7 @@ pub fn validate_bundle_at(bundle: &Bundle, today: Option<Date>) -> Report {
         check_computation_script_syntax(&mut cx, bundle, &concept.document);
         check_path_fields(&mut cx, bundle, fm);
         check_links_to_deprecated(&mut cx, bundle);
+        check_link_anchors(&mut cx, bundle, &concept.document);
     }
 
     // (3) Reserved files must follow their structure when present.
@@ -1315,4 +1316,68 @@ const fn type_name(value: &Value) -> &'static str {
 pub fn is_iso8601_datetime(s: &str) -> bool {
     DateTime::parse(s)
         .is_some_and(|datetime| datetime.has_time && datetime.offset_minutes.is_some())
+}
+
+fn check_link_anchors(cx: &mut Context, bundle: &Bundle, doc: &Document) {
+    let own_slugs = concept_heading_slugs(doc);
+
+    for link in doc.links() {
+        if link.kind == okf_core::LinkKind::Anchor {
+            let anchor = link.target.trim_start_matches('#');
+            if !anchor.is_empty() {
+                let slug = okf_core::heading_slug(anchor);
+                if !own_slugs.contains(&slug) && !own_slugs.contains(anchor) {
+                    cx.warn(format!(
+                        "internal link anchor `#{anchor}` does not match any heading in this document"
+                    ));
+                }
+            }
+        } else if let Some(anchor_idx) = link.target.find('#') {
+            let anchor = &link.target[anchor_idx + 1..];
+            if !anchor.is_empty()
+                && let Some(target_id) = link.resolve(&cx.id)
+                && let Some(target_concept) = bundle.get(&target_id)
+            {
+                let target_slugs = concept_heading_slugs(&target_concept.document);
+                let slug = okf_core::heading_slug(anchor);
+                if !target_slugs.contains(&slug) && !target_slugs.contains(anchor) {
+                    cx.warn(format!(
+                        "link anchor `#{anchor}` does not match any heading in target concept `{target_id}`"
+                    ));
+                }
+            }
+        }
+    }
+}
+
+fn concept_heading_slugs(doc: &Document) -> std::collections::HashSet<String> {
+    let mut slugs = std::collections::HashSet::new();
+    let mut fence: Option<char> = None;
+
+    for line in doc.body.lines() {
+        let trimmed_start = line.trim_start();
+        if let Some(f) = fence {
+            if trimmed_start.starts_with(&f.to_string().repeat(3)) {
+                fence = None;
+            }
+            continue;
+        }
+        if trimmed_start.starts_with("```") {
+            fence = Some('`');
+            continue;
+        }
+        if trimmed_start.starts_with("~~~") {
+            fence = Some('~');
+            continue;
+        }
+        if trimmed_start.starts_with('#') {
+            let text = trimmed_start.trim_start_matches('#').trim();
+            if !text.is_empty() {
+                slugs.insert(okf_core::heading_slug(text));
+                slugs.insert(text.to_lowercase());
+                slugs.insert(text.replace(['-', '_'], " ").to_lowercase());
+            }
+        }
+    }
+    slugs
 }

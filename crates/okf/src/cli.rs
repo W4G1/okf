@@ -4,25 +4,31 @@
 //! ```text
 //!   init         [dir]      Initialize a new OKF bundle (--title, --bare, --json).
 //!   new          <path>     Create a new concept document (--type, --title, --attested, --json).
+//!   mv           <a> <b>    Move or rename a concept and rewrite links across the bundle (--dry-run, --json).
+//!   rm           <target>   Remove a concept from the bundle with link safety checks (--redirect-to, --unlink, --force, --json).
+//!   split        <a> <b>    Extract a section from a concept into a new concept and link to it (--section, --title, --json).
+//!   merge        <a> <b>    Consolidate one concept into another, merging sources and redirecting links (--json).
 //!   validate     <bundle>   Check a bundle against OKF v0.2 conformance (--fix, --json).
+//!   lint         <bundle>   Opinionated bundle health checks (--fix, --json).
+//!   fmt          <path>     Normalize document(s) by parse + re-serialize (-w writes, --check verifies).
 //!   info         <bundle>   Print a summary of a bundle (--json).
 //!   trust        <bundle>   Report trust tier, status, and staleness per concept (--json).
 //!   links        <bundle>   Inspect internal, broken, and external cross-links (--json).
-//!   computations <bundle>   List Attested Computation contracts (--json).
-//!   index        <bundle>   (Re)generate every index.md in a bundle (--json).
 //!   graph        <bundle>   Print the cross-link graph (--format text|mermaid|json, --json).
-//!   parse        <file>     Parse one concept document and print its structure (--json).
-//!   fmt          <path>     Normalize document(s) by parse + re-serialize (-w writes, --check verifies).
-//!   lint         <bundle>   Opinionated bundle health checks (--fix, --json).
+//!   computations <bundle>   List Attested Computation contracts (--json).
 //!   diff         <a> <b>    OKF-semantics diff between two bundles (--json).
+//!   index        <bundle>   (Re)generate every index.md in a bundle (--json).
+//!   parse        <file>     Parse one concept document and print its structure (--json).
 //! ```
 
 #![warn(clippy::pedantic, clippy::nursery)]
 
 use crate::{
-    Bundle, BundleInitOptions, ConceptOptions, Date, Document, DocumentError, FixOptions, Link,
-    Report, Severity, TrustTier, Value, bundle_diff, create_concept, init_bundle, lint_bundle_at,
-    remediate_bundle, validate_bundle_at,
+    Bundle, BundleInitOptions, ConceptId, ConceptOptions, Date, Document, DocumentError,
+    FixOptions, Link, MergeOptions, MoveOptions, RemoveOptions, RenameSectionOptions, Report,
+    Severity, SplitOptions, TrustTier, Value, bundle_diff, create_concept, init_bundle,
+    lint_bundle_at, merge_concepts, move_concept, remediate_bundle, remove_concept, rename_section,
+    split_concept, validate_bundle_at,
 };
 use clap::builder::styling::Styles;
 use clap::{Args, Parser, Subcommand};
@@ -92,28 +98,39 @@ pub enum Commands {
     Init(InitArgs),
     /// Create a new concept document (--type, --title, --attested, --json)
     New(NewArgs),
+    /// Move or rename a concept and rewrite links across the bundle (--dry-run, --json)
+    #[command(visible_alias = "rename")]
+    Mv(MvArgs),
+    /// Remove a concept from the bundle with link safety checks (--redirect-to, --unlink, --force, --json)
+    #[command(visible_aliases = ["delete", "remove"])]
+    Rm(RmArgs),
+    /// Extract a section from a concept into a new concept and link to it (--section, --title, --json)
+    Split(SplitArgs),
+    /// Consolidate one concept into another, merging sources and redirecting links (--json)
+    #[command(visible_alias = "merge-concepts")]
+    Merge(MergeArgs),
     /// Check a bundle against OKF v0.2 conformance (--fix, --json)
     Validate(ValidateArgs),
+    /// Opinionated bundle health checks (--fix, --json)
+    Lint(LintArgs),
+    /// Normalize document(s) by parse + re-serialize (-w writes, --check verifies)
+    Fmt(FmtArgs),
     /// Summarize a bundle (concepts, types, trust, links, --json)
     Info(InfoArgs),
     /// Report trust tier, status, and staleness per concept (--json)
     Trust(TrustArgs),
     /// Inspect internal, broken, and external cross-links (--json)
     Links(LinksArgs),
-    /// List Attested Computation contracts (--json)
-    Computations(ComputationsArgs),
-    /// (Re)generate every index.md in the bundle (--json)
-    Index(IndexArgs),
     /// Print the cross-link graph (--format text|mermaid|json, --json)
     Graph(GraphArgs),
-    /// Parse one concept document and print its structure (--json)
-    Parse(ParseArgs),
-    /// Normalize document(s) by parse + re-serialize (-w writes, --check verifies)
-    Fmt(FmtArgs),
-    /// Opinionated bundle health checks (--fix, --json)
-    Lint(LintArgs),
+    /// List Attested Computation contracts (--json)
+    Computations(ComputationsArgs),
     /// OKF-semantics diff between two bundles (--json)
     Diff(DiffArgs),
+    /// (Re)generate every index.md in the bundle (--json)
+    Index(IndexArgs),
+    /// Parse one concept document and print its structure (--json)
+    Parse(ParseArgs),
 }
 
 #[derive(Args, Debug)]
@@ -412,6 +429,195 @@ pub struct DiffArgs {
     pub format: Option<String>,
 }
 
+#[derive(Args, Debug)]
+#[allow(clippy::struct_excessive_bools)]
+pub struct MvArgs {
+    /// Source concept ID or file path
+    pub source: String,
+
+    /// Target concept ID or file path
+    pub target: String,
+
+    /// Bundle directory (defaults to current directory)
+    #[arg(long, default_value = ".")]
+    pub bundle: PathBuf,
+
+    /// Simulate changes without modifying files on disk
+    #[arg(short = 'n', long)]
+    pub dry_run: bool,
+
+    /// Overwrite target file if it already exists
+    #[arg(short, long)]
+    pub force: bool,
+
+    /// Do not regenerate directory index.md files
+    #[arg(long)]
+    pub no_index: bool,
+
+    /// Do not record the move in log.md
+    #[arg(long)]
+    pub no_log: bool,
+
+    /// Author attribution for the log entry
+    #[arg(long)]
+    pub author: Option<String>,
+
+    /// Output results as JSON
+    #[arg(short, long)]
+    pub json: bool,
+
+    /// Output format (text or json)
+    #[arg(long, value_parser = ["text", "json"])]
+    pub format: Option<String>,
+}
+
+#[derive(Args, Debug)]
+#[allow(clippy::struct_excessive_bools)]
+pub struct RmArgs {
+    /// Concept ID or file path to remove
+    pub target: String,
+
+    /// Bundle directory (defaults to current directory)
+    #[arg(long, default_value = ".")]
+    pub bundle: PathBuf,
+
+    /// Redirect all incoming links to this replacement concept ID
+    #[arg(long)]
+    pub redirect_to: Option<String>,
+
+    /// Convert all incoming links in other concepts to plain text
+    #[arg(long)]
+    pub unlink: bool,
+
+    /// Force deletion even if other concepts link to it
+    #[arg(short, long)]
+    pub force: bool,
+
+    /// Simulate changes without modifying files on disk
+    #[arg(short = 'n', long)]
+    pub dry_run: bool,
+
+    /// Do not regenerate directory index.md files
+    #[arg(long)]
+    pub no_index: bool,
+
+    /// Do not record the deletion in log.md
+    #[arg(long)]
+    pub no_log: bool,
+
+    /// Author attribution for the log entry
+    #[arg(long)]
+    pub author: Option<String>,
+
+    /// Output results as JSON
+    #[arg(short, long)]
+    pub json: bool,
+
+    /// Output format (text or json)
+    #[arg(long, value_parser = ["text", "json"])]
+    pub format: Option<String>,
+}
+
+#[derive(Args, Debug)]
+#[allow(clippy::struct_excessive_bools)]
+pub struct SplitArgs {
+    /// Source concept ID or file path
+    pub source: String,
+
+    /// Target concept ID or file path for the extracted concept
+    pub target: String,
+
+    /// Section heading to extract (e.g. "Tax Rules" or "## Tax Rules")
+    #[arg(short, long)]
+    pub section: String,
+
+    /// Title for the new concept (defaults to section heading)
+    #[arg(long)]
+    pub title: Option<String>,
+
+    /// Concept type for the new concept (defaults to Concept)
+    #[arg(long = "type", default_value = "Concept")]
+    pub type_: String,
+
+    /// Custom link text in the source document
+    #[arg(long)]
+    pub link_text: Option<String>,
+
+    /// Bundle directory (defaults to current directory)
+    #[arg(long, default_value = ".")]
+    pub bundle: PathBuf,
+
+    /// Overwrite target file if it already exists
+    #[arg(short, long)]
+    pub force: bool,
+
+    /// Simulate changes without modifying files on disk
+    #[arg(short = 'n', long)]
+    pub dry_run: bool,
+
+    /// Do not regenerate directory index.md files
+    #[arg(long)]
+    pub no_index: bool,
+
+    /// Do not record the split in log.md
+    #[arg(long)]
+    pub no_log: bool,
+
+    /// Author attribution for generated frontmatter and log entry
+    #[arg(long)]
+    pub author: Option<String>,
+
+    /// Output results as JSON
+    #[arg(short, long)]
+    pub json: bool,
+
+    /// Output format (text or json)
+    #[arg(long, value_parser = ["text", "json"])]
+    pub format: Option<String>,
+}
+
+#[derive(Args, Debug)]
+#[allow(clippy::struct_excessive_bools)]
+pub struct MergeArgs {
+    /// Source concept ID or file path to absorb and delete
+    pub source: String,
+
+    /// Target concept ID or file path to receive the merged content
+    pub target: String,
+
+    /// Heading under which to append source content (defaults to ## <Source Title>)
+    #[arg(long)]
+    pub heading: Option<String>,
+
+    /// Bundle directory (defaults to current directory)
+    #[arg(long, default_value = ".")]
+    pub bundle: PathBuf,
+
+    /// Simulate changes without modifying files on disk
+    #[arg(short = 'n', long)]
+    pub dry_run: bool,
+
+    /// Do not regenerate directory index.md files
+    #[arg(long)]
+    pub no_index: bool,
+
+    /// Do not record the merge in log.md
+    #[arg(long)]
+    pub no_log: bool,
+
+    /// Author attribution for the log entry
+    #[arg(long)]
+    pub author: Option<String>,
+
+    /// Output results as JSON
+    #[arg(short, long)]
+    pub json: bool,
+
+    /// Output format (text or json)
+    #[arg(long, value_parser = ["text", "json"])]
+    pub format: Option<String>,
+}
+
 /// Runs the `okf` CLI on `args` (the program name already stripped) and
 /// returns the process exit code.
 ///
@@ -433,17 +639,21 @@ pub fn run(args: &[String]) -> ExitCode {
     let result = match cli.command {
         Commands::Init(ref a) => cmd_init(a),
         Commands::New(ref a) => cmd_new(a),
+        Commands::Mv(ref a) => cmd_mv(a),
+        Commands::Rm(ref a) => cmd_rm(a),
+        Commands::Split(ref a) => cmd_split(a),
+        Commands::Merge(ref a) => cmd_merge(a),
         Commands::Validate(ref a) => cmd_validate(a),
+        Commands::Lint(ref a) => cmd_lint(a),
+        Commands::Fmt(ref a) => cmd_fmt(a),
         Commands::Info(ref a) => cmd_info(a),
         Commands::Trust(ref a) => cmd_trust(a),
         Commands::Links(ref a) => cmd_links(a),
-        Commands::Computations(ref a) => cmd_computations(a),
-        Commands::Index(ref a) => cmd_index(a),
         Commands::Graph(ref a) => cmd_graph(a),
-        Commands::Parse(ref a) => cmd_parse(a),
-        Commands::Fmt(ref a) => cmd_fmt(a),
-        Commands::Lint(ref a) => cmd_lint(a),
+        Commands::Computations(ref a) => cmd_computations(a),
         Commands::Diff(ref a) => cmd_diff(a),
+        Commands::Index(ref a) => cmd_index(a),
+        Commands::Parse(ref a) => cmd_parse(a),
     };
 
     match result {
@@ -2278,4 +2488,371 @@ fn print_diff_json(a: &Bundle, b: &Bundle, diff: &crate::BundleDiff) {
     });
 
     println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());
+}
+
+fn load_refactor_bundle(bundle_arg: &Path, source_arg: &str) -> Result<Bundle, CliError> {
+    if let Ok(b) = Bundle::load(bundle_arg) {
+        return Ok(b);
+    }
+    let p = Path::new(source_arg);
+    let mut cur = p.parent();
+    while let Some(dir) = cur {
+        if dir.join("index.md").exists()
+            && let Ok(b) = Bundle::load(dir)
+        {
+            return Ok(b);
+        }
+        cur = dir.parent();
+    }
+    Bundle::load(bundle_arg).map_err(|e| CliError::no_input(e.to_string()))
+}
+
+fn resolve_concept_id(raw: &str, bundle: &Bundle) -> Result<ConceptId, CliError> {
+    let clean = raw.trim();
+    if let Ok(id) = ConceptId::parse(clean)
+        && bundle.contains(&id)
+    {
+        return Ok(id);
+    }
+    if let Some(stripped) = clean.strip_suffix(".md")
+        && let Ok(id) = ConceptId::parse(stripped)
+        && bundle.contains(&id)
+    {
+        return Ok(id);
+    }
+    let p = Path::new(clean);
+    if let Ok(rel) = p.strip_prefix(bundle.root()) {
+        let stripped = rel.to_string_lossy();
+        let stem = stripped.strip_suffix(".md").unwrap_or(&stripped);
+        if let Ok(id) = ConceptId::parse(stem)
+            && bundle.contains(&id)
+        {
+            return Ok(id);
+        }
+    }
+    let fallback = clean.strip_suffix(".md").unwrap_or(clean);
+    ConceptId::parse(fallback)
+        .map_err(|e| CliError::data(format!("invalid concept ID '{raw}': {e}")))
+}
+
+fn resolve_target_concept_id(raw: &str, bundle: &Bundle) -> Result<ConceptId, CliError> {
+    let clean = raw.trim();
+    let p = Path::new(clean);
+    if let Ok(rel) = p.strip_prefix(bundle.root()) {
+        let stripped = rel.to_string_lossy();
+        let stem = stripped.strip_suffix(".md").unwrap_or(&stripped);
+        return ConceptId::parse(stem)
+            .map_err(|e| CliError::data(format!("invalid target concept ID '{raw}': {e}")));
+    }
+    let stem = clean.strip_suffix(".md").unwrap_or(clean);
+    ConceptId::parse(stem)
+        .map_err(|e| CliError::data(format!("invalid target concept ID '{raw}': {e}")))
+}
+
+fn cmd_mv_section(
+    args: &MvArgs,
+    source_concept_raw: &str,
+    old_sec: &str,
+    json: bool,
+) -> Result<ExitCode, CliError> {
+    let target_str = &args.target;
+    let (_, new_sec) = if let Some((tc, ns)) = target_str.split_once('#') {
+        (tc, ns)
+    } else {
+        (source_concept_raw, target_str.as_str())
+    };
+
+    let bundle = load_refactor_bundle(&args.bundle, source_concept_raw)?;
+    let concept_id = resolve_concept_id(source_concept_raw, &bundle)?;
+
+    let options = RenameSectionOptions {
+        dry_run: args.dry_run,
+        update_log: !args.no_log,
+        author: args.author.clone(),
+    };
+
+    let report = rename_section(&bundle, &concept_id, old_sec, new_sec, &options)
+        .map_err(|e| CliError::data(e.to_string()))?;
+
+    if json {
+        let affected: Vec<String> = report
+            .affected_files
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect();
+        let val = serde_json::json!({
+            "status": "ok",
+            "dry_run": report.dry_run,
+            "kind": "rename_section",
+            "concept": report.concept.to_string(),
+            "old_section": report.old_section,
+            "new_section": report.new_section,
+            "old_slug": report.old_slug,
+            "new_slug": report.new_slug,
+            "internal_links_updated": report.internal_links_updated,
+            "external_links_updated": report.external_links_updated,
+            "affected_files": affected,
+        });
+        println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());
+    } else {
+        let prefix = if report.dry_run {
+            "[dry-run] would rename"
+        } else {
+            "renamed"
+        };
+        println!(
+            "{prefix} section '{}' -> '{}' in {}",
+            report.old_section, report.new_section, report.concept
+        );
+        println!(
+            "  updated {} internal link(s)",
+            report.internal_links_updated
+        );
+        println!(
+            "  updated {} external backlink(s)",
+            report.external_links_updated
+        );
+        println!("  affected {} file(s)", report.affected_files.len());
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn cmd_mv(args: &MvArgs) -> Result<ExitCode, CliError> {
+    let json = args.json || args.format.as_deref() == Some("json");
+
+    if let Some((source_concept_raw, old_sec)) = args.source.split_once('#') {
+        return cmd_mv_section(args, source_concept_raw, old_sec, json);
+    }
+
+    let bundle = load_refactor_bundle(&args.bundle, &args.source)?;
+    let source = resolve_concept_id(&args.source, &bundle)?;
+    let target = resolve_target_concept_id(&args.target, &bundle)?;
+
+    let options = MoveOptions {
+        dry_run: args.dry_run,
+        force: args.force,
+        update_index: !args.no_index,
+        update_log: !args.no_log,
+        author: args.author.clone(),
+    };
+
+    let report = move_concept(&bundle, &source, &target, &options)
+        .map_err(|e| CliError::data(e.to_string()))?;
+
+    if json {
+        let affected: Vec<String> = report
+            .affected_files
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect();
+        let val = serde_json::json!({
+            "status": "ok",
+            "dry_run": report.dry_run,
+            "source": report.source.to_string(),
+            "target": report.target.to_string(),
+            "source_path": report.source_path.to_string_lossy(),
+            "target_path": report.target_path.to_string_lossy(),
+            "rewritten_incoming_links": report.rewritten_incoming_links,
+            "rebased_outgoing_links": report.rebased_outgoing_links,
+            "rebased_frontmatter_paths": report.rebased_frontmatter_paths,
+            "affected_files": affected,
+        });
+        println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());
+    } else {
+        let prefix = if report.dry_run {
+            "[dry-run] would rename"
+        } else {
+            "renamed"
+        };
+        println!("{prefix} concept {} -> {}", report.source, report.target);
+        println!(
+            "  rewrote {} incoming link(s)",
+            report.rewritten_incoming_links
+        );
+        println!(
+            "  rebased {} outgoing link(s)",
+            report.rebased_outgoing_links
+        );
+        if report.rebased_frontmatter_paths > 0 {
+            println!(
+                "  rebased {} frontmatter path(s)",
+                report.rebased_frontmatter_paths
+            );
+        }
+        println!("  affected {} file(s)", report.affected_files.len());
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn cmd_rm(args: &RmArgs) -> Result<ExitCode, CliError> {
+    let bundle = load_refactor_bundle(&args.bundle, &args.target)?;
+    let target = resolve_concept_id(&args.target, &bundle)?;
+    let redirect_to = match &args.redirect_to {
+        Some(raw) => Some(resolve_concept_id(raw, &bundle)?),
+        None => None,
+    };
+    let json = args.json || args.format.as_deref() == Some("json");
+
+    let options = RemoveOptions {
+        dry_run: args.dry_run,
+        force: args.force,
+        redirect_to,
+        unlink: args.unlink,
+        update_index: !args.no_index,
+        update_log: !args.no_log,
+        author: args.author.clone(),
+    };
+
+    let report =
+        remove_concept(&bundle, &target, &options).map_err(|e| CliError::data(e.to_string()))?;
+
+    if json {
+        let affected: Vec<String> = report
+            .affected_files
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect();
+        let redirect_str = report.redirected_to.as_ref().map(ToString::to_string);
+        let val = serde_json::json!({
+            "status": "ok",
+            "dry_run": report.dry_run,
+            "target": report.target.to_string(),
+            "removed_path": report.removed_path.to_string_lossy(),
+            "redirected_to": redirect_str,
+            "redirected_count": report.redirected_count,
+            "unlinked_count": report.unlinked_count,
+            "affected_files": affected,
+        });
+        println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());
+    } else {
+        let prefix = if report.dry_run {
+            "[dry-run] would remove"
+        } else {
+            "removed"
+        };
+        if let Some(r) = &report.redirected_to {
+            println!(
+                "{prefix} concept {} (redirected {} link(s) to {r})",
+                report.target, report.redirected_count
+            );
+        } else if report.unlinked_count > 0 {
+            println!(
+                "{prefix} concept {} (unlinked {} link(s))",
+                report.target, report.unlinked_count
+            );
+        } else {
+            println!("{prefix} concept {}", report.target);
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn cmd_split(args: &SplitArgs) -> Result<ExitCode, CliError> {
+    let bundle = load_refactor_bundle(&args.bundle, &args.source)?;
+    let source = resolve_concept_id(&args.source, &bundle)?;
+    let target = resolve_target_concept_id(&args.target, &bundle)?;
+    let json = args.json || args.format.as_deref() == Some("json");
+
+    let options = SplitOptions {
+        section: args.section.clone(),
+        title: args.title.clone(),
+        type_: Some(args.type_.clone()),
+        link_text: args.link_text.clone(),
+        force: args.force,
+        dry_run: args.dry_run,
+        update_index: !args.no_index,
+        update_log: !args.no_log,
+        author: args.author.clone(),
+    };
+
+    let report = split_concept(&bundle, &source, &target, &options)
+        .map_err(|e| CliError::data(e.to_string()))?;
+
+    if json {
+        let affected: Vec<String> = report
+            .affected_files
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect();
+        let val = serde_json::json!({
+            "status": "ok",
+            "dry_run": report.dry_run,
+            "source": report.source.to_string(),
+            "target": report.target.to_string(),
+            "section": report.section,
+            "target_title": report.target_title,
+            "target_path": report.target_path.to_string_lossy(),
+            "extracted_lines_count": report.extracted_lines_count,
+            "moved_sources_count": report.moved_sources_count,
+            "affected_files": affected,
+        });
+        println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());
+    } else {
+        let prefix = if report.dry_run {
+            "[dry-run] would extract"
+        } else {
+            "extracted"
+        };
+        println!(
+            "{prefix} section '{}' from {} -> {}",
+            report.section, report.source, report.target
+        );
+        println!("  extracted {} line(s)", report.extracted_lines_count);
+        println!("  moved {} source/footnote(s)", report.moved_sources_count);
+        println!("  created {}", report.target_path.display());
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn cmd_merge(args: &MergeArgs) -> Result<ExitCode, CliError> {
+    let bundle = load_refactor_bundle(&args.bundle, &args.source)?;
+    let source = resolve_concept_id(&args.source, &bundle)?;
+    let target = resolve_concept_id(&args.target, &bundle)?;
+    let json = args.json || args.format.as_deref() == Some("json");
+
+    let options = MergeOptions {
+        heading: args.heading.clone(),
+        dry_run: args.dry_run,
+        update_index: !args.no_index,
+        update_log: !args.no_log,
+        author: args.author.clone(),
+    };
+
+    let report = merge_concepts(&bundle, &source, &target, &options)
+        .map_err(|e| CliError::data(e.to_string()))?;
+
+    if json {
+        let affected: Vec<String> = report
+            .affected_files
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect();
+        let val = serde_json::json!({
+            "status": "ok",
+            "dry_run": report.dry_run,
+            "source": report.source.to_string(),
+            "target": report.target.to_string(),
+            "removed_path": report.removed_path.to_string_lossy(),
+            "updated_path": report.updated_path.to_string_lossy(),
+            "rewritten_links_count": report.rewritten_links_count,
+            "merged_sources_count": report.merged_sources_count,
+            "affected_files": affected,
+        });
+        println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());
+    } else {
+        let prefix = if report.dry_run {
+            "[dry-run] would merge"
+        } else {
+            "merged"
+        };
+        println!("{prefix} concept {} -> {}", report.source, report.target);
+        println!(
+            "  rewrote {} incoming link(s)",
+            report.rewritten_links_count
+        );
+        println!("  merged {} source(s)", report.merged_sources_count);
+        println!("  removed {}", report.removed_path.display());
+        println!("  updated {}", report.updated_path.display());
+    }
+    Ok(ExitCode::SUCCESS)
 }

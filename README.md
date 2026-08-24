@@ -35,6 +35,7 @@ A **pure-Rust** implementation and CLI toolkit for the [Open Knowledge Format (O
   - [Attested computations](#attested-computations)
 - [CLI reference and workflows](#cli-reference-and-workflows)
   - [Scaffolding: init and new](#scaffolding-init-and-new)
+  - [Bundle manipulation: mv, rm, split, and merge](#bundle-manipulation-mv-rm-split-and-merge)
   - [Quality gate: validate and lint](#quality-gate-validate-and-lint)
   - [Auditing trust: trust and info](#auditing-trust-trust-and-info)
   - [Link graph and discovery: links and graph](#link-graph-and-discovery-links-and-graph)
@@ -292,9 +293,39 @@ okf new policies/travel_expenses --type Policy --title "Travel and expense polic
 okf new computations/mileage_calc --attested --title "Mileage reimbursement calculator"
 ```
 
+### Bundle manipulation: mv, rm, split, and merge
+
+Manipulating and refactoring a bundle without breaking cross-links is a first-class capability in `okf`:
+
+```sh
+# Move or rename a concept (rewrites all backlinks across the bundle + rebases outgoing links and anchors)
+okf mv auth/token security/jwt --bundle ./company_knowledge
+
+# Preview rename without writing to disk
+okf mv auth/token security/jwt --dry-run --json
+
+# Rename a section/heading in-place and rewrite all internal and bundle-wide anchor links
+okf mv billing/pricing#pricing-tiers billing/pricing#subscription-plans
+
+# Safely remove a concept (fails if incoming links point to it)
+okf rm legacy/old_policy
+
+# Re-route all backlinks pointing to the removed concept to a replacement
+okf rm legacy/old_policy --redirect-to policies/new_policy
+
+# Unlink backlinks into plain text
+okf rm legacy/old_policy --unlink
+
+# Extract a section/heading into a new concept document
+okf split billing/pricing billing/enterprise --section "Enterprise Tier" --title "Enterprise Pricing"
+
+# Consolidate two concepts into one (merges sources, footnotes, verified events, and backlinks)
+okf merge billing/discounts billing/pricing
+```
+
 ### Quality gate: validate and lint
 
-`okf validate` verifies strict OKF v0.2 specification conformance (exits with non-zero code on errors):
+`okf validate` verifies strict OKF v0.2 specification conformance, checking schema validity, broken cross-links, missing attestation resources, and broken section anchors (exits with non-zero code on errors):
 
 ```sh
 # Conformance check

@@ -106,6 +106,7 @@ pub mod index;
 pub mod links;
 pub mod log;
 pub mod provenance;
+pub mod refactor;
 pub mod scaffold;
 pub mod trust;
 pub mod yaml;
@@ -157,6 +158,14 @@ pub use links::{Citation, Link, LinkKind, ParseLinkKindError};
 pub use log::Log;
 #[doc(inline)]
 pub use provenance::{Attribution, ResourceKind, Source, UsageWindow};
+#[doc(inline)]
+pub use refactor::{
+    LinkRewriteAction, MergeOptions, MergeReport, MoveOptions, MoveReport, RefactorError,
+    RemoveOptions, RemoveReport, RenameSectionOptions, RenameSectionReport, SplitOptions,
+    SplitReport, append_log_entry, compute_relative_path, heading_slug, merge_concepts,
+    move_concept, rebase_relative_path, remove_concept, rename_section, rewrite_markdown_links,
+    split_concept,
+};
 #[doc(inline)]
 pub use scaffold::{
     BundleInitOptions, ConceptOptions, create_concept, default_author, init_bundle,
