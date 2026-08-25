@@ -8,16 +8,16 @@
 //!   rm           <target>   Remove a concept from the bundle with link safety checks (--redirect-to, --unlink, --force, --json).
 //!   split        <a> <b>    Extract a section from a concept into a new concept and link to it (--section, --title, --json).
 //!   merge        <a> <b>    Consolidate one concept into another, merging sources and redirecting links (--json).
-//!   validate     <bundle>   Check a bundle against OKF v0.2 conformance (--fix, --json).
-//!   lint         <bundle>   Opinionated bundle health checks (--fix, --json).
-//!   fmt          <path>     Normalize document(s) by parse + re-serialize (-w writes, --check verifies).
-//!   info         <bundle>   Print a summary of a bundle (--json).
-//!   trust        <bundle>   Report trust tier, status, and staleness per concept (--json).
-//!   links        <bundle>   Inspect internal, broken, and external cross-links (--json).
-//!   graph        <bundle>   Print the cross-link graph (--format text|mermaid|json, --json).
-//!   computations <bundle>   List Attested Computation contracts (--json).
+//!   validate     [bundle]   Check a bundle against OKF v0.2 conformance (--fix, --json).
+//!   lint         [bundle]   Opinionated bundle health checks (--fix, --json).
+//!   fmt          [path]     Normalize document(s) by parse + re-serialize (-w writes, --check verifies).
+//!   info         [bundle]   Print a summary of a bundle (--json).
+//!   trust        [bundle]   Report trust tier, status, and staleness per concept (--json).
+//!   links        [bundle]   Inspect internal, broken, and external cross-links (--json).
+//!   graph        [bundle]   Print the cross-link graph (--format text|mermaid|json, --json).
+//!   computations [bundle]   List Attested Computation contracts (--json).
 //!   diff         <a> <b>    OKF-semantics diff between two bundles (--json).
-//!   index        <bundle>   (Re)generate every index.md in a bundle (--json).
+//!   index        [bundle]   (Re)generate every index.md in a bundle (--json).
 //!   parse        <file>     Parse one concept document and print its structure (--json).
 //! ```
 
@@ -409,7 +409,8 @@ pub struct ParseArgs {
 
 #[derive(Args, Debug)]
 pub struct FmtArgs {
-    /// File or directory to format
+    /// File or directory to format (defaults to current directory)
+    #[arg(default_value = ".")]
     pub path: PathBuf,
 
     /// Write formatted output back to file(s)

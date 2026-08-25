@@ -316,4 +316,20 @@ fn cli_validate_and_lint_default_to_current_directory() {
         .output()
         .unwrap();
     assert_eq!(lint_output.status.code(), Some(0));
+
+    let fmt_write_output = Command::new(env!("CARGO_BIN_EXE_okf"))
+        .arg("fmt")
+        .arg("-w")
+        .current_dir(tmp.path())
+        .output()
+        .unwrap();
+    assert_eq!(fmt_write_output.status.code(), Some(0));
+
+    let fmt_check_output = Command::new(env!("CARGO_BIN_EXE_okf"))
+        .arg("fmt")
+        .arg("--check")
+        .current_dir(tmp.path())
+        .output()
+        .unwrap();
+    assert_eq!(fmt_check_output.status.code(), Some(0));
 }
