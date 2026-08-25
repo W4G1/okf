@@ -399,3 +399,20 @@ fn remediate_bundle_end_to_end() {
             .starts_with("# Revenue\n\nRevenue represents income.")
     );
 }
+
+#[test]
+fn remediates_unquoted_okf_version_in_root_index() {
+    let tmp = TempDir::new();
+    tmp.write("index.md", "---\nokf_version: 0.2\n---\n\n# OKF Bundle\n");
+    let opts = FixOptions::default();
+    let report = remediate_bundle(tmp.path(), &opts).unwrap();
+    assert_eq!(report.total_remediations(), 1);
+    let (written, _) = report.apply().unwrap();
+    assert_eq!(written, 1);
+
+    let content = fs::read_to_string(tmp.path().join("index.md")).unwrap();
+    assert!(
+        content.starts_with("---\nokf_version: \"0.2\"\n---\n"),
+        "index.md should have quoted okf_version: {content}"
+    );
+}

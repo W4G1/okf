@@ -135,6 +135,12 @@ fn l5_unused_source() {
     let bundle = Bundle::load(tmp.path()).unwrap();
     let report = lint_bundle(&bundle);
     assert!(has(&report, "L5"), "expected L5 for uncited source");
+    let diag = report
+        .diagnostics
+        .iter()
+        .find(|d| d.message.starts_with("[L5] "))
+        .expect("L5 diagnostic");
+    assert_eq!(diag.severity, Severity::Warning, "L5 must be a warning");
 }
 
 #[test]
@@ -312,4 +318,24 @@ fn l12_draft_status_is_info() {
         .iter()
         .any(|d| d.severity == Severity::Info && d.message.starts_with("[L12] "));
     assert!(is_info, "L12 must be info, not warning");
+}
+
+#[test]
+fn l13_unquoted_okf_version() {
+    let tmp = TempDir::new();
+    tmp.write("metric.md", MIN_CONCEPT);
+    tmp.write(
+        "index.md",
+        "---\nokf_version: 0.2\n---\n\n# Metric\n\n* [Revenue](metric.md)\n",
+    );
+    let bundle = Bundle::load(tmp.path()).unwrap();
+    let report = lint_bundle(&bundle);
+    assert!(has(&report, "L13"), "expected L13 for unquoted okf_version");
+    let diag = report
+        .diagnostics
+        .iter()
+        .find(|d| d.message.starts_with("[L13] "))
+        .expect("L13 diagnostic");
+    assert_eq!(diag.severity, Severity::Warning, "L13 must be a warning");
+    assert!(diag.fixable, "L13 must be fixable");
 }

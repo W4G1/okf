@@ -339,7 +339,10 @@ fn preserved_frontmatter(index_path: &Path) -> Option<String> {
     let doc = load_doc(index_path)?;
     let version = doc.frontmatter.get("okf_version")?;
     let mut kept = crate::yaml::Mapping::new();
-    kept.insert("okf_version", version.clone());
+    let version_str = version
+        .as_display_string()
+        .unwrap_or_else(|| crate::OKF_VERSION.to_string());
+    kept.insert("okf_version", Value::String(version_str));
     Some(Value::Mapping(kept).to_yaml_string())
 }
 

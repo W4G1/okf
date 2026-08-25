@@ -209,6 +209,67 @@ impl Bundle {
         })
     }
 
+    /// Loads a single concept file into a one-concept bundle.
+    ///
+    /// If the file is inside a directory tree, the file's parent is used as the bundle root.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BundleError::Io`] on filesystem read errors.
+    pub fn load_file(path: impl AsRef<Path>) -> Result<Self, BundleError> {
+        let path = path.as_ref().to_path_buf();
+        if !path.is_file() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("not a file: {}", path.display()),
+            )
+            .into());
+        }
+        let root = path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+        let text = fs::read_to_string(&path)?;
+        let outcome = match Document::parse(&text) {
+            Ok(document) => match ConceptId::from_path(&root, &path) {
+                Ok(id) => FileOutcome::Concept(Concept { id, path, document }),
+                Err(e) => FileOutcome::Error(path, e.into()),
+            },
+            Err(e) => FileOutcome::Error(path, e),
+        };
+
+        let mut concepts = Vec::new();
+        let mut parse_errors = Vec::new();
+        match outcome {
+            FileOutcome::Concept(c) => concepts.push(c),
+            FileOutcome::Error(p, e) => parse_errors.push((p, e)),
+            _ => {}
+        }
+
+        let mut index = HashMap::new();
+        for (i, c) in concepts.iter().enumerate() {
+            index.insert(c.id.clone(), i);
+        }
+
+        let (outbound, backlinks) = build_graph(&concepts, &index);
+        let (sources, derived_by) = build_derivation_graph(&concepts, &index);
+        let okf_version = read_okf_version(&root);
+
+        Ok(Self {
+            root,
+            concepts,
+            index,
+            index_files: Vec::new(),
+            log_files: Vec::new(),
+            parse_errors,
+            outbound,
+            backlinks,
+            sources,
+            derived_by,
+            okf_version,
+        })
+    }
+
     /// The bundle's root directory.
     #[must_use]
     pub fn root(&self) -> &Path {
@@ -494,15 +555,15 @@ fn parse_one(root: &Path, path: &Path) -> Result<FileOutcome, std::io::Error> {
 }
 
 /// Reads `okf_version` from the bundle-root `index.md` frontmatter, if
-/// the file exists and the key is present as a string scalar. Returns `None`
-/// for a missing file, an unparseable `index.md`, or a non-string value.
+/// the file exists and the key is present as a scalar (coercing numeric floats
+/// or ints to string). Returns `None` for a missing file, an unparseable
+/// `index.md`, or a non-scalar value.
 fn read_okf_version(root: &Path) -> Option<String> {
     let text = fs::read_to_string(root.join("index.md")).ok()?;
     let doc = Document::parse(&text).ok()?;
     doc.frontmatter
         .get("okf_version")
-        .and_then(Value::as_str)
-        .map(str::to_owned)
+        .and_then(Value::as_display_string)
 }
 
 /// Recursively collects `*.md` file paths under `dir`.

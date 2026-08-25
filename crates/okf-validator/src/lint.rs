@@ -19,7 +19,7 @@
 //! | L2   | info     | frontmatter keys not in canonical preferred order                  |
 //! | L3   | warning  | heading hierarchy drift (heading levels skipped or multiple `#`)   |
 //! | L4   | warning  | empty / stub section heading with no content                       |
-//! | L5   | info     | source declared in frontmatter but never cited with footnote       |
+//! | L5   | warning  | source declared in frontmatter but never cited with footnote       |
 //! | L6   | info     | non-standard actor identity in generated, verified, or author      |
 //! | L7   | warning  | `# Computation` code block missing language tag                    |
 //! | L8   | info     | trailing whitespace or excess blank lines in markdown body         |
@@ -27,6 +27,7 @@
 //! | L10  | info     | self-link (concept links to itself)                                |
 //! | L11  | info     | no `verified` events, trust tier is `unverified`                   |
 //! | L12  | info     | `status: draft`                                                    |
+//! | L13  | warning  | `okf_version` in root index.md is unquoted                         |
 
 use crate::validate::{Diagnostic, Report, Severity, index_listed_targets, is_concept_link};
 use okf_core::bundle::Bundle;
@@ -77,6 +78,7 @@ pub fn lint_bundle_at(bundle: &Bundle, _today: Option<Date>) -> Report {
     }
 
     check_orphans(bundle, &indexed, &mut report);
+    check_root_index_version(bundle, &mut report);
 
     report
 }
@@ -127,7 +129,7 @@ impl Cx<'_> {
 
 /// Whether a lint finding can be automatically remediated by `okf fix`.
 const fn is_fixable_lint(code: &str) -> bool {
-    matches!(code.as_bytes(), b"L1" | b"L2" | b"L7" | b"L8")
+    matches!(code.as_bytes(), b"L1" | b"L2" | b"L7" | b"L8" | b"L13")
 }
 
 fn check_unverified(cx: &mut Cx, fm: &Frontmatter) {
@@ -287,7 +289,7 @@ fn check_unused_sources(cx: &mut Cx, doc: &Document) {
             let is_cited = attributions.iter().any(|a| a.label == *id)
                 || doc.body.contains(&format!("[^{id}]"));
             if !is_cited {
-                cx.info(
+                cx.warn(
                     "L5",
                     format!(
                         "source `{id}` is declared in frontmatter but never cited with footnote `[^{id}]`",
@@ -393,5 +395,29 @@ fn check_whitespace(cx: &mut Cx, doc: &Document) {
             "L8",
             "excess consecutive blank lines found in markdown body",
         );
+    }
+}
+
+fn check_root_index_version(bundle: &Bundle, report: &mut Report) {
+    let root_index = bundle.root().join("index.md");
+    if !root_index.exists() {
+        return;
+    }
+    let Ok(text) = std::fs::read_to_string(&root_index) else {
+        return;
+    };
+    let Ok(doc) = Document::parse(&text) else {
+        return;
+    };
+    if let Some(val) = doc.frontmatter.get("okf_version")
+        && !matches!(val, okf_core::yaml::Value::String(_))
+    {
+        report.diagnostics.push(Diagnostic {
+            severity: Severity::Warning,
+            path: Some(root_index),
+            concept: None,
+            message: "[L13] `okf_version` in root index.md is unquoted; YAML parses unquoted decimal numbers as floats".to_string(),
+            fixable: true,
+        });
     }
 }

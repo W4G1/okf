@@ -55,6 +55,8 @@ pub enum RemediationKind {
     CleanedWhitespace,
     /// Normalized non-compliant date/datetime string to explicit ISO-8601 UTC format.
     NormalizedDate(String),
+    /// Quoted unquoted `okf_version` in root `index.md` (L13).
+    QuotedOkfVersion,
 }
 
 /// A single remediation action applied to a document or file.
@@ -94,6 +96,8 @@ pub struct FixOptions {
     pub clean_whitespace: bool,
     /// Whether to regenerate index files (L16).
     pub regenerate_indexes: bool,
+    /// Whether to quote unquoted `okf_version` in root index.md (L13).
+    pub quote_okf_version: bool,
 }
 
 impl FixOptions {
@@ -113,6 +117,7 @@ impl FixOptions {
             fix_log_duplicates: false,
             clean_whitespace: false,
             regenerate_indexes: false,
+            quote_okf_version: true,
         }
     }
 }
@@ -132,6 +137,7 @@ impl Default for FixOptions {
             fix_log_duplicates: true,
             clean_whitespace: true,
             regenerate_indexes: true,
+            quote_okf_version: true,
         }
     }
 }
@@ -808,12 +814,29 @@ pub fn remediate_file(path: impl AsRef<Path>, options: &FixOptions) -> io::Resul
     }
 
     if filename == "index.md" {
+        let mut remediations = Vec::new();
+        let (remediated_content, changed) = if options.quote_okf_version
+            && let Ok(mut doc) = Document::parse(&original)
+            && let Some(val) = doc.frontmatter.get("okf_version")
+            && !matches!(val, Value::String(_))
+            && let Some(ver_str) = val.as_display_string()
+        {
+            doc.frontmatter.set("okf_version", Value::String(ver_str));
+            remediations.push(Remediation {
+                kind: RemediationKind::QuotedOkfVersion,
+                description: "Quoted unquoted `okf_version` in root index.md (L13)".to_string(),
+            });
+            (doc.serialize(), true)
+        } else {
+            (original.clone(), false)
+        };
+
         return Ok(FileFixReport {
             path,
-            remediations: Vec::new(),
-            original_content: original.clone(),
-            remediated_content: original,
-            changed: false,
+            remediations,
+            original_content: original,
+            remediated_content,
+            changed,
         });
     }
 
@@ -859,6 +882,12 @@ pub fn remediate_bundle(
             .and_then(|n| n.to_str())
             .unwrap_or_default();
         if filename == "index.md" {
+            if path == &bundle_root.join("index.md")
+                && let Ok(report) = remediate_file(path, options)
+                && report.changed
+            {
+                files.push(report);
+            }
             continue;
         }
         if let Ok(report) = remediate_file(path, options) {

@@ -27,8 +27,8 @@ use crate::{
     Bundle, BundleInitOptions, ConceptId, ConceptOptions, Date, Document, DocumentError,
     FixOptions, Link, MergeOptions, MoveOptions, RemoveOptions, RenameSectionOptions, Report,
     Severity, SplitOptions, TrustTier, Value, bundle_diff, create_concept, init_bundle,
-    lint_bundle_at, merge_concepts, move_concept, remediate_bundle, remove_concept, rename_section,
-    split_concept, validate_bundle_at,
+    lint_bundle_at, merge_concepts, move_concept, remediate_bundle, remediate_file, remove_concept,
+    rename_section, split_concept, validate_bundle_at,
 };
 use clap::builder::styling::Styles;
 use clap::{Args, Parser, Subcommand};
@@ -249,7 +249,7 @@ pub struct NewArgs {
 
 #[derive(Args, Debug)]
 pub struct ValidateArgs {
-    /// Bundle directory to validate (defaults to current directory)
+    /// Bundle directory or concept file to validate (defaults to current directory)
     #[arg(default_value = ".")]
     pub bundle: PathBuf,
 
@@ -431,7 +431,7 @@ pub struct FmtArgs {
 
 #[derive(Args, Debug)]
 pub struct LintArgs {
-    /// Bundle directory to lint (defaults to current directory)
+    /// Bundle directory or concept file to lint (defaults to current directory)
     #[arg(default_value = ".")]
     pub bundle: PathBuf,
 
@@ -722,8 +722,72 @@ fn load(path: impl AsRef<Path>) -> Result<Bundle, CliError> {
     Bundle::load(path.as_ref()).map_err(|e| CliError::no_input(e.to_string()))
 }
 
+struct LoadedTarget {
+    bundle: Bundle,
+    target_path: Option<PathBuf>,
+    target_id: Option<ConceptId>,
+    concept_count: usize,
+}
+
+fn load_target(raw_path: &Path) -> Result<LoadedTarget, CliError> {
+    let mut resolved_path = raw_path.to_path_buf();
+    if !resolved_path.exists() {
+        let with_md = resolved_path.with_extension("md");
+        if with_md.exists() {
+            resolved_path = with_md;
+        }
+    }
+
+    if resolved_path.is_file() {
+        let mut cur = resolved_path.parent();
+        let mut enclosing_root = None;
+        while let Some(dir) = cur {
+            if dir.join("index.md").exists() {
+                enclosing_root = Some(dir.to_path_buf());
+                break;
+            }
+            cur = dir.parent();
+        }
+
+        if let Some(root) = enclosing_root {
+            let bundle = Bundle::load(&root).map_err(|e| CliError::no_input(e.to_string()))?;
+            let target_id = ConceptId::from_path(&root, &resolved_path).ok();
+            let is_concept = target_id.as_ref().is_some_and(|id| bundle.contains(id));
+            let concept_count = usize::from(is_concept);
+            Ok(LoadedTarget {
+                bundle,
+                target_path: Some(resolved_path),
+                target_id,
+                concept_count,
+            })
+        } else {
+            let bundle =
+                Bundle::load_file(&resolved_path).map_err(|e| CliError::no_input(e.to_string()))?;
+            let target_id = bundle.concepts().first().map(|c| c.id.clone());
+            let is_concept = !bundle.concepts().is_empty();
+            let concept_count = usize::from(is_concept);
+            Ok(LoadedTarget {
+                bundle,
+                target_path: Some(resolved_path),
+                target_id,
+                concept_count,
+            })
+        }
+    } else {
+        let bundle = load(&resolved_path)?;
+        let count = bundle.len();
+        Ok(LoadedTarget {
+            bundle,
+            target_path: None,
+            target_id: None,
+            concept_count: count,
+        })
+    }
+}
+
+#[allow(clippy::too_many_lines)]
 fn cmd_validate(args: &ValidateArgs) -> Result<ExitCode, CliError> {
-    let path = &args.bundle;
+    let raw_path = &args.bundle;
     let fix = args.fix;
     let author = args.author.clone();
     let json = args.json || args.format.as_deref() == Some("json");
@@ -731,26 +795,87 @@ fn cmd_validate(args: &ValidateArgs) -> Result<ExitCode, CliError> {
     let mut applied_fixes = 0;
     let mut written_files = 0;
 
-    if fix {
-        let options = FixOptions::validation_only(author);
-        let fix_report = remediate_bundle(path, &options)
-            .map_err(|e| CliError::data(format!("could not apply fixes: {e}")))?;
-        let (written, regenerated) = fix_report
-            .apply()
-            .map_err(|e| CliError::data(format!("could not write fixes: {e}")))?;
-        applied_fixes = fix_report.total_remediations();
-        written_files = written;
-        if !json && (written > 0 || !regenerated.is_empty()) {
-            println!("Applied {applied_fixes} fix(es) across {written} file(s).\n");
+    let mut resolved_path = raw_path.clone();
+    if !resolved_path.exists() {
+        let with_md = resolved_path.with_extension("md");
+        if with_md.exists() {
+            resolved_path = with_md;
         }
     }
 
-    let bundle = load(path)?;
+    if fix {
+        let options = FixOptions::validation_only(author);
+        if resolved_path.is_file() {
+            let fix_report = remediate_file(&resolved_path, &options)
+                .map_err(|e| CliError::data(format!("could not apply fixes: {e}")))?;
+            if fix_report.changed {
+                std::fs::write(&resolved_path, &fix_report.remediated_content)
+                    .map_err(|e| CliError::data(format!("could not write fixes: {e}")))?;
+                applied_fixes = fix_report.remediations.len();
+                written_files = 1;
+                if !json {
+                    println!("Applied {applied_fixes} fix(es) across 1 file(s).\n");
+                }
+            }
+        } else {
+            let fix_report = remediate_bundle(&resolved_path, &options)
+                .map_err(|e| CliError::data(format!("could not apply fixes: {e}")))?;
+            let (written, regenerated) = fix_report
+                .apply()
+                .map_err(|e| CliError::data(format!("could not write fixes: {e}")))?;
+            applied_fixes = fix_report.total_remediations();
+            written_files = written;
+            if !json && (written > 0 || !regenerated.is_empty()) {
+                println!("Applied {applied_fixes} fix(es) across {written} file(s).\n");
+            }
+        }
+    }
+
+    let LoadedTarget {
+        bundle,
+        target_path,
+        target_id,
+        concept_count,
+    } = load_target(raw_path)?;
     let today_date = args.today.or_else(Date::today_utc);
-    let report = validate_bundle_at(&bundle, today_date);
+    let full_report = validate_bundle_at(&bundle, today_date);
+
+    let report = if let Some(target_file) = &target_path {
+        let target_canon = target_file.canonicalize().ok();
+        let is_match = |d: &crate::Diagnostic| {
+            if let Some(id) = &target_id
+                && d.concept.as_ref() == Some(id)
+            {
+                return true;
+            }
+            if let Some(p) = &d.path
+                && (p == target_file
+                    || (target_canon.is_some() && p.canonicalize().ok() == target_canon))
+            {
+                return true;
+            }
+            false
+        };
+        Report {
+            diagnostics: full_report
+                .diagnostics
+                .into_iter()
+                .filter(is_match)
+                .collect(),
+        }
+    } else {
+        full_report
+    };
 
     if json {
-        print_validate_json(&bundle, &report, fix, applied_fixes, written_files);
+        print_validate_json(
+            &bundle,
+            &report,
+            fix,
+            applied_fixes,
+            written_files,
+            concept_count,
+        );
         if report.is_conformant() {
             Ok(ExitCode::SUCCESS)
         } else {
@@ -768,13 +893,11 @@ fn cmd_validate(args: &ValidateArgs) -> Result<ExitCode, CliError> {
 
         if fixable > 0 {
             println!(
-                "\n{} concept(s); {errors} error(s), {warnings} warning(s) ({fixable} fixable with `--fix`), {infos} info.",
-                bundle.len()
+                "\n{concept_count} concept(s); {errors} error(s), {warnings} warning(s) ({fixable} fixable with `--fix`), {infos} info."
             );
         } else {
             println!(
-                "\n{} concept(s); {errors} error(s), {warnings} warning(s), {infos} info.",
-                bundle.len()
+                "\n{concept_count} concept(s); {errors} error(s), {warnings} warning(s), {infos} info."
             );
         }
 
@@ -788,8 +911,9 @@ fn cmd_validate(args: &ValidateArgs) -> Result<ExitCode, CliError> {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn cmd_lint(args: &LintArgs) -> Result<ExitCode, CliError> {
-    let path = &args.bundle;
+    let raw_path = &args.bundle;
     let fix = args.fix;
     let author = args.author.clone();
     let json = args.json || args.format.as_deref() == Some("json");
@@ -797,29 +921,90 @@ fn cmd_lint(args: &LintArgs) -> Result<ExitCode, CliError> {
     let mut applied_fixes = 0;
     let mut written_files = 0;
 
+    let mut resolved_path = raw_path.clone();
+    if !resolved_path.exists() {
+        let with_md = resolved_path.with_extension("md");
+        if with_md.exists() {
+            resolved_path = with_md;
+        }
+    }
+
     if fix {
         let options = FixOptions {
             author,
             ..Default::default()
         };
-        let fix_report = remediate_bundle(path, &options)
-            .map_err(|e| CliError::data(format!("could not apply fixes: {e}")))?;
-        let (written, regenerated) = fix_report
-            .apply()
-            .map_err(|e| CliError::data(format!("could not write fixes: {e}")))?;
-        applied_fixes = fix_report.total_remediations();
-        written_files = written;
-        if !json && (written > 0 || !regenerated.is_empty()) {
-            println!("Applied {applied_fixes} fix(es) across {written} file(s).\n");
+        if resolved_path.is_file() {
+            let fix_report = remediate_file(&resolved_path, &options)
+                .map_err(|e| CliError::data(format!("could not apply fixes: {e}")))?;
+            if fix_report.changed {
+                std::fs::write(&resolved_path, &fix_report.remediated_content)
+                    .map_err(|e| CliError::data(format!("could not write fixes: {e}")))?;
+                applied_fixes = fix_report.remediations.len();
+                written_files = 1;
+                if !json {
+                    println!("Applied {applied_fixes} fix(es) across 1 file(s).\n");
+                }
+            }
+        } else {
+            let fix_report = remediate_bundle(&resolved_path, &options)
+                .map_err(|e| CliError::data(format!("could not apply fixes: {e}")))?;
+            let (written, regenerated) = fix_report
+                .apply()
+                .map_err(|e| CliError::data(format!("could not write fixes: {e}")))?;
+            applied_fixes = fix_report.total_remediations();
+            written_files = written;
+            if !json && (written > 0 || !regenerated.is_empty()) {
+                println!("Applied {applied_fixes} fix(es) across {written} file(s).\n");
+            }
         }
     }
 
-    let bundle = load(path)?;
+    let LoadedTarget {
+        bundle,
+        target_path,
+        target_id,
+        concept_count,
+    } = load_target(raw_path)?;
     let today_date = args.today.or_else(Date::today_utc);
-    let report = lint_bundle_at(&bundle, today_date);
+    let full_report = lint_bundle_at(&bundle, today_date);
+
+    let report = if let Some(target_file) = &target_path {
+        let target_canon = target_file.canonicalize().ok();
+        let is_match = |d: &crate::Diagnostic| {
+            if let Some(id) = &target_id
+                && d.concept.as_ref() == Some(id)
+            {
+                return true;
+            }
+            if let Some(p) = &d.path
+                && (p == target_file
+                    || (target_canon.is_some() && p.canonicalize().ok() == target_canon))
+            {
+                return true;
+            }
+            false
+        };
+        Report {
+            diagnostics: full_report
+                .diagnostics
+                .into_iter()
+                .filter(is_match)
+                .collect(),
+        }
+    } else {
+        full_report
+    };
 
     if json {
-        print_lint_json(&bundle, &report, fix, applied_fixes, written_files);
+        print_lint_json(
+            &bundle,
+            &report,
+            fix,
+            applied_fixes,
+            written_files,
+            concept_count,
+        );
         let warnings = report.warning_count();
         if warnings == 0 {
             Ok(ExitCode::SUCCESS)
@@ -837,14 +1022,10 @@ fn cmd_lint(args: &LintArgs) -> Result<ExitCode, CliError> {
 
         if fixable > 0 {
             println!(
-                "\n{} concept(s); {warnings} warning(s) ({fixable} fixable with `--fix`), {infos} info.",
-                bundle.len()
+                "\n{concept_count} concept(s); {warnings} warning(s) ({fixable} fixable with `--fix`), {infos} info."
             );
         } else {
-            println!(
-                "\n{} concept(s); {warnings} warning(s), {infos} info.",
-                bundle.len()
-            );
+            println!("\n{concept_count} concept(s); {warnings} warning(s), {infos} info.");
         }
 
         if warnings == 0 {
@@ -1450,6 +1631,7 @@ fn print_validate_json(
     fix: bool,
     fixes_applied: usize,
     files_written: usize,
+    concept_count: usize,
 ) {
     let diagnostics: Vec<serde_json::Value> = report
         .diagnostics
@@ -1469,7 +1651,7 @@ fn print_validate_json(
         "okf_version": crate::OKF_VERSION,
         "bundle": bundle.root().to_string_lossy(),
         "conformant": report.is_conformant(),
-        "concepts_count": bundle.len(),
+        "concepts_count": concept_count,
         "error_count": report.error_count(),
         "warning_count": report.warning_count(),
         "info_count": report.of(Severity::Info).count(),
@@ -1491,6 +1673,7 @@ fn print_lint_json(
     fix: bool,
     fixes_applied: usize,
     files_written: usize,
+    concept_count: usize,
 ) {
     let diagnostics: Vec<serde_json::Value> = report
         .diagnostics
@@ -1510,7 +1693,7 @@ fn print_lint_json(
         "okf_version": crate::OKF_VERSION,
         "bundle": bundle.root().to_string_lossy(),
         "clean": report.warning_count() == 0,
-        "concepts_count": bundle.len(),
+        "concepts_count": concept_count,
         "warning_count": report.warning_count(),
         "info_count": report.of(Severity::Info).count(),
         "fixable_count": report.fixable_count(),

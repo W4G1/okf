@@ -338,7 +338,7 @@ okf validate ./company_knowledge --today 2026-12-01
 okf validate ./company_knowledge --fix
 ```
 
-`okf lint` evaluates 12 opinionated hygiene rules (missing headings, orphan concepts, key ordering, heading hierarchy, whitespace issues):
+`okf lint` evaluates 13 opinionated hygiene rules (missing headings, orphan concepts, key ordering, heading hierarchy, whitespace issues):
 
 ```sh
 # Lint bundle
@@ -601,7 +601,7 @@ This repository is structured as a multi-crate Rust workspace:
 |-------|-------------|---------------|
 | [`okf`](https://crates.io/crates/okf) | CLI binary and re-exports of all core and validator APIs. | [![docs.rs](https://img.shields.io/docsrs/okf)](https://docs.rs/okf) |
 | [`okf-core`](https://crates.io/crates/okf-core) | Pure-Rust OKF engine (YAML subset parser, AST, link graphs, diff, fix engine). | [![docs.rs](https://img.shields.io/docsrs/okf-core)](https://docs.rs/okf-core) |
-| [`okf-validator`](https://crates.io/crates/okf-validator) | Conformance validator, multi-language syntax checker, and 12 opinionated linting rules. | [![docs.rs](https://img.shields.io/docsrs/okf-validator)](https://docs.rs/okf-validator) |
+| [`okf-validator`](https://crates.io/crates/okf-validator) | Conformance validator, multi-language syntax checker, and 13 opinionated linting rules. | [![docs.rs](https://img.shields.io/docsrs/okf-validator)](https://docs.rs/okf-validator) |
 | [`cargo-okf`](https://crates.io/crates/cargo-okf) | Cargo plugin wrapper allowing `cargo okf <cmd>`. | [![docs.rs](https://img.shields.io/docsrs/cargo-okf)](https://docs.rs/cargo-okf) |
 
 ---

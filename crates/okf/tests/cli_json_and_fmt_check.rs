@@ -317,3 +317,116 @@ fn cli_index_and_fmt_do_not_oscillate_on_subdirectories() {
         .unwrap();
     assert_eq!(fmt_check2.status.code(), Some(0));
 }
+
+#[test]
+fn cli_info_unquoted_okf_version() {
+    let tmp = TempDir::new();
+    tmp.write(
+        "index.md",
+        "---\nokf_version: 0.2\n---\n\n# Test Bundle\n\n* [Revenue](revenue.md)\n",
+    );
+    tmp.write(
+        "revenue.md",
+        "---\ntype: Metric\ntitle: Revenue\ndescription: Revenue metric.\ngenerated:\n  by: human:alice\n  at: 2026-01-01T00:00:00Z\nverified:\n  - by: human:bob\n    at: 2026-01-02T00:00:00Z\n---\n\n# Revenue\n\nRevenue.\n",
+    );
+
+    // Text info output
+    let text_out = okf()
+        .args(["info", tmp.path().to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert_eq!(text_out.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&text_out.stdout);
+    assert!(
+        stdout.contains("okf_version: 0.2"),
+        "stdout should contain 'okf_version: 0.2', got:\n{stdout}"
+    );
+
+    // JSON info output
+    let json_out = okf()
+        .args(["info", tmp.path().to_str().unwrap(), "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(json_out.status.code(), Some(0));
+    let json_str = String::from_utf8_lossy(&json_out.stdout);
+    let val: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+    assert_eq!(val["okf_version"].as_str(), Some("0.2"));
+}
+
+#[test]
+fn cli_single_file_validate_and_lint() {
+    let tmp = TempDir::new();
+    tmp.write(
+        "index.md",
+        "---\nokf_version: \"0.2\"\n---\n\n# Test Bundle\n\n* [Austria](member-states/austria.md)\n",
+    );
+    let austria_path = tmp.write(
+        "member-states/austria.md",
+        "---\ntype: MemberState\ntitle: Austria\ndescription: Republic of Austria.\ngenerated:\n  by: human:alice\n  at: 2026-01-01T00:00:00Z\nverified:\n  - by: human:bob\n    at: 2026-01-02T00:00:00Z\n---\n\n# Austria\n\nAustria is a member state.\n",
+    );
+
+    // Validate single file by exact path
+    let val_out = okf()
+        .args(["validate", austria_path.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert_eq!(val_out.status.code(), Some(0));
+    let val_stdout = String::from_utf8_lossy(&val_out.stdout);
+    assert!(val_stdout.contains("1 concept(s)"), "got:\n{val_stdout}");
+    assert!(val_stdout.contains("conformant with OKF v0.2"));
+
+    // Lint single file by exact path
+    let lint_out = okf()
+        .args(["lint", austria_path.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert_eq!(lint_out.status.code(), Some(0));
+    let lint_stdout = String::from_utf8_lossy(&lint_out.stdout);
+    assert!(lint_stdout.contains("1 concept(s)"), "got:\n{lint_stdout}");
+    assert!(lint_stdout.contains("clean lint"));
+
+    // Validate without .md extension
+    let path_no_md = austria_path.with_extension("");
+    let val_no_md = okf()
+        .args(["validate", path_no_md.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert_eq!(val_no_md.status.code(), Some(0));
+
+    // Validate single file JSON
+    let val_json_out = okf()
+        .args(["validate", austria_path.to_str().unwrap(), "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(val_json_out.status.code(), Some(0));
+    let val_json: serde_json::Value = serde_json::from_slice(&val_json_out.stdout).unwrap();
+    assert_eq!(val_json["concepts_count"].as_u64(), Some(1));
+    assert_eq!(val_json["conformant"].as_bool(), Some(true));
+}
+
+#[test]
+fn cli_uncited_source_is_warning_and_fails_lint() {
+    let tmp = TempDir::new();
+    tmp.write(
+        "index.md",
+        "---\nokf_version: \"0.2\"\n---\n\n# Bundle\n\n* [Revenue](revenue.md)\n",
+    );
+    tmp.write(
+        "revenue.md",
+        "---\ntype: Metric\ntitle: Revenue\ndescription: Revenue metric.\ngenerated:\n  by: human:alice\n  at: 2026-01-01T00:00:00Z\nverified:\n  - by: human:bob\n    at: 2026-01-02T00:00:00Z\nsources:\n  - id: sec-10k\n    resource: https://sec.gov\n---\n\n# Revenue\n\nBody without footnote citation.\n",
+    );
+
+    let lint_out = okf()
+        .args(["lint", tmp.path().to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert_eq!(
+        lint_out.status.code(),
+        Some(65),
+        "lint with uncited source must exit with code 65 (EX_DATAERR)"
+    );
+    let stdout = String::from_utf8_lossy(&lint_out.stdout);
+    assert!(stdout.contains("[warning]"), "got:\n{stdout}");
+    assert!(stdout.contains("[L5]"), "got:\n{stdout}");
+    assert!(stdout.contains("1 lint warning(s)"), "got:\n{stdout}");
+}

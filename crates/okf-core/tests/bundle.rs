@@ -155,6 +155,37 @@ fn okf_version_read_from_root_index() {
 }
 
 #[test]
+fn unquoted_okf_version_coerces_to_string() {
+    let tmp = TempDir::new();
+    tmp.write("a.md", "---\ntype: Note\n---\nbody\n");
+    tmp.write("index.md", "---\nokf_version: 0.2\n---\n\n# Listing\n");
+    let bundle = Bundle::load(tmp.path()).unwrap();
+    assert_eq!(bundle.okf_version(), Some("0.2"));
+
+    let tmp_int = TempDir::new();
+    tmp_int.write("a.md", "---\ntype: Note\n---\nbody\n");
+    tmp_int.write("index.md", "---\nokf_version: 1\n---\n\n# Listing\n");
+    let bundle_int = Bundle::load(tmp_int.path()).unwrap();
+    assert_eq!(bundle_int.okf_version(), Some("1"));
+}
+
+#[test]
+fn load_single_file_as_bundle() {
+    let tmp = TempDir::new();
+    let file_path = tmp.write(
+        "concept.md",
+        "---\ntype: Note\ntitle: Single Concept\n---\n\nBody here.\n",
+    );
+    let bundle = Bundle::load_file(&file_path).unwrap();
+    assert_eq!(bundle.len(), 1);
+    assert_eq!(bundle.concepts()[0].id.to_string(), "concept");
+    assert_eq!(
+        bundle.concepts()[0].document.frontmatter.title().as_deref(),
+        Some("Single Concept")
+    );
+}
+
+#[test]
 fn a_filename_that_is_not_a_valid_concept_id_segment_still_loads() {
     // Conformance is a question of frontmatter, not filenames, and the
     // reference's `path_to_concept_id` validates nothing. So a readable document
