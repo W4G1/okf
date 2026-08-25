@@ -3,7 +3,6 @@ name = "okf-core"
 description = "A pure-Rust implementation of the Open Knowledge Format (OKF) v0.2 specification: parser, model, validator, provenance/trust/attestation families, link graph, and index/log tooling."
 documentation = "https://docs.rs/okf-core"
 readme = "../../README.md"
-build = "build.rs"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
