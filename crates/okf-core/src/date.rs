@@ -278,6 +278,28 @@ impl DateTime {
     }
 }
 
+/// Normalizes a date or datetime string to an ISO-8601 datetime with an explicit UTC offset (`Z`).
+///
+/// - Bare date `YYYY-MM-DD` -> `YYYY-MM-DDT00:00:00Z`
+/// - Datetime without offset `YYYY-MM-DDTHH:MM:SS` -> `YYYY-MM-DDTHH:MM:SSZ`
+/// - Datetime with space separator `YYYY-MM-DD HH:MM:SS` -> `YYYY-MM-DDTHH:MM:SSZ`
+/// - Already valid datetime with offset -> canonical formatted string
+/// - Unparseable string -> `None`
+#[must_use]
+pub fn normalize_iso_datetime(s: &str) -> Option<String> {
+    let clean = s.trim().trim_matches(|c| c == '\'' || c == '"').trim();
+    let dt = DateTime::parse(clean)?;
+    if !dt.has_time {
+        Some(format!("{}T00:00:00Z", dt.date))
+    } else if dt.offset_minutes.is_none() {
+        let mut normalized = dt;
+        normalized.offset_minutes = Some(0);
+        Some(normalized.to_string())
+    } else {
+        Some(dt.to_string())
+    }
+}
+
 impl PartialOrd for DateTime {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
@@ -619,5 +641,38 @@ mod tests {
         assert!(!date_only.is_valid());
         assert!(!date_only.has_time());
         assert!(!date_only.has_offset());
+    }
+
+    #[test]
+    fn test_normalize_iso_datetime() {
+        assert_eq!(
+            normalize_iso_datetime("2026-06-30"),
+            Some("2026-06-30T00:00:00Z".to_string())
+        );
+        assert_eq!(
+            normalize_iso_datetime("'2026-06-30'"),
+            Some("2026-06-30T00:00:00Z".to_string())
+        );
+        assert_eq!(
+            normalize_iso_datetime("\"2026-06-30\""),
+            Some("2026-06-30T00:00:00Z".to_string())
+        );
+        assert_eq!(
+            normalize_iso_datetime("2026-06-30T14:20:00"),
+            Some("2026-06-30T14:20:00Z".to_string())
+        );
+        assert_eq!(
+            normalize_iso_datetime("2026-06-30 14:20:00"),
+            Some("2026-06-30T14:20:00Z".to_string())
+        );
+        assert_eq!(
+            normalize_iso_datetime("2026-06-30T14:20:00Z"),
+            Some("2026-06-30T14:20:00Z".to_string())
+        );
+        assert_eq!(
+            normalize_iso_datetime("2026-06-30T14:20:00+02:00"),
+            Some("2026-06-30T14:20:00+02:00".to_string())
+        );
+        assert_eq!(normalize_iso_datetime("last tuesday"), None);
     }
 }

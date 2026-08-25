@@ -255,6 +255,22 @@ impl Value {
         }
     }
 
+    /// Returns the mutable mapping if this is a [`Value::Mapping`].
+    pub const fn as_mapping_mut(&mut self) -> Option<&mut Mapping> {
+        match self {
+            Self::Mapping(m) => Some(m),
+            _ => None,
+        }
+    }
+
+    /// Returns the mutable sequence if this is a [`Value::Sequence`].
+    pub const fn as_sequence_mut(&mut self) -> Option<&mut Vec<Self>> {
+        match self {
+            Self::Sequence(s) => Some(s),
+            _ => None,
+        }
+    }
+
     /// True for `Null`, an empty string, an empty sequence, or an empty
     /// mapping. Mirrors Python's "falsy" check used by the reference
     /// implementation's `validate()` (`not frontmatter.get(k)`).

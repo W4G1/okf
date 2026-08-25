@@ -53,6 +53,8 @@ pub enum RemediationKind {
     ConsolidatedLogDates(String),
     /// Stripped trailing whitespace and normalized excess blank lines (L8).
     CleanedWhitespace,
+    /// Normalized non-compliant date/datetime string to explicit ISO-8601 UTC format.
+    NormalizedDate(String),
 }
 
 /// A single remediation action applied to a document or file.
@@ -80,6 +82,8 @@ pub struct FixOptions {
     pub migrate_legacy_timestamp: bool,
     /// Whether to migrate legacy v0.1 Citations (L6).
     pub migrate_legacy_citations: bool,
+    /// Whether to normalize date/datetime strings lacking explicit UTC offset.
+    pub normalize_date_formats: bool,
     /// Whether to reorder frontmatter keys canonically (L18).
     pub reorder_keys: bool,
     /// Whether to tag unlabeled computation blocks (L26).
@@ -103,6 +107,7 @@ impl FixOptions {
             add_missing_top_heading: false,
             migrate_legacy_timestamp: true,
             migrate_legacy_citations: true,
+            normalize_date_formats: true,
             reorder_keys: false,
             tag_computation_blocks: false,
             fix_log_duplicates: false,
@@ -121,6 +126,7 @@ impl Default for FixOptions {
             add_missing_top_heading: true,
             migrate_legacy_timestamp: true,
             migrate_legacy_citations: true,
+            normalize_date_formats: true,
             reorder_keys: true,
             tag_computation_blocks: true,
             fix_log_duplicates: true,
@@ -303,7 +309,10 @@ pub fn remediate_document(
         }
     }
 
-    // 7. Canonical key order (L18)
+    if options.normalize_date_formats {
+        remediate_date_fields(&mut new_doc.frontmatter, &mut remediations);
+    }
+
     if options.reorder_keys && is_key_order_remediation_needed(&new_doc.frontmatter) {
         new_doc.frontmatter.reorder_preferred();
         remediations.push(Remediation {
@@ -312,7 +321,6 @@ pub fn remediate_document(
         });
     }
 
-    // 8. Trailing whitespace and excess blank lines (L8)
     if options.clean_whitespace {
         let (cleaned_body, whitespace_changed) = clean_body_whitespace(&new_doc.body);
         if whitespace_changed {
@@ -326,6 +334,151 @@ pub fn remediate_document(
     }
 
     (new_doc, remediations)
+}
+
+fn normalize_mapping_date_key(
+    map: &mut Mapping,
+    key: &str,
+    field_desc: &str,
+    remediations: &mut Vec<Remediation>,
+) -> bool {
+    if let Some(val) = map.get(key).and_then(Value::as_display_string)
+        && let Some(normalized) = crate::date::normalize_iso_datetime(&val)
+        && normalized != val
+    {
+        map.insert(key, Value::String(normalized.clone()));
+        remediations.push(Remediation {
+            kind: RemediationKind::NormalizedDate(field_desc.to_string()),
+            description: format!("normalized `{field_desc}` datetime to `{normalized}`"),
+        });
+        return true;
+    }
+    false
+}
+
+#[allow(clippy::too_many_lines)]
+fn remediate_date_fields(fm: &mut Frontmatter, remediations: &mut Vec<Remediation>) {
+    if let Some(Value::Mapping(mut gen_map)) = fm.get("generated").cloned()
+        && normalize_mapping_date_key(&mut gen_map, "at", "generated.at", remediations)
+    {
+        fm.set("generated", Value::Mapping(gen_map));
+    }
+
+    if let Some(v_val) = fm.get("verified").cloned() {
+        match v_val {
+            Value::Sequence(mut seq) => {
+                let mut changed = false;
+                for (i, item) in seq.iter_mut().enumerate() {
+                    if let Some(map) = item.as_mapping_mut() {
+                        changed |= normalize_mapping_date_key(
+                            map,
+                            "at",
+                            &format!("verified[{i}].at"),
+                            remediations,
+                        );
+                    }
+                }
+                if changed {
+                    fm.set("verified", Value::Sequence(seq));
+                }
+            }
+            Value::Mapping(mut map) => {
+                if normalize_mapping_date_key(&mut map, "at", "verified.at", remediations) {
+                    fm.set("verified", Value::Mapping(map));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if let Some(stale_val) = fm.get("stale_after").and_then(Value::as_display_string)
+        && let Some(normalized) = crate::date::normalize_iso_datetime(&stale_val)
+        && normalized != stale_val
+    {
+        fm.set("stale_after", Value::String(normalized.clone()));
+        remediations.push(Remediation {
+            kind: RemediationKind::NormalizedDate("stale_after".to_string()),
+            description: format!("normalized `stale_after` datetime to `{normalized}`"),
+        });
+    }
+
+    if let Some(Value::Mapping(mut uw_map)) = fm.get("usage_window").cloned() {
+        let mut changed = false;
+        for field in ["from", "to"] {
+            changed |= normalize_mapping_date_key(
+                &mut uw_map,
+                field,
+                &format!("usage_window.{field}"),
+                remediations,
+            );
+        }
+        if changed {
+            fm.set("usage_window", Value::Mapping(uw_map));
+        }
+    }
+
+    if let Some(s_val) = fm.get("sources").cloned() {
+        match s_val {
+            Value::Sequence(mut seq) => {
+                let mut changed = false;
+                for (i, item) in seq.iter_mut().enumerate() {
+                    if let Some(map) = item.as_mapping_mut() {
+                        changed |= normalize_mapping_date_key(
+                            map,
+                            "last_modified",
+                            &format!("sources[{i}].last_modified"),
+                            remediations,
+                        );
+                        if let Some(Value::Mapping(mut uw_map)) = map.get("usage_window").cloned() {
+                            let mut uw_changed = false;
+                            for field in ["from", "to"] {
+                                uw_changed |= normalize_mapping_date_key(
+                                    &mut uw_map,
+                                    field,
+                                    &format!("sources[{i}].usage_window.{field}"),
+                                    remediations,
+                                );
+                            }
+                            if uw_changed {
+                                map.insert("usage_window", Value::Mapping(uw_map));
+                                changed = true;
+                            }
+                        }
+                    }
+                }
+                if changed {
+                    fm.set("sources", Value::Sequence(seq));
+                }
+            }
+            Value::Mapping(mut map) => {
+                let mut changed = normalize_mapping_date_key(
+                    &mut map,
+                    "last_modified",
+                    "sources.last_modified",
+                    remediations,
+                );
+                if let Some(Value::Mapping(mut uw_map)) = map.get("usage_window").cloned() {
+                    let mut uw_changed = false;
+                    for field in ["from", "to"] {
+                        uw_changed |= normalize_mapping_date_key(
+                            &mut uw_map,
+                            field,
+                            &format!("sources.usage_window.{field}"),
+                            remediations,
+                        );
+                    }
+                    if uw_changed {
+                        map.insert("usage_window", Value::Mapping(uw_map));
+                        changed = true;
+                    }
+                }
+                if changed {
+                    fm.set("sources", Value::Mapping(map));
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 /// Checks if frontmatter keys deviate from the canonical preferred order.

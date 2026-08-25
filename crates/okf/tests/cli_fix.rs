@@ -128,3 +128,65 @@ fn cli_validate_with_fix_flag_remediates_and_validates() {
         "Output: {stdout}"
     );
 }
+
+#[test]
+fn cli_validate_with_fix_normalizes_date_formats() {
+    let tmp = TempDir::new();
+    tmp.write(
+        "index.md",
+        "---\nokf_version: \"0.2\"\n---\n\n# Test\n\n* [Revenue](metrics/revenue.md)\n",
+    );
+    tmp.write(
+        "metrics/revenue.md",
+        "---\ntype: Metric\ntitle: Revenue\ndescription: Revenue tracking.\ngenerated:\n  by: human:alice\n  at: '2026-06-30'\nverified:\n  - by: human:bob\n    at: '2026-07-01 12:00:00'\nstale_after: '2026-12-31'\nusage_window:\n  from: '2026-01-01'\n  to: '2026-06-01'\nsources:\n  - id: '1'\n    resource: https://example.com\n    last_modified: '2026-05-15'\n---\n\n# Revenue\n\nRevenue is money.\n",
+    );
+
+    let val_before = okf()
+        .args(["validate", tmp.path().to_str().unwrap(), "--json"])
+        .output()
+        .unwrap();
+    let val_json_before: serde_json::Value = serde_json::from_slice(&val_before.stdout).unwrap();
+    assert!(
+        val_json_before["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|d| d["fixable"].as_bool() == Some(true)),
+        "Expected fixable date diagnostics"
+    );
+
+    let fix_output = okf()
+        .args(["validate", tmp.path().to_str().unwrap(), "--fix", "--json"])
+        .output()
+        .unwrap();
+    assert!(fix_output.status.success());
+
+    let val_after = okf()
+        .args(["validate", tmp.path().to_str().unwrap(), "--json"])
+        .output()
+        .unwrap();
+    let val_json_after: serde_json::Value = serde_json::from_slice(&val_after.stdout).unwrap();
+    assert_eq!(
+        val_json_after["error_count"].as_i64(),
+        Some(0),
+        "Expected 0 errors after fix"
+    );
+    assert_eq!(
+        val_json_after["warning_count"].as_i64(),
+        Some(0),
+        "Expected 0 warnings after fix"
+    );
+    assert_eq!(
+        val_json_after["conformant"].as_bool(),
+        Some(true),
+        "Expected conformant after fix"
+    );
+
+    let content = tmp.read("metrics/revenue.md");
+    assert!(content.contains("2026-06-30T00:00:00Z"));
+    assert!(content.contains("2026-07-01T12:00:00Z"));
+    assert!(content.contains("2026-12-31T00:00:00Z"));
+    assert!(content.contains("2026-01-01T00:00:00Z"));
+    assert!(content.contains("2026-06-01T00:00:00Z"));
+    assert!(content.contains("2026-05-15T00:00:00Z"));
+}

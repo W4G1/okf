@@ -1207,3 +1207,53 @@ fn test_validate_accepts_url_encoded_link_anchors() {
         "expected 0 anchor warnings, got: {anchor_warnings:#?}"
     );
 }
+
+#[test]
+fn test_validate_date_formats_fixable_and_unfixable() {
+    let tmp = common::TempDir::new();
+    tmp.write(
+        "index.md",
+        "---\nokf_version: \"0.2\"\n---\n\n# Test\n\n* [Fixable](fixable.md)\n* [Unfixable](unfixable.md)\n",
+    );
+    tmp.write(
+        "fixable.md",
+        "---\ntype: Concept\ntitle: Fixable Dates\ndescription: Fixable dates concept.\ngenerated:\n  by: human:alice\n  at: '2026-06-30'\nverified:\n  - by: human:bob\n    at: '2026-07-01 12:00:00'\nstale_after: '2026-12-31'\nusage_window:\n  from: '2026-01-01'\n  to: '2026-06-01'\nsources:\n  - id: '1'\n    resource: https://example.com\n    last_modified: '2026-05-15'\n---\n\n# Fixable Dates\n\nBody.\n",
+    );
+    tmp.write(
+        "unfixable.md",
+        "---\ntype: Concept\ntitle: Unfixable Dates\ndescription: Unfixable dates concept.\ngenerated:\n  by: human:alice\n  at: not-a-date\nstale_after: last-tuesday\n---\n\n# Unfixable Dates\n\nBody.\n",
+    );
+
+    let bundle = Bundle::load(tmp.path()).unwrap();
+    let report = validate_bundle(&bundle);
+
+    let fixable_diag: Vec<_> = report
+        .diagnostics
+        .iter()
+        .filter(|d| d.path.as_ref().is_some_and(|p| p.ends_with("fixable.md")))
+        .collect();
+
+    assert!(!fixable_diag.is_empty());
+    for d in &fixable_diag {
+        assert!(
+            d.fixable,
+            "diagnostic on fixable.md should be fixable: {}",
+            d.message
+        );
+    }
+
+    let unfixable_diag: Vec<_> = report
+        .diagnostics
+        .iter()
+        .filter(|d| d.path.as_ref().is_some_and(|p| p.ends_with("unfixable.md")))
+        .collect();
+
+    assert!(!unfixable_diag.is_empty());
+    for d in &unfixable_diag {
+        assert!(
+            !d.fixable,
+            "diagnostic on unfixable.md should NOT be fixable: {}",
+            d.message
+        );
+    }
+}

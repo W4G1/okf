@@ -134,7 +134,7 @@ pub use computation::{
 #[doc(inline)]
 pub use concept_id::{ConceptId, ConceptIdError};
 #[doc(inline)]
-pub use date::{Date, DateField, DateTime, DateTimeField};
+pub use date::{Date, DateField, DateTime, DateTimeField, normalize_iso_datetime};
 #[doc(inline)]
 pub use diff::{BundleDiff, FrontmatterChange, Rename, TrustChange, bundle_diff};
 #[doc(inline)]

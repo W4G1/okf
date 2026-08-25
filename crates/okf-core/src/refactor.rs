@@ -1220,6 +1220,8 @@ pub fn split_concept(
         ),
     );
     target_fm.set("title", Value::String(target_title.clone()));
+    let target_desc = format!("Extracted details for {target_title}.");
+    target_fm.set("description", Value::String(target_desc));
     target_fm.set(
         "status",
         Value::String(source_concept.document.frontmatter.status().to_string()),
@@ -1475,6 +1477,25 @@ pub fn merge_concepts(
         "{}\n\n{heading}\n\n{body_to_append}\n",
         target_doc.body.trim_end()
     );
+
+    let heading_anchor = heading_slug(&heading);
+    let (new_target_body, target_rewritten) =
+        rewrite_markdown_links(&target_doc.body, |link, _| {
+            if let Some(resolved_id) = link.resolve(target)
+                && resolved_id == *source
+            {
+                if heading_anchor.is_empty() {
+                    LinkRewriteAction::Unlink
+                } else {
+                    LinkRewriteAction::Rewrite(format!("#{heading_anchor}"))
+                }
+            } else {
+                LinkRewriteAction::Keep
+            }
+        });
+    if target_rewritten > 0 {
+        target_doc.body = new_target_body;
+    }
 
     // 5. Rewrite incoming backlinks across the bundle
     let mut affected_files = vec![source_path.clone(), target_path.clone()];

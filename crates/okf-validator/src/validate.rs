@@ -428,10 +428,15 @@ fn check_trust(cx: &mut Context, fm: &Frontmatter, today: Option<Date>) {
                 match generated.at {
                     None => {}
                     Some(at) if !at.is_valid() => {
-                        cx.warn(format!(
-                            "`generated.at` is not an ISO-8601 datetime with an explicit offset: {:?}",
-                            at.raw
-                        ));
+                        let fixable = DateTime::parse(&at.raw).is_some();
+                        cx.push_fixable(
+                            Severity::Warning,
+                            format!(
+                                "`generated.at` is not an ISO-8601 datetime with an explicit offset: {:?}",
+                                at.raw
+                            ),
+                            fixable,
+                        );
                     }
                     Some(at) => {
                         if let Some(threshold) = threshold_seconds
@@ -511,10 +516,17 @@ fn check_verification_event(
     }
     match &event.at {
         None => cx.warn(format!("`verified[{i}].at` is missing")),
-        Some(at) if !at.is_valid() => cx.warn(format!(
-            "`verified[{i}].at` is not an ISO-8601 datetime with an explicit offset: {:?}",
-            at.raw
-        )),
+        Some(at) if !at.is_valid() => {
+            let fixable = DateTime::parse(&at.raw).is_some();
+            cx.push_fixable(
+                Severity::Warning,
+                format!(
+                    "`verified[{i}].at` is not an ISO-8601 datetime with an explicit offset: {:?}",
+                    at.raw
+                ),
+                fixable,
+            );
+        }
         Some(at) => {
             if let Some(threshold) = threshold_seconds
                 && let Some(dt) = at.datetime
@@ -625,15 +637,21 @@ fn check_lifecycle(cx: &mut Context, fm: &Frontmatter, today: Option<Date>) {
             }
         }
         _ => {
-            cx.warn(format!(
-                "`stale_after` is not an ISO-8601 datetime with an explicit offset: {:?}",
-                stale_after.raw
-            ));
+            let fixable = DateTime::parse(&stale_after.raw).is_some();
+            cx.push_fixable(
+                Severity::Warning,
+                format!(
+                    "`stale_after` is not an ISO-8601 datetime with an explicit offset: {:?}",
+                    stale_after.raw
+                ),
+                fixable,
+            );
         }
     }
 }
 
 /// `sources` and `usage_window`.
+#[allow(clippy::too_many_lines)]
 fn check_provenance(cx: &mut Context, fm: &Frontmatter, today: Option<Date>) {
     let check_date = today.or_else(Date::today_utc);
     let threshold_seconds = check_date.map(|d| (d.days_since_epoch() + 1) * 86_400);
@@ -656,10 +674,15 @@ fn check_provenance(cx: &mut Context, fm: &Frontmatter, today: Option<Date>) {
     if let Some(window) = &shared_window {
         for (field, date) in [("from", &window.from), ("to", &window.to)] {
             if let Some(d) = date.as_ref().filter(|d| !d.is_valid()) {
-                cx.warn(format!(
-                    "`usage_window.{field}` is not an ISO-8601 datetime with an explicit offset: {:?}",
-                    d.raw
-                ));
+                let fixable = DateTime::parse(&d.raw).is_some();
+                cx.push_fixable(
+                    Severity::Warning,
+                    format!(
+                        "`usage_window.{field}` is not an ISO-8601 datetime with an explicit offset: {:?}",
+                        d.raw
+                    ),
+                    fixable,
+                );
             }
         }
     }
@@ -701,10 +724,15 @@ fn check_provenance(cx: &mut Context, fm: &Frontmatter, today: Option<Date>) {
             ));
         }
         if let Some(last_modified) = source.last_modified.as_ref().filter(|d| !d.is_valid()) {
-            cx.warn(format!(
-                "`sources[{i}].last_modified` is not an ISO-8601 datetime with an explicit offset: {:?}",
-                last_modified.raw
-            ));
+            let fixable = DateTime::parse(&last_modified.raw).is_some();
+            cx.push_fixable(
+                Severity::Warning,
+                format!(
+                    "`sources[{i}].last_modified` is not an ISO-8601 datetime with an explicit offset: {:?}",
+                    last_modified.raw
+                ),
+                fixable,
+            );
         } else if let Some(threshold) = threshold_seconds
             && let Some(last_modified) = source.last_modified.as_ref().and_then(|d| d.datetime)
             && last_modified.to_utc_seconds() > threshold
@@ -712,6 +740,21 @@ fn check_provenance(cx: &mut Context, fm: &Frontmatter, today: Option<Date>) {
             cx.warn(format!(
                 "`sources[{i}].last_modified` timestamp `{last_modified}` is in the future"
             ));
+        }
+        if let Some(window) = &source.usage_window {
+            for (field, date) in [("from", &window.from), ("to", &window.to)] {
+                if let Some(d) = date.as_ref().filter(|d| !d.is_valid()) {
+                    let fixable = DateTime::parse(&d.raw).is_some();
+                    cx.push_fixable(
+                        Severity::Warning,
+                        format!(
+                            "`sources[{i}].usage_window.{field}` is not an ISO-8601 datetime with an explicit offset: {:?}",
+                            d.raw
+                        ),
+                        fixable,
+                    );
+                }
+            }
         }
         if source.usage_count.is_some()
             && source
