@@ -18,6 +18,12 @@ homepage = "https://github.com/W4G1/okf"
 keywords = ["okf", "knowledge-base", "markdown", "frontmatter", "agents"]
 categories = ["command-line-utilities", "parser-implementations", "data-structures"]
 
+[workspace.lints.rust]
+warnings = "deny"
+
+[workspace.lints.clippy]
+all = "deny"
+
 [workspace.dependencies]
 okf-core = { path = "crates/okf-core", version = "0.2.5" }
 okf-validator = { path = "crates/okf-validator", version = "0.2.5" }

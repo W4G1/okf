@@ -10,7 +10,10 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 keywords.workspace = true
-categories = ["command-line-utilities", "parser-implementations", "data-structures"]
+categories.workspace = true
+
+[lints]
+workspace = true
 
 [dependencies]
 clap = { workspace = true, optional = true }

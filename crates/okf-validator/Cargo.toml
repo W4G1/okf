@@ -12,6 +12,9 @@ homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 okf-core.workspace = true
 oxc_allocator = "0.147.0"
