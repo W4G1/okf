@@ -2,7 +2,7 @@
 
 # okf
 
-A **pure-Rust** implementation and CLI toolkit for the [Open Knowledge Format (OKF) v0.2](https://github.com/GoogleCloudPlatform/open-knowledge-format/blob/main/SPEC.md): Google's open, human- and agent-friendly format for representing knowledge as a directory of Markdown files with YAML frontmatter.
+A **pure-Rust** implementation, library and CLI toolkit for the [Open Knowledge Format (OKF) v0.2](https://github.com/GoogleCloudPlatform/open-knowledge-format/blob/main/SPEC.md): Google's open, human- and agent-friendly format for representing knowledge as a directory of Markdown files with YAML frontmatter.
 
 [![crates.io](https://img.shields.io/crates/v/okf.svg?label=okf)](https://crates.io/crates/okf)
 [![crates.io](https://img.shields.io/crates/v/okf-core.svg?label=okf-core)](https://crates.io/crates/okf-core)
@@ -11,11 +11,19 @@ A **pure-Rust** implementation and CLI toolkit for the [Open Knowledge Format (O
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](#license)
 [![Deps.rs Crate Dependencies (latest)](https://img.shields.io/deps-rs/okf/latest)](https://crates.io/crates/okf/dependencies)
 
+<br/>
+<br/>
+
+<img src="assets/okf_studio.png" alt="okf studio preview" width="100%"/>
+
 </div>
 
 ---
 
 ## Table of Contents
+
+<details>
+<summary>Click to expand</summary>
 
 - [What is OKF?](#what-is-okf)
 - [Hands-on quickstart (60 seconds)](#hands-on-quickstart-60-seconds)
@@ -24,6 +32,8 @@ A **pure-Rust** implementation and CLI toolkit for the [Open Knowledge Format (O
   - [3. Create concepts](#3-create-concepts)
   - [4. Check conformance and auto-fix issues](#4-check-conformance-and-auto-fix-issues)
   - [5. Inspect trust and visualize the graph](#5-inspect-trust-and-visualize-the-graph)
+  - [6. Explore with OKF Studio](#6-explore-with-okf-studio)
+- [Interactive studio: `okf studio`](#interactive-studio-okf-studio)
 - [Anatomy of an OKF bundle](#anatomy-of-an-okf-bundle)
   - [Directory structure](#directory-structure)
   - [Concept document example](#concept-document-example)
@@ -34,6 +44,7 @@ A **pure-Rust** implementation and CLI toolkit for the [Open Knowledge Format (O
   - [Provenance and footnote attribution](#provenance-and-footnote-attribution)
   - [Attested computations](#attested-computations)
 - [CLI reference and workflows](#cli-reference-and-workflows)
+  - [Interactive studio: studio](#interactive-studio-studio)
   - [Scaffolding: init and new](#scaffolding-init-and-new)
   - [Bundle manipulation: mv, rm, split, and merge](#bundle-manipulation-mv-rm-split-and-merge)
   - [Quality gate: validate and lint](#quality-gate-validate-and-lint)
@@ -52,6 +63,8 @@ A **pure-Rust** implementation and CLI toolkit for the [Open Knowledge Format (O
 - [Design choices](#design-choices)
 - [Mapping to the spec](#mapping-to-the-spec)
 - [License](#license)
+
+</details>
 
 ---
 
@@ -125,6 +138,30 @@ okf trust .
 
 # Generate a Mermaid graph of concept relationships (renders directly in GitHub Markdown)
 okf graph . --format mermaid
+```
+
+### 6. Explore with OKF Studio
+
+```sh
+okf studio .
+```
+
+---
+
+## Interactive studio: okf studio
+
+`okf studio` is an interactive terminal interface for exploring and managing OKF bundles.
+
+Unlike one-off commands that run once and exit, the studio stays open and automatically updates when files are edited on disk.
+
+- **Browse and read**: Navigate directories, read rendered Markdown, follow links, and inspect metadata and revision history.
+- **Visual link graph**: Explore connections and dependencies between concepts interactively.
+- **Audit bundle health**: View trust levels, freshness, and concepts that need attention.
+- **Computations**: Inspect Attested Computation contracts and test parameter inputs.
+- **Refactor safely**: Move, rename, merge, split, or delete concepts with preview confirmation before changes are saved.
+
+```sh
+okf studio [bundle]
 ```
 
 ---
@@ -275,6 +312,21 @@ An `Attested Computation` defines a contract for executing deterministic calcula
 
 ```text
 okf <command> [options] [arguments]
+```
+
+### Interactive studio: studio
+
+Open the interactive terminal UI:
+
+```sh
+# Open the current directory in studio
+okf studio
+
+# Open a specific bundle and start on the graph tab
+okf studio ./company_knowledge --tab graph
+
+# Check staleness against a pinned date and set an author identity
+okf studio ./company_knowledge --today 2026-12-01 --author "human:sarah"
 ```
 
 ### Scaffolding: init and new
@@ -602,6 +654,7 @@ This repository is structured as a multi-crate Rust workspace:
 | [`okf`](https://crates.io/crates/okf) | CLI binary and re-exports of all core and validator APIs. | [![docs.rs](https://img.shields.io/docsrs/okf)](https://docs.rs/okf) |
 | [`okf-core`](https://crates.io/crates/okf-core) | Pure-Rust OKF engine (YAML subset parser, AST, link graphs, diff, fix engine). | [![docs.rs](https://img.shields.io/docsrs/okf-core)](https://docs.rs/okf-core) |
 | [`okf-validator`](https://crates.io/crates/okf-validator) | Conformance validator, multi-language syntax checker, and 13 opinionated linting rules. | [![docs.rs](https://img.shields.io/docsrs/okf-validator)](https://docs.rs/okf-validator) |
+| [`okf-studio`](https://crates.io/crates/okf-studio) | The `okf studio` interactive terminal UI: explorer, graph, mission control, computations playground, and live refactoring. | [![docs.rs](https://img.shields.io/docsrs/okf-studio)](https://docs.rs/okf-studio) |
 | [`cargo-okf`](https://crates.io/crates/cargo-okf) | Cargo plugin wrapper allowing `cargo okf <cmd>`. | [![docs.rs](https://img.shields.io/docsrs/cargo-okf)](https://docs.rs/cargo-okf) |
 
 ---

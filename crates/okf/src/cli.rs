@@ -19,6 +19,7 @@
 //!   diff         <a> <b>    OKF-semantics diff between two bundles (--json).
 //!   index        [bundle]   (Re)generate every index.md in a bundle (--json).
 //!   parse        <file>     Parse one concept document and print its structure (--json).
+//!   studio       [bundle]   Open the interactive terminal studio (--today, --tab, --no-watch).
 //! ```
 
 #![warn(clippy::pedantic, clippy::nursery)]
@@ -163,6 +164,9 @@ pub enum Commands {
     Index(IndexArgs),
     /// Parse one concept document and print its structure (--json)
     Parse(ParseArgs),
+    /// Open the interactive terminal studio for a bundle
+    #[cfg(feature = "studio")]
+    Studio(StudioArgs),
 }
 
 #[derive(Args, Debug)]
@@ -667,6 +671,30 @@ pub struct MergeArgs {
     pub format: Option<String>,
 }
 
+#[cfg(feature = "studio")]
+#[derive(Args, Debug)]
+pub struct StudioArgs {
+    /// Bundle directory to open (defaults to current directory)
+    #[arg(default_value = ".")]
+    pub bundle: PathBuf,
+
+    /// Evaluate staleness against this date instead of the system clock
+    #[arg(long, value_parser = parse_date)]
+    pub today: Option<Date>,
+
+    /// Do not watch the filesystem for changes
+    #[arg(long)]
+    pub no_watch: bool,
+
+    /// Initial workspace tab: explorer|graph|trust|computations
+    #[arg(long)]
+    pub tab: Option<String>,
+
+    /// Author identity for verification stamps and log entries
+    #[arg(long)]
+    pub author: Option<String>,
+}
+
 /// Runs the `okf` CLI on `args` (the program name already stripped) and
 /// returns the process exit code.
 ///
@@ -705,6 +733,8 @@ pub fn run(args: &[String]) -> ExitCode {
         Commands::Diff(ref a) => cmd_diff(a),
         Commands::Index(ref a) => cmd_index(a),
         Commands::Parse(ref a) => cmd_parse(a),
+        #[cfg(feature = "studio")]
+        Commands::Studio(ref a) => cmd_studio(a),
     };
 
     match result {
@@ -721,6 +751,36 @@ pub fn run(args: &[String]) -> ExitCode {
 
 fn load(path: impl AsRef<Path>) -> Result<Bundle, CliError> {
     Bundle::load(path.as_ref()).map_err(|e| CliError::no_input(e.to_string()))
+}
+
+/// Opens the interactive studio. The bundle is loaded once *before* entering
+/// the alternate screen so a missing or unreadable bundle fails early with
+/// the same well-coded exit as every other subcommand; studio itself then
+/// reloads live. Studio never takes `--json`: it *is* the presentation.
+#[cfg(feature = "studio")]
+fn cmd_studio(args: &StudioArgs) -> Result<ExitCode, CliError> {
+    use std::io::IsTerminal as _;
+
+    let _ = load(&args.bundle)?;
+    let initial_tab = args
+        .tab
+        .as_deref()
+        .map(str::parse)
+        .transpose()
+        .map_err(CliError::data)?;
+    if !std::io::stdout().is_terminal() {
+        return Err(CliError::data(
+            "okf studio needs an interactive terminal (stdout is not a tty)",
+        ));
+    }
+    okf_studio::run(okf_studio::StudioOptions {
+        root: args.bundle.clone(),
+        today: args.today,
+        no_watch: args.no_watch,
+        initial_tab,
+        author: args.author.clone(),
+    })
+    .map_err(|e| CliError::data(format!("studio failed: {e}")))
 }
 
 struct LoadedTarget {

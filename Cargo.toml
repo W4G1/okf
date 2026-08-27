@@ -2,6 +2,7 @@
 members = [
     "crates/okf-core",
     "crates/okf-validator",
+    "crates/okf-studio",
     "crates/okf",
     "crates/cargo-okf",
     "crates/reserved/*",
@@ -27,6 +28,9 @@ all = "deny"
 [workspace.dependencies]
 okf-core = { path = "crates/okf-core", version = "0.2.5" }
 okf-validator = { path = "crates/okf-validator", version = "0.2.5" }
+okf-studio = { path = "crates/okf-studio", version = "0.2.5" }
 okf = { path = "crates/okf", version = "0.2.5" }
 serde_json = "1.0.151"
 clap = { version = "4.6.6", features = ["derive"] }
+ratatui = "0.30.2"
+crossterm = "0.29.0"

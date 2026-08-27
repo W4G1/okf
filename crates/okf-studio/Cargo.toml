@@ -1,0 +1,26 @@
+[package]
+name = "okf-studio"
+description = "okf studio: an interactive terminal IDE and mission control center for Open Knowledge Format (OKF) bundles, built on the okf-core engine."
+documentation = "https://docs.rs/okf-studio"
+readme = "README.md"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+# The TUI framework and its terminal backend are the only external
+# dependencies; everything else (file watching, fuzzy matching, markdown
+# rendering, graph layout) is hand-rolled on std, in keeping with the
+# workspace's minimal-dependency ethos.
+[dependencies]
+okf-core.workspace = true
+okf-validator.workspace = true
+ratatui.workspace = true
+crossterm.workspace = true
