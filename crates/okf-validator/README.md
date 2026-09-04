@@ -6,7 +6,9 @@ bundles, built on [okf-core](https://crates.io/crates/okf-core).
 
 - `validate_bundle` checks conformance with severity-tagged diagnostics:
   only true spec violations are errors; material data integrity issues,
-  temporal inconsistencies, broken links/references, and code-block / computation script syntax issues are surfaced as warnings and infos.
+  temporal inconsistencies, broken links/references, and syntax errors in an Attested Computation's
+  computation, executor, and attester are surfaced as warnings and infos. Illustrative code blocks
+  elsewhere in a body are documentation and are not syntax-checked.
 - `lint_bundle` evaluates opinionated bundle hygiene and formatting checks,
   each finding tagged with a stable rule code (`L1`..`L12`) so CI can pin or silence individual rules.
 - `check_syntax` provides direct syntax validation for code blocks and scripts across

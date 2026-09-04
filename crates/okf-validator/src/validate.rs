@@ -41,7 +41,7 @@
 //! | V21  | warning  | missing `runtime` or `computation` source on `Attested Computation`                |
 //! | V22  | warning  | contract `parameters`, `executor`, or `attester` missing required fields           |
 //! | V23  | warning  | `executor`, `attester`, or `computation` resource missing on disk                  |
-//! | V24  | warning  | code block syntax error in concept body                                            |
+//! | V24  | warning  | inline `# Computation` code block syntax error on `Attested Computation`           |
 //! | V25  | warning  | computation, executor, or attester script syntax error                             |
 //! | V26  | info     | computation fields on non-computation concept type                                 |
 //! | V27  | info     | explicit path field does not resolve to a file in the bundle                       |
@@ -255,7 +255,7 @@ pub fn validate_bundle_at(bundle: &Bundle, today: Option<Date>) -> Report {
         check_attribution(&mut cx, &concept.document);
         check_legacy(&mut cx, &concept.document);
         check_computation(&mut cx, bundle, &concept.document);
-        check_code_block_syntax(&mut cx, &concept.document);
+        check_inline_computation_syntax(&mut cx, &concept.document);
         check_computation_script_syntax(&mut cx, bundle, &concept.document);
         check_path_fields(&mut cx, bundle, fm);
         check_links_to_deprecated(&mut cx, bundle);
@@ -540,22 +540,34 @@ fn check_verification_event(
     }
 }
 
-/// Validates syntax of fenced code blocks inside concept bodies.
+/// Validates syntax of the inline `# Computation` block of an Attested
+/// Computation.
 ///
-/// Blocks in a language this build has no parser for (an unknown tag, or a
-/// parser compiled out by a disabled crate feature) are skipped, not reported.
-fn check_code_block_syntax(cx: &mut Context, doc: &Document) {
-    let blocks = crate::syntax::extract_fenced_code_blocks(&doc.body);
-    for block in blocks {
-        if let Some(lang_tag) = &block.language
-            && crate::syntax::Language::from_tag(lang_tag).is_supported()
-            && let Err(err) = crate::syntax::check_syntax(lang_tag, &block.code)
-        {
-            cx.warn(format!(
-                "code block syntax check failed ({}): {err}",
-                err.language
-            ));
-        }
+/// Only the sanctioned computation is checked (§10.3): it is the code an agent
+/// is expected to execute, so whether it parses is a conformance question
+/// there. Every other fenced block is documentation, and documentation is
+/// routinely a fragment (a bare join condition, a formula, an elided snippet),
+/// so it is deliberately left alone rather than reported against a
+/// whole-statement grammar. The language comes from the fence tag, falling
+/// back to `runtime`; a language this build has no parser for (an unknown tag,
+/// or a parser compiled out by a disabled crate feature) is skipped.
+fn check_inline_computation_syntax(cx: &mut Context, doc: &Document) {
+    let Some(contract) = doc.attested_computation() else {
+        return;
+    };
+    let ComputationSource::Inline(inline) = &contract.computation else {
+        return;
+    };
+    let Some(lang_tag) = inline.language.as_deref().or(contract.runtime.as_deref()) else {
+        return;
+    };
+    if crate::syntax::Language::from_tag(lang_tag).is_supported()
+        && let Err(err) = crate::syntax::check_syntax(lang_tag, &inline.code)
+    {
+        cx.warn(format!(
+            "`# Computation` code block syntax check failed ({}): {err}",
+            err.language
+        ));
     }
 }
 

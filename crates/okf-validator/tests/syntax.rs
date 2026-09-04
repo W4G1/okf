@@ -176,24 +176,43 @@ no language tag
     assert_eq!(blocks[2].language, None);
 }
 
-#[cfg(feature = "python")]
 #[test]
-fn test_validate_warns_on_invalid_code_blocks_in_concepts() {
+fn test_validate_does_not_check_illustrative_code_blocks() {
+    // Documentation blocks are frequently fragments: the spec's own reference
+    // bundles carry bare join conditions and bare formulas under ```sql, and
+    // a Concept may show a deliberately elided snippet. None of that is a
+    // conformance question, so no fenced block outside an Attested
+    // Computation's `# Computation` section is syntax-checked.
     let tmp = TempDir::new();
     tmp.write(
-        "policy.md",
+        "joins/posts__votes.md",
         r#"---
-type: Concept
-title: Travel Policy
-description: Guidelines
+type: Reference
+title: posts ⟷ votes
+description: Join path
 generated:
   by: ref/author
   at: 2026-01-01T00:00:00Z
 ---
 
-# Travel Policy
+# posts ⟷ votes
 
-Here is an example python script:
+Join relationship between the votes table and the posts table.
+
+```sql
+ON votes.post_id = posts.id
+```
+
+## Formula
+
+```sql
+SAFE_DIVIDE(
+  COUNT(AcceptedAnswerId),
+  COUNT(Id)
+)
+```
+
+An elided example:
 
 ```python
 def broken_syntax(
@@ -206,7 +225,56 @@ And valid JSON:
 ```
 "#,
     );
-    tmp.write("index.md", "# Index\n\n* [Travel Policy](policy.md)\n");
+    tmp.write(
+        "index.md",
+        "# Index\n\n* [posts ⟷ votes](joins/posts__votes.md)\n",
+    );
+
+    let bundle = Bundle::load(tmp.path()).unwrap();
+    let val_report = validate_bundle(&bundle);
+    assert!(val_report.is_conformant());
+
+    let syntax_findings: Vec<_> = val_report
+        .diagnostics
+        .iter()
+        .filter(|d| d.message.contains("syntax check failed"))
+        .collect();
+    assert!(
+        syntax_findings.is_empty(),
+        "illustrative code blocks must not be syntax-checked: {syntax_findings:#?}"
+    );
+
+    // lint_bundle should not contain syntax findings either
+    let lint_report = okf_validator::lint::lint_bundle(&bundle);
+    assert!(
+        !lint_report
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("syntax check failed")),
+        "lint_bundle should only check formatting/style issues"
+    );
+}
+
+#[test]
+fn test_validate_warns_on_invalid_inline_computation_block() {
+    // The `# Computation` block of an Attested Computation is the sanctioned
+    // computation an agent executes, so it is checked as a whole statement.
+    // The language comes from the fence tag, falling back to `runtime`.
+    let tmp = TempDir::new();
+    let contract = |title: &str, fence: &str| {
+        format!(
+            "---\ntype: Attested Computation\ntitle: {title}\ndescription: d\n\
+             generated:\n  by: ref/author\n  at: 2026-01-01T00:00:00Z\n\
+             runtime: sql\nparameters:\n  - {{ name: year, type: integer }}\n\
+             ---\n\n# {title}\n\n# Computation\n\n```{fence}\nSELECT * FROM (\n```\n"
+        )
+    };
+    tmp.write("computations/tagged.md", &contract("Tagged", "sql"));
+    tmp.write("computations/untagged.md", &contract("Untagged", ""));
+    tmp.write(
+        "index.md",
+        "# Index\n\n* [Tagged](computations/tagged.md)\n* [Untagged](computations/untagged.md)\n",
+    );
 
     let bundle = Bundle::load(tmp.path()).unwrap();
     let val_report = validate_bundle(&bundle);
@@ -220,26 +288,22 @@ And valid JSON:
         .filter(|d| d.severity == Severity::Warning && d.message.contains("syntax check failed"))
         .collect();
 
+    // Both bodies are broken SQL; both are reported when the SQL parser is
+    // compiled in, and both are accepted unchecked when it is not.
+    let expected = if cfg!(feature = "sql") { 2 } else { 0 };
     assert_eq!(
         syntax_warnings.len(),
-        1,
-        "Expected syntax warning for invalid python code block: {syntax_warnings:#?}"
+        expected,
+        "Expected `# Computation` syntax warnings to follow the sql feature: {syntax_warnings:#?}"
     );
-    assert!(
-        syntax_warnings[0].message.contains("python"),
-        "Diagnostic message: {}",
-        syntax_warnings[0].message
-    );
-
-    // lint_bundle should not contain syntax findings
-    let lint_report = okf_validator::lint::lint_bundle(&bundle);
-    assert!(
-        !lint_report
-            .diagnostics
-            .iter()
-            .any(|d| d.message.contains("syntax check failed")),
-        "lint_bundle should only check formatting/style issues"
-    );
+    for warning in &syntax_warnings {
+        assert!(
+            warning.message.contains("`# Computation` code block")
+                && warning.message.contains("sql"),
+            "Diagnostic message: {}",
+            warning.message
+        );
+    }
 }
 
 #[test]
