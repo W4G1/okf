@@ -13,7 +13,7 @@ use okf_core::{
     ActorKind, AttestedComputation, Bundle, BundleError, ComputationSource, ConceptId, Date,
     DateTimeField, Status, TrustTier,
 };
-use okf_validator::{Report, check_syntax, lint_bundle_at, validate_bundle_at};
+use okf_validator::{Language, Report, check_syntax, lint_bundle_at, validate_bundle_at};
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 
@@ -638,11 +638,14 @@ fn build_contracts(bundle: &Bundle) -> Vec<ContractInfo> {
             }
             let syntax = match (&contract.computation, contract.runtime.as_deref()) {
                 (ComputationSource::Inline(inline), runtime) => {
-                    let tag = inline
+                    // `None` (no verdict) when this build has no parser for the
+                    // language, so an unchecked body is not shown as passing.
+                    inline
                         .language
                         .clone()
-                        .or_else(|| runtime.map(String::from));
-                    tag.map(|tag| check_syntax(&tag, &inline.code).map_err(|e| e.to_string()))
+                        .or_else(|| runtime.map(String::from))
+                        .filter(|tag| Language::from_tag(tag).is_supported())
+                        .map(|tag| check_syntax(&tag, &inline.code).map_err(|e| e.to_string()))
                 }
                 _ => None,
             };

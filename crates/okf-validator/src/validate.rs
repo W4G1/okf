@@ -541,11 +541,14 @@ fn check_verification_event(
 }
 
 /// Validates syntax of fenced code blocks inside concept bodies.
+///
+/// Blocks in a language this build has no parser for (an unknown tag, or a
+/// parser compiled out by a disabled crate feature) are skipped, not reported.
 fn check_code_block_syntax(cx: &mut Context, doc: &Document) {
     let blocks = crate::syntax::extract_fenced_code_blocks(&doc.body);
     for block in blocks {
         if let Some(lang_tag) = &block.language
-            && crate::syntax::Language::from_tag(lang_tag) != crate::syntax::Language::Unknown
+            && crate::syntax::Language::from_tag(lang_tag).is_supported()
             && let Err(err) = crate::syntax::check_syntax(lang_tag, &block.code)
         {
             cx.warn(format!(

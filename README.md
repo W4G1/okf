@@ -561,6 +561,24 @@ Add `okf` or `okf-core` to your `Cargo.toml`:
 cargo add okf
 ```
 
+The `okf` crate's features let you take only what you need. `validator` and
+`studio` are on by default, as are the four language parsers behind the
+validator's syntax checks: `python`, `javascript`, `rust`, and `sql`. Each
+parser can be dropped independently. This matters under a strict dependency
+or licence policy: the Python parser (`rustpython-parser`) depends on the
+LGPL-3.0-only `malachite` crates, which an allow-list policy such as
+`cargo deny` will reject. Conformance validation and linting need none of
+the parsers, so a licence-clean dependency that still checks SQL is:
+
+```toml
+[dependencies]
+okf = { version = "0.2", default-features = false, features = ["validator", "sql"] }
+```
+
+Or, without any of the validator, `okf-core` alone for a zero-dependency
+model and parser. See the [`okf-validator` README](crates/okf-validator/README.md#cargo-features)
+for the full feature table.
+
 ### 1. Loading and validating a bundle
 
 ```rust,no_run
@@ -643,6 +661,12 @@ assert!(check_syntax("typescript", "const add = (a: number, b: number): number =
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
+Python, JavaScript/TypeScript, Rust, and SQL checking each sit behind a
+cargo feature of the same name (all on by default; see above). With a
+feature disabled, `check_syntax` accepts that language unchecked and
+`Language::is_supported` tells you so. JSON, YAML, and Bash are always
+checked.
+
 ---
 
 ## Workspace crates
@@ -691,5 +715,7 @@ This repository is structured as a multi-crate Rust workspace:
 ## License
 
 Licensed under the **Apache License, Version 2.0**, matching the upstream [Open Knowledge Format](https://github.com/GoogleCloudPlatform/open-knowledge-format) project. See [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE) for details.
+
+`okf-core` has no dependencies. The default build of `okf` and `okf-validator` pulls in third-party language parsers, one of which (`rustpython-parser`, behind the `python` feature) depends on LGPL-3.0-only crates. Consumers with a strict licence policy can disable that feature; see [Using as a Rust library](#using-as-a-rust-library).
 
 *Disclaimer: This is an independent open-source implementation and is not affiliated with or endorsed by Google.*

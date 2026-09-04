@@ -27,8 +27,10 @@ all = "deny"
 
 [workspace.dependencies]
 okf-core = { path = "crates/okf-core", version = "0.2.6" }
-okf-validator = { path = "crates/okf-validator", version = "0.2.6" }
-okf-studio = { path = "crates/okf-studio", version = "0.2.6" }
+# default-features = false so that members can forward the validator's
+# language-parser features instead of unconditionally enabling them all.
+okf-validator = { path = "crates/okf-validator", version = "0.2.6", default-features = false }
+okf-studio = { path = "crates/okf-studio", version = "0.2.6", default-features = false }
 okf = { path = "crates/okf", version = "0.2.6" }
 serde_json = "1.0.151"
 clap = { version = "4.6.6", features = ["derive"] }

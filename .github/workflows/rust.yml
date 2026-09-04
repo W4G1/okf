@@ -34,6 +34,43 @@ jobs:
       - name: Clippy (all targets)
         run: cargo clippy --all-targets --all-features
 
+  # The language parsers are optional so that consumers under a strict licence
+  # policy can drop them (see okf-validator's Cargo.toml). This job keeps the
+  # parser-free build compiling, lint-clean, and tested, and checks that
+  # rustpython-parser's LGPL-3.0 dependency tree stays behind the `python`
+  # feature.
+  minimal-features:
+    name: Minimal features (no language parsers)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Clippy okf-validator without parsers
+        run: cargo clippy --all-targets --locked -p okf-validator --no-default-features
+      - name: Clippy okf-studio without parsers
+        run: cargo clippy --all-targets --locked -p okf-studio --no-default-features
+      - name: Clippy okf CLI with SQL only
+        run: cargo clippy --all-targets --locked -p okf --no-default-features --features validator,studio,sql
+      - name: Test okf-validator without parsers
+        run: cargo test --all-targets --locked -p okf-validator --no-default-features
+      - name: Test okf-studio without parsers
+        run: cargo test --all-targets --locked -p okf-studio --no-default-features
+      - name: Parser-free tree contains no copyleft or unmaintained parser crates
+        run: |
+          set -euo pipefail
+          for pkg in "okf-validator --no-default-features --features sql" \
+                     "okf --no-default-features --features validator,studio,sql"; do
+            # shellcheck disable=SC2086
+            if cargo tree -p $pkg -e normal,build --prefix none --locked \
+                | grep -E '^(rustpython|malachite|tiny-keccak|unicode_names2|unic-)'; then
+              echo "::error::flagged crates leaked into the parser-free build of $pkg"
+              exit 1
+            fi
+          done
+
   test:
     name: Test (${{ matrix.os }}, rust ${{ matrix.rust }})
     strategy:

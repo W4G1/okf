@@ -338,10 +338,13 @@ fn render_code_block(
 ) {
     let inner = width.saturating_sub(4).max(4);
     let source = code.join("\n");
-    let verdict = if lang_tag.is_empty() || Language::from_tag(lang_tag) == Language::Unknown {
-        None
-    } else {
+    // No badge for an untagged block, an unknown language, or a language whose
+    // parser is compiled out of this build: an unchecked block must not look
+    // like a passing one.
+    let verdict = if Language::from_tag(lang_tag).is_supported() {
         Some(check_syntax(lang_tag, &source))
+    } else {
+        None
     };
     let mut title = String::new();
     if !lang_tag.is_empty() {

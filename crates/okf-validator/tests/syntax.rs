@@ -1,11 +1,11 @@
 use okf_core::bundle::Bundle;
-use okf_validator::lint::lint_bundle;
-use okf_validator::syntax::{check_syntax, extract_fenced_code_blocks};
+use okf_validator::syntax::{Language, check_syntax, extract_fenced_code_blocks};
 use okf_validator::validate::{Severity, validate_bundle};
 
 mod common;
 use common::TempDir;
 
+#[cfg(feature = "python")]
 #[test]
 fn test_python_syntax_checking() {
     assert!(check_syntax("python", "def add(a, b):\n    return a + b\n").is_ok());
@@ -16,6 +16,7 @@ fn test_python_syntax_checking() {
     assert!(err.line.is_some());
 }
 
+#[cfg(feature = "javascript")]
 #[test]
 fn test_javascript_and_typescript_syntax_checking() {
     assert!(check_syntax("javascript", "const fn = (x) => x * 2;\nexport default fn;").is_ok());
@@ -42,6 +43,7 @@ fn test_javascript_and_typescript_syntax_checking() {
     assert_eq!(ts_err.language, "typescript");
 }
 
+#[cfg(feature = "rust")]
 #[test]
 fn test_rust_syntax_checking() {
     assert!(check_syntax("rust", "pub fn compute(val: i32) -> i32 {\n    val * 2\n}").is_ok());
@@ -52,6 +54,7 @@ fn test_rust_syntax_checking() {
     assert_eq!(err.language, "rust");
 }
 
+#[cfg(feature = "sql")]
 #[test]
 fn test_sql_syntax_checking() {
     assert!(
@@ -71,6 +74,47 @@ fn test_sql_syntax_checking() {
 
     let err = check_syntax("sql", "SELECT * FROM (").unwrap_err();
     assert_eq!(err.language, "sql");
+}
+
+#[test]
+fn test_is_supported_tracks_parser_features() {
+    assert_eq!(Language::Python.is_supported(), cfg!(feature = "python"));
+    assert_eq!(
+        Language::JavaScript.is_supported(),
+        cfg!(feature = "javascript")
+    );
+    assert_eq!(
+        Language::TypeScript.is_supported(),
+        cfg!(feature = "javascript")
+    );
+    assert_eq!(Language::Rust.is_supported(), cfg!(feature = "rust"));
+    assert_eq!(Language::Sql.is_supported(), cfg!(feature = "sql"));
+
+    // Built-in checkers need no feature.
+    assert!(Language::Json.is_supported());
+    assert!(Language::Yaml.is_supported());
+    assert!(Language::Bash.is_supported());
+    assert!(!Language::Unknown.is_supported());
+}
+
+#[test]
+fn test_unsupported_languages_are_accepted_unchecked() {
+    // An unknown tag is never an error.
+    assert!(check_syntax("cobol", "PROCEDURE DIVISION.").is_ok());
+    assert!(check_syntax("", "anything at all").is_ok());
+
+    // A language whose parser is compiled out behaves like an unknown tag:
+    // broken source is accepted. With the parser present it is rejected.
+    for (lang, broken) in [
+        (Language::Python, "def broken(\n"),
+        (Language::JavaScript, "const a = ;"),
+        (Language::TypeScript, "interface { invalid }"),
+        (Language::Rust, "fn invalid( { "),
+        (Language::Sql, "SELECT * FROM ("),
+    ] {
+        let result = check_syntax(lang.as_str(), broken);
+        assert_eq!(result.is_err(), lang.is_supported(), "{lang}: {result:?}");
+    }
 }
 
 #[test]
@@ -132,6 +176,7 @@ no language tag
     assert_eq!(blocks[2].language, None);
 }
 
+#[cfg(feature = "python")]
 #[test]
 fn test_validate_warns_on_invalid_code_blocks_in_concepts() {
     let tmp = TempDir::new();
@@ -187,7 +232,7 @@ And valid JSON:
     );
 
     // lint_bundle should not contain syntax findings
-    let lint_report = lint_bundle(&bundle);
+    let lint_report = okf_validator::lint::lint_bundle(&bundle);
     assert!(
         !lint_report
             .diagnostics
@@ -248,16 +293,22 @@ attester:
         .filter(|d| d.severity == Severity::Warning && d.message.contains("syntax check failed"))
         .collect();
 
+    // The Bash executor script is always checked; the Python computation
+    // script only when the `python` parser is compiled in. Without it the
+    // broken script is accepted unchecked rather than reported.
+    let python_checked = cfg!(feature = "python");
     assert_eq!(
         syntax_warnings.len(),
-        2,
-        "Expected 2 syntax warnings (computation script & executor script): {syntax_warnings:#?}"
+        1 + usize::from(python_checked),
+        "Expected syntax warnings for executor script (and computation script \
+         when the python feature is on): {syntax_warnings:#?}"
     );
-    assert!(
+    assert_eq!(
         syntax_warnings
             .iter()
             .any(|d| d.message.contains("calc.py")),
-        "Expected finding for calc.py"
+        python_checked,
+        "Finding for calc.py should follow the python feature"
     );
     assert!(
         syntax_warnings

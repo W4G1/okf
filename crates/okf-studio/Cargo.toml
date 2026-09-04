@@ -24,3 +24,13 @@ okf-core.workspace = true
 okf-validator.workspace = true
 ratatui.workspace = true
 crossterm.workspace = true
+
+# Language parsers for the syntax badges on code blocks and computation
+# contracts, forwarded to okf-validator. All on by default; see that crate's
+# manifest for why `python` in particular is worth being able to drop.
+[features]
+default = ["python", "javascript", "rust", "sql"]
+python = ["okf-validator/python"]
+javascript = ["okf-validator/javascript"]
+rust = ["okf-validator/rust"]
+sql = ["okf-validator/sql"]

@@ -17,10 +17,32 @@ workspace = true
 
 [dependencies]
 okf-core.workspace = true
-oxc_allocator = "0.147.0"
-oxc_parser = "0.147.0"
-oxc_span = "0.147.0"
-rustpython-parser = "0.4.0"
+oxc_allocator = { version = "0.147.0", optional = true }
+oxc_parser = { version = "0.147.0", optional = true }
+oxc_span = { version = "0.147.0", optional = true }
+rustpython-parser = { version = "0.4.0", optional = true }
 serde_json.workspace = true
-sqlparser = "0.62.0"
-syn = { version = "3.0.4", features = ["full"] }
+sqlparser = { version = "0.62.0", optional = true }
+syn = { version = "3.0.4", features = ["full"], optional = true }
+
+# The conformance and lint checks need none of the third-party language
+# parsers; only the two syntax checks (V24, V25) do. Each parser sits behind a
+# feature so that a consumer with a strict dependency or licence policy can
+# drop the ones it cannot accept while keeping the rest of the validator.
+# JSON, YAML, and Bash checking is built in and always available.
+#
+# All parsers are on by default, so existing users see no change.
+[features]
+default = ["python", "javascript", "rust", "sql"]
+# Python syntax checking via rustpython-parser. This is by far the largest
+# tree (60+ crates) and the only one with copyleft licensing: it pulls in the
+# LGPL-3.0-only `malachite` crates, plus `tiny-keccak` (CC0-1.0),
+# `unicode_names2` (Unicode-DFS-2016), and several unmaintained `unic-*`
+# crates. Disable it under an allow-list licence policy.
+python = ["dep:rustpython-parser"]
+# JavaScript and TypeScript syntax checking via the oxc parser.
+javascript = ["dep:oxc_allocator", "dep:oxc_parser", "dep:oxc_span"]
+# Rust syntax checking via syn.
+rust = ["dep:syn"]
+# SQL syntax checking via sqlparser.
+sql = ["dep:sqlparser"]

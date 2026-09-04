@@ -2,6 +2,25 @@
 //!
 //! Provides fast syntax checking for Python,
 //! JavaScript, TypeScript, Rust, SQL, JSON, YAML, and Bash using pure Rust AST parsers.
+//!
+//! # Cargo features
+//!
+//! The third-party parsers are optional, each behind a feature of the same
+//! name (all on by default):
+//!
+//! | Feature      | Languages              | Parser crate        |
+//! |--------------|------------------------|---------------------|
+//! | `python`     | Python                 | `rustpython-parser` |
+//! | `javascript` | JavaScript, TypeScript | `oxc_parser`        |
+//! | `rust`       | Rust                   | `syn`               |
+//! | `sql`        | SQL                    | `sqlparser`         |
+//!
+//! JSON, YAML, and Bash checking is built in and always available. With a
+//! feature disabled, [`check_syntax`] accepts that language unchecked (it
+//! returns `Ok(())`, as for an unknown tag) and [`Language::is_supported`]
+//! reports `false` for it. The `python` feature is the one worth knowing
+//! about: `rustpython-parser` brings in the LGPL-3.0-only `malachite` crates,
+//! which an allow-list licence policy will typically reject.
 
 use std::fmt;
 
@@ -71,7 +90,48 @@ impl Language {
             Self::Unknown => "unknown",
         }
     }
+
+    /// Whether this build can check the language's syntax.
+    ///
+    /// Python, JavaScript/TypeScript, Rust, and SQL are parsed by third-party
+    /// crates behind the `python`, `javascript`, `rust`, and `sql` cargo
+    /// features (all on by default). With a feature disabled, [`check_syntax`]
+    /// accepts that language unchecked and returns `Ok(())`, exactly as it does
+    /// for [`Language::Unknown`]; this method lets a caller tell "not checked"
+    /// apart from "checked and valid". JSON, YAML, and Bash need no external
+    /// parser and are always supported.
+    #[must_use]
+    pub const fn is_supported(self) -> bool {
+        self.checker().is_some()
+    }
+
+    /// The syntax checker compiled in for this language, if any.
+    // The wildcard stands for `Unknown` plus every language whose parser
+    // feature is disabled; it only collapses to a single variant in the
+    // all-features build, so the lint is silenced rather than misleading.
+    #[allow(clippy::match_wildcard_for_single_variants)]
+    const fn checker(self) -> Option<Checker> {
+        match self {
+            #[cfg(feature = "python")]
+            Self::Python => Some(check_python),
+            #[cfg(feature = "javascript")]
+            Self::JavaScript => Some(check_javascript),
+            #[cfg(feature = "javascript")]
+            Self::TypeScript => Some(check_typescript),
+            #[cfg(feature = "rust")]
+            Self::Rust => Some(check_rust),
+            #[cfg(feature = "sql")]
+            Self::Sql => Some(check_sql),
+            Self::Json => Some(check_json),
+            Self::Yaml => Some(check_yaml),
+            Self::Bash => Some(check_bash),
+            _ => None,
+        }
+    }
 }
+
+/// A single-language syntax check over a source string.
+type Checker = fn(&str) -> Result<(), SyntaxError>;
 
 impl fmt::Display for Language {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -189,6 +249,7 @@ impl fmt::Display for SyntaxError {
 
 impl std::error::Error for SyntaxError {}
 
+#[cfg(any(feature = "python", feature = "javascript"))]
 fn offset_to_line_col(source: &str, offset: usize) -> (Option<usize>, Option<usize>) {
     let bounded = offset.min(source.len());
     let safe_offset = source.floor_char_boundary(bounded);
@@ -200,27 +261,21 @@ fn offset_to_line_col(source: &str, offset: usize) -> (Option<usize>, Option<usi
 
 /// Checks the syntax of `source` for the given `language` tag or name.
 ///
-/// Returns `Ok(())` if the syntax is valid or if the language is unknown / unsupported,
-/// or `Err(SyntaxError)` if a syntax error is discovered.
+/// Returns `Ok(())` if the syntax is valid, if the language is unknown, or if
+/// its parser is not compiled into this build (see [`Language::is_supported`]
+/// and the crate features), or `Err(SyntaxError)` if a syntax error is
+/// discovered.
 ///
 /// # Errors
 ///
 /// Returns [`SyntaxError`] if the source code contains syntax or parse errors.
 pub fn check_syntax(language_tag: &str, source: &str) -> Result<(), SyntaxError> {
-    let lang = Language::from_tag(language_tag);
-    match lang {
-        Language::Python => check_python(source),
-        Language::JavaScript => check_javascript(source, false),
-        Language::TypeScript => check_javascript(source, true),
-        Language::Rust => check_rust(source),
-        Language::Sql => check_sql(source),
-        Language::Json => check_json(source),
-        Language::Yaml => check_yaml(source),
-        Language::Bash => check_bash(source),
-        Language::Unknown => Ok(()),
-    }
+    Language::from_tag(language_tag)
+        .checker()
+        .map_or(Ok(()), |check| check(source))
 }
 
+#[cfg(feature = "python")]
 fn check_python(source: &str) -> Result<(), SyntaxError> {
     match rustpython_parser::parse(source, rustpython_parser::Mode::Module, "<computation>") {
         Ok(_) => Ok(()),
@@ -236,7 +291,18 @@ fn check_python(source: &str) -> Result<(), SyntaxError> {
     }
 }
 
-fn check_javascript(source: &str, typescript: bool) -> Result<(), SyntaxError> {
+#[cfg(feature = "javascript")]
+fn check_javascript(source: &str) -> Result<(), SyntaxError> {
+    check_ecmascript(source, false)
+}
+
+#[cfg(feature = "javascript")]
+fn check_typescript(source: &str) -> Result<(), SyntaxError> {
+    check_ecmascript(source, true)
+}
+
+#[cfg(feature = "javascript")]
+fn check_ecmascript(source: &str, typescript: bool) -> Result<(), SyntaxError> {
     let allocator = oxc_allocator::Allocator::default();
     let mut source_type = oxc_span::SourceType::default().with_module(true);
     if typescript {
@@ -271,6 +337,7 @@ fn check_javascript(source: &str, typescript: bool) -> Result<(), SyntaxError> {
     Ok(())
 }
 
+#[cfg(feature = "rust")]
 fn check_rust(source: &str) -> Result<(), SyntaxError> {
     if syn::parse_file(source).is_ok() {
         return Ok(());
@@ -295,6 +362,7 @@ fn check_rust(source: &str) -> Result<(), SyntaxError> {
     }
 }
 
+#[cfg(feature = "sql")]
 fn check_sql(source: &str) -> Result<(), SyntaxError> {
     let dialect = sqlparser::dialect::GenericDialect {};
     match sqlparser::parser::Parser::parse_sql(&dialect, source) {

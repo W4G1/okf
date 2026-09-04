@@ -13,6 +13,19 @@
 //! - [`syntax`] provides in-process syntax checking for Python,
 //!   JavaScript, TypeScript, Rust, SQL, JSON, YAML, and Bash.
 //!
+//! # Cargo features
+//!
+//! The four third-party language parsers are optional and on by default:
+//! `python` (`rustpython-parser`), `javascript` (`oxc_parser`, also covers
+//! TypeScript), `rust` (`syn`), and `sql` (`sqlparser`). Conformance
+//! validation and linting need none of them; only the two syntax checks do.
+//! Disable a feature and [`check_syntax`] accepts that language unchecked,
+//! exactly as it does for an unknown tag. This matters most for `python`,
+//! whose parser depends on the LGPL-3.0-only `malachite` crates: a consumer
+//! under an allow-list licence policy can take
+//! `default-features = false, features = ["sql"]` and keep everything else.
+//! JSON, YAML, and Bash checking is built in.
+//!
 //! Staleness checks depend on the wall clock, so they are opt-in via
 //! [`validate_bundle_at`] and [`lint_bundle_at`], which take the date to
 //! compare against; the plain variants are deterministic.

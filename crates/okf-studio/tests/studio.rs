@@ -188,7 +188,16 @@ fn renderer_maps_links_headings_and_footnotes() {
         })
         .collect();
     assert!(text.contains("→other"));
-    assert!(text.contains("syntax ✔"), "code fence verdict shown");
+    // The verdict badge needs the Python parser, which sits behind the
+    // `python` feature; without it the block renders with no badge at all.
+    if cfg!(feature = "python") {
+        assert!(text.contains("syntax ✔"), "code fence verdict shown");
+    } else {
+        assert!(
+            !text.contains("syntax"),
+            "no verdict without a parser: {text}"
+        );
+    }
     assert!(text.contains("│ 1 │ 2 │"), "table box-drawn: {text}");
 }
 
