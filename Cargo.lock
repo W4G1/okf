@@ -186,7 +186,7 @@ checksum = "95832e849adfb21180ccb6826a99da14e5d266ae5c2e668e1602cf234f153797"
 
 [[package]]
 name = "cargo-okf"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "okf",
 ]
@@ -1068,7 +1068,7 @@ dependencies = [
 
 [[package]]
 name = "okf"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "clap",
  "okf-core",
@@ -1083,7 +1083,7 @@ version = "0.0.0"
 
 [[package]]
 name = "okf-core"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "okf-validator",
 ]
@@ -1102,7 +1102,7 @@ version = "0.0.0"
 
 [[package]]
 name = "okf-studio"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "crossterm",
  "okf-core",
@@ -1112,7 +1112,7 @@ dependencies = [
 
 [[package]]
 name = "okf-validator"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "okf-core",
  "oxc_allocator",
