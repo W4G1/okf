@@ -17,7 +17,7 @@ use crate::concept_id::ConceptId;
 use crate::date::Date;
 use crate::document::Document;
 use crate::frontmatter::Frontmatter;
-use crate::index::regenerate_indexes;
+use crate::index::{default_synthesize, regenerate_indexes_with_options};
 use crate::links::{self, Link, LinkKind};
 use crate::provenance::Source;
 use crate::scaffold::{current_iso_timestamp, default_author};
@@ -948,7 +948,11 @@ pub fn move_concept(
 
         // Regenerate indexes
         if options.update_index {
-            let _ = regenerate_indexes(bundle.root());
+            let _ = regenerate_indexes_with_options(
+                bundle.root(),
+                &default_synthesize,
+                bundle.load_options(),
+            );
         }
 
         // Update log.md
@@ -1101,7 +1105,11 @@ pub fn remove_concept(
 
         // Regenerate indexes
         if options.update_index {
-            let _ = regenerate_indexes(bundle.root());
+            let _ = regenerate_indexes_with_options(
+                bundle.root(),
+                &default_synthesize,
+                bundle.load_options(),
+            );
         }
 
         // Update log.md
@@ -1287,7 +1295,11 @@ pub fn split_concept(
         fs::write(&source_path, new_source_doc.serialize())?;
 
         if options.update_index {
-            let _ = regenerate_indexes(bundle.root());
+            let _ = regenerate_indexes_with_options(
+                bundle.root(),
+                &default_synthesize,
+                bundle.load_options(),
+            );
         }
 
         if options.update_log {
@@ -1569,7 +1581,11 @@ pub fn merge_concepts(
 
         // Regenerate indexes
         if options.update_index {
-            let _ = regenerate_indexes(bundle.root());
+            let _ = regenerate_indexes_with_options(
+                bundle.root(),
+                &default_synthesize,
+                bundle.load_options(),
+            );
         }
 
         // Update log.md

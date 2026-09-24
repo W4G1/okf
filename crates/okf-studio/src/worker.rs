@@ -7,6 +7,7 @@
 
 use crate::app::{Command, Msg, PreviewReport, RefactorOp};
 use crate::snapshot::Snapshot;
+use okf_core::bundle::LoadOptions;
 use okf_core::log::append_log_entry;
 use okf_core::scaffold::current_iso_timestamp;
 use okf_core::{
@@ -26,6 +27,18 @@ pub struct WorkerConfig {
     pub today: Option<Date>,
     /// Author identity for verification stamps and log entries.
     pub author: String,
+    /// Ignore configuration shared with the watcher and snapshot loader.
+    pub load: LoadOptions,
+}
+
+impl WorkerConfig {
+    /// Remediation options that walk the same file set as the snapshot.
+    fn fix_options(&self) -> FixOptions {
+        FixOptions {
+            load: self.load.clone(),
+            ..FixOptions::default()
+        }
+    }
 }
 
 /// Spawns the worker thread and returns its command channel.
@@ -45,7 +58,7 @@ fn run_worker(config: &WorkerConfig, cmd_rx: &Receiver<Command>, msg_tx: &Sender
     let reload =
         |generation: &mut u64, today: Option<Date>, snapshot: &mut Option<Arc<Snapshot>>| -> bool {
             *generation += 1;
-            match Snapshot::build(&config.root, today, *generation) {
+            match Snapshot::build(&config.root, &config.load, today, *generation) {
                 Ok(snap) => {
                     let snap = Arc::new(snap);
                     *snapshot = Some(Arc::clone(&snap));
@@ -118,7 +131,7 @@ fn run_worker(config: &WorkerConfig, cmd_rx: &Receiver<Command>, msg_tx: &Sender
                 let _ = msg_tx.send(Msg::Applied(result));
                 reload(&mut generation, today, &mut snapshot);
             }
-            Command::PreviewFix => match remediate_bundle(&config.root, &FixOptions::default()) {
+            Command::PreviewFix => match remediate_bundle(&config.root, &config.fix_options()) {
                 Ok(report) => {
                     let _ = msg_tx.send(Msg::FixReportReady(Box::new(report)));
                 }
@@ -127,7 +140,7 @@ fn run_worker(config: &WorkerConfig, cmd_rx: &Receiver<Command>, msg_tx: &Sender
                 }
             },
             Command::ApplyFixFile(path) => {
-                let result = okf_core::remediate_file(&path, &FixOptions::default())
+                let result = okf_core::remediate_file(&path, &config.fix_options())
                     .and_then(|report| {
                         if report.changed {
                             std::fs::write(&report.path, &report.remediated_content)?;
@@ -145,7 +158,7 @@ fn run_worker(config: &WorkerConfig, cmd_rx: &Receiver<Command>, msg_tx: &Sender
             Command::ApplyFix => {
                 // Re-run so the applied fix reflects the current disk state,
                 // then apply in one step.
-                let result = remediate_bundle(&config.root, &FixOptions::default())
+                let result = remediate_bundle(&config.root, &config.fix_options())
                     .and_then(|report| {
                         let total = report.total_remediations();
                         let (files, _) = report.apply()?;

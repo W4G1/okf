@@ -416,3 +416,84 @@ fn remediates_unquoted_okf_version_in_root_index() {
         "index.md should have quoted okf_version: {content}"
     );
 }
+
+#[test]
+fn remediation_skips_default_dirs_and_okfignore_can_reinclude_them() {
+    let tmp = TempDir::new();
+    tmp.write(".okfignore", "drafts/\n");
+    let untitled = "---\ntype: Concept\n---\nBody.\n";
+    tmp.write("drafts/a.md", untitled);
+    tmp.write(".notes/b.md", untitled);
+    tmp.write("node_modules/pkg/README.md", untitled);
+    tmp.write("target/out.md", untitled);
+    tmp.write("c.md", untitled);
+
+    let opts = FixOptions {
+        author: Some("human:alice".to_string()),
+        regenerate_indexes: false,
+        ..Default::default()
+    };
+    let touched = |report: &okf_core::fix::BundleFixReport| -> Vec<String> {
+        report
+            .files
+            .iter()
+            .map(|f| {
+                f.path
+                    .strip_prefix(tmp.path())
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect()
+    };
+
+    // Hidden dirs, `target`, and `node_modules` are skipped by default, as
+    // they always were; `.okfignore` adds `drafts/` on top.
+    let report = remediate_bundle(tmp.path(), &opts).unwrap();
+    assert_eq!(touched(&report), vec!["c.md"]);
+
+    // A `!` rule in .okfignore re-includes one default-skipped directory.
+    tmp.write(".okfignore", "drafts/\n!.notes/\n");
+    let report = remediate_bundle(tmp.path(), &opts).unwrap();
+    assert_eq!(touched(&report), vec![".notes/b.md", "c.md"]);
+
+    report.apply().unwrap();
+    for untouched in ["drafts/a.md", "node_modules/pkg/README.md", "target/out.md"] {
+        assert_eq!(
+            fs::read_to_string(tmp.path().join(untouched)).unwrap(),
+            untitled,
+            "{untouched} must be untouched"
+        );
+    }
+    assert!(
+        fs::read_to_string(tmp.path().join(".notes/b.md"))
+            .unwrap()
+            .contains("title:"),
+        "re-included hidden dir is remediated"
+    );
+}
+
+#[test]
+fn a_rule_matching_index_files_does_not_stop_fix_from_converging() {
+    let tmp = TempDir::new();
+    tmp.write(".okfignore", "index.md\n");
+    tmp.write("tables/orders.md", "---\ntype: Concept\n---\nBody.\n");
+    let opts = FixOptions {
+        author: Some("human:alice".to_string()),
+        ..Default::default()
+    };
+
+    let first = remediate_bundle(tmp.path(), &opts).unwrap();
+    assert!(
+        first
+            .index_files_to_regenerate
+            .contains(&tmp.path().join("tables/index.md")),
+        "{:?}",
+        first.index_files_to_regenerate
+    );
+    first.apply().unwrap();
+    assert!(tmp.path().join("tables/index.md").exists());
+
+    let second = remediate_bundle(tmp.path(), &opts).unwrap();
+    assert!(second.is_empty(), "{:?}", second.index_files_to_regenerate);
+}

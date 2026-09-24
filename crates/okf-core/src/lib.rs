@@ -102,6 +102,7 @@ pub mod error;
 pub mod fix;
 pub mod footnotes;
 pub mod frontmatter;
+pub mod ignore;
 pub mod index;
 pub mod links;
 pub mod log;
@@ -110,6 +111,7 @@ pub mod provenance;
 pub mod refactor;
 pub mod scaffold;
 pub mod trust;
+pub mod walk;
 pub mod yaml;
 
 /// The OKF specification version this crate implements.
@@ -125,7 +127,7 @@ pub const SUPPORTED_OKF_VERSIONS: [&str; 2] = ["0.1", "0.2"];
 #[doc(inline)]
 pub use actor::{Actor, ActorKind, ParseActorKindError};
 #[doc(inline)]
-pub use bundle::{Bundle, Concept, RESERVED_FILENAMES, ResolvedLink, ResolvedSource};
+pub use bundle::{Bundle, Concept, LoadOptions, RESERVED_FILENAMES, ResolvedLink, ResolvedSource};
 #[doc(inline)]
 pub use computation::{
     ATTESTED_COMPUTATION_TYPE, AttestedComputation, Attester, ComputationSource, Executor,
@@ -153,6 +155,8 @@ pub use frontmatter::{
     Frontmatter, KNOWN_FRONTMATTER_KEYS, LEGACY_FRONTMATTER_KEYS, PREFERRED_KEY_ORDER,
     RECOMMENDED_FRONTMATTER_KEYS, REQUIRED_FRONTMATTER_KEYS,
 };
+#[doc(inline)]
+pub use ignore::{IgnoreConfig, IgnoreSource};
 #[doc(inline)]
 pub use links::{Citation, Link, LinkKind, ParseLinkKindError, field_path_candidates};
 #[doc(inline)]

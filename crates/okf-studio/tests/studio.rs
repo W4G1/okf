@@ -2,6 +2,7 @@
 //! round-trips against tempdir bundles, and `TestBackend` rendering.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use okf_core::bundle::LoadOptions;
 use okf_core::{ConceptId, Date};
 use okf_studio::app::{App, Command, Msg, Overlay, PreviewReport, RefactorOp, TreeSel};
 use okf_studio::snapshot::Snapshot;
@@ -91,7 +92,7 @@ const TODAY: Date = Date {
 };
 
 fn snapshot(bundle: &TestBundle) -> Arc<Snapshot> {
-    Arc::new(Snapshot::build(&bundle.root, Some(TODAY), 1).unwrap())
+    Arc::new(Snapshot::build(&bundle.root, &LoadOptions::default(), Some(TODAY), 1).unwrap())
 }
 
 fn app_with(bundle: &TestBundle) -> App {
@@ -101,6 +102,7 @@ fn app_with(bundle: &TestBundle) -> App {
         no_watch: true,
         initial_tab: None,
         author: Some("human:tester".to_string()),
+        load: LoadOptions::default(),
     });
     app.pending_commands.clear();
     app.update(Msg::SnapshotReady(snapshot(bundle)));
@@ -338,6 +340,7 @@ fn worker_reloads_stamps_and_refactors() {
             root: bundle.root.clone(),
             today: Some(TODAY),
             author: "human:tester".to_string(),
+            load: LoadOptions::default(),
         },
         tx,
     );
@@ -416,6 +419,7 @@ fn worker_extends_stale_after() {
             root: bundle.root.clone(),
             today: Some(TODAY),
             author: "human:tester".to_string(),
+            load: LoadOptions::default(),
         },
         tx,
     );
@@ -530,4 +534,119 @@ fn overlays_render() {
     let text = draw(&app, 100, 30);
     assert!(text.contains("Move policies/travel_expenses"));
     assert!(text.contains("target id"));
+}
+
+/// Blocks until the watcher has a baseline, by growing a visible file until
+/// a sweep reports it. A write before the baseline sweep is absorbed into
+/// it and goes unreported, hence the retry; every later write is compared
+/// against a baseline taken before it.
+fn await_watcher_baseline(root: &Path, rx: &std::sync::mpsc::Receiver<Msg>, interval: Duration) {
+    // Only makes the first write likely to land after the baseline; the
+    // retry is what guarantees it.
+    std::thread::sleep(interval);
+    for n in 1..=5 {
+        write(
+            root,
+            "watch_sync.md",
+            &format!("---\ntype: Note\ntitle: Sync\n---\n\n{}\n", "x".repeat(n)),
+        );
+        if let Ok(msg) = rx.recv_timeout(Duration::from_secs(5)) {
+            assert!(matches!(msg, Msg::FilesChanged), "{msg:?}");
+            return;
+        }
+    }
+    panic!("watcher never reported a visible change");
+}
+
+/// A modification under an `.okfignore`d directory must not trigger a
+/// reload, while one to a visible file must.
+#[test]
+fn watcher_ignores_changes_in_ignored_paths() {
+    let bundle = fixture();
+    write(&bundle.root, ".okfignore", "scratch/\n");
+    write(
+        &bundle.root,
+        "scratch/x.md",
+        "---\ntype: Note\ntitle: X\n---\n\n# X\n",
+    );
+
+    let interval = Duration::from_millis(100);
+    let (tx, rx) = channel();
+    let handle =
+        okf_studio::watch::spawn(bundle.root.clone(), LoadOptions::default(), interval, tx);
+    await_watcher_baseline(&bundle.root, &rx, interval);
+
+    // Change an ignored file: content and size differ from the baseline.
+    write(
+        &bundle.root,
+        "scratch/x.md",
+        "---\ntype: Note\ntitle: X changed\n---\n\n# X\n\nMore text here.\n",
+    );
+    let quiet = rx.recv_timeout(interval * 2);
+    assert!(
+        quiet.is_err(),
+        "ignored change triggered a reload: {quiet:?}"
+    );
+
+    // Change a visible file: the watcher must notice.
+    write(
+        &bundle.root,
+        "visible_change.md",
+        "---\ntype: Note\ntitle: Visible\n---\n\n# Visible\n",
+    );
+    let msg = rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("visible change is reported");
+    assert!(matches!(msg, Msg::FilesChanged), "{msg:?}");
+    drop(handle);
+}
+
+/// Editing an ignore file changes which files the snapshot loads, so it must
+/// trigger a reload even though no visible markdown changed.
+#[test]
+fn watcher_reloads_when_an_ignore_file_changes() {
+    let bundle = fixture();
+    write(&bundle.root, ".okfignore", "scratch/\n");
+
+    let interval = Duration::from_millis(100);
+    let (tx, rx) = channel();
+    let handle =
+        okf_studio::watch::spawn(bundle.root.clone(), LoadOptions::default(), interval, tx);
+    await_watcher_baseline(&bundle.root, &rx, interval);
+
+    write(&bundle.root, ".okfignore", "scratch/\ndrafts/\n");
+    let msg = rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("ignore-file change is reported");
+    assert!(matches!(msg, Msg::FilesChanged), "{msg:?}");
+    drop(handle);
+}
+
+/// `okf studio --ignore .gitignore .` builds its snapshot with the same ignore
+/// rules as every other subcommand, so an ignored directory's concepts never
+/// appear.
+#[test]
+fn snapshot_honours_ignore_options() {
+    let bundle = fixture();
+    write(&bundle.root, ".gitignore", "policies/\n");
+
+    let plain = Snapshot::build(&bundle.root, &LoadOptions::default(), Some(TODAY), 1).unwrap();
+    assert_eq!(plain.stats.concepts, 5);
+
+    let opts =
+        LoadOptions::with_ignore(okf_core::ignore::IgnoreConfig::new().with_name(".gitignore"));
+    let ignoring = Snapshot::build(&bundle.root, &opts, Some(TODAY), 2).unwrap();
+    assert!(
+        ignoring.stats.concepts < plain.stats.concepts,
+        "{} vs {}",
+        ignoring.stats.concepts,
+        plain.stats.concepts
+    );
+    assert!(
+        !ignoring
+            .concept_meta
+            .keys()
+            .any(|id| id.to_string().starts_with("policies/")),
+        "ignored concepts listed"
+    );
 }

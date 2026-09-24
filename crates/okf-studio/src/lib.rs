@@ -30,6 +30,7 @@ pub mod worker;
 use app::{App, Command, Msg};
 use crossterm::event::{self, Event};
 use okf_core::Date;
+use okf_core::bundle::LoadOptions;
 use std::io::Write as _;
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -79,6 +80,10 @@ pub struct StudioOptions {
     /// Author identity for verification stamps / log entries
     /// (defaults to [`okf_core::default_author`]).
     pub author: Option<String>,
+    /// How the bundle is walked: extra ignore sources on top of the built-in
+    /// rules and `.okfignore`. Shared by the snapshot loader, the worker's
+    /// reloads and fixes, and the file watcher, so they all see one file set.
+    pub load: LoadOptions,
 }
 
 impl Default for StudioOptions {
@@ -89,6 +94,7 @@ impl Default for StudioOptions {
             no_watch: false,
             initial_tab: None,
             author: None,
+            load: LoadOptions::default(),
         }
     }
 }
@@ -110,6 +116,7 @@ pub fn run(options: StudioOptions) -> std::io::Result<ExitCode> {
     } else {
         Some(watch::spawn(
             options.root.clone(),
+            options.load.clone(),
             Duration::from_millis(500),
             msg_tx.clone(),
         ))
@@ -119,6 +126,7 @@ pub fn run(options: StudioOptions) -> std::io::Result<ExitCode> {
             root: options.root,
             today: options.today,
             author: app.author.clone(),
+            load: options.load,
         },
         msg_tx,
     );

@@ -274,3 +274,93 @@ fn regenerate_skips_reserved_log_file() {
     assert!(!root_index.contains("log.md"), "{root_index}");
     assert!(!root_index.contains("# Other"), "{root_index}");
 }
+
+#[test]
+fn ignored_files_and_directories_are_left_out_of_indexes() {
+    let tmp = TempDir::new();
+    tmp.write(".okfignore", "drafts/\n*.wip.md\n");
+    write_doc(
+        &tmp,
+        "tables/orders.md",
+        "BigQuery Table",
+        "Orders",
+        "Order rows.",
+    );
+    write_doc(
+        &tmp,
+        "tables/notes.wip.md",
+        "BigQuery Table",
+        "WIP",
+        "Not ready.",
+    );
+    write_doc(&tmp, "drafts/idea.md", "Concept", "Idea", "A draft.");
+
+    let written = regenerate_indexes(tmp.path()).unwrap();
+    // Root and `tables/` get indexes; `drafts/` does not.
+    assert_eq!(written_dirs(&written).len(), 2);
+    assert!(!tmp.path().join("drafts/index.md").exists());
+
+    let root_index = tmp.read("index.md");
+    assert!(!root_index.contains("drafts"), "{root_index}");
+    assert!(root_index.contains("(tables/index.md)"), "{root_index}");
+
+    let tables_index = tmp.read("tables/index.md");
+    assert!(tables_index.contains("(orders.md)"), "{tables_index}");
+    assert!(!tables_index.contains("wip"), "{tables_index}");
+}
+
+#[test]
+fn a_rule_matching_index_files_does_not_stop_regeneration() {
+    let tmp = TempDir::new();
+    tmp.write(".okfignore", "index.md\n");
+    write_doc(
+        &tmp,
+        "tables/orders.md",
+        "BigQuery Table",
+        "Orders",
+        "Rows.",
+    );
+    write_doc(&tmp, "overview.md", "Concept", "Overview", "Top level.");
+    tmp.write("index.md", "---\nokf_version: \"0.2\"\n---\n\n# Stale\n");
+
+    let written = regenerate_indexes(tmp.path()).unwrap();
+
+    assert_eq!(written_dirs(&written).len(), 2);
+    let root_index = tmp.read("index.md");
+    assert!(root_index.contains("okf_version"), "{root_index}");
+    assert!(root_index.contains("(tables/index.md)"), "{root_index}");
+    assert!(!root_index.contains("Stale"), "{root_index}");
+    assert!(tmp.read("tables/index.md").contains("(orders.md)"));
+}
+
+#[test]
+fn regenerate_with_options_honours_extra_source() {
+    use okf_core::bundle::LoadOptions;
+    use okf_core::ignore::IgnoreConfig;
+    use okf_core::index::regenerate_indexes_with_options;
+
+    let tmp = TempDir::new();
+    tmp.write(".gitignore", "vendor/\n");
+    write_doc(
+        &tmp,
+        "vendor/pkg/README.md",
+        "Reference",
+        "Vendored",
+        "Third party.",
+    );
+    write_doc(&tmp, "overview.md", "Concept", "Overview", "Top level.");
+
+    // Without the source, `vendor/` is indexed like anything else.
+    regenerate_indexes(tmp.path()).unwrap();
+    assert!(tmp.read("index.md").contains("vendor/index.md"));
+    assert!(tmp.path().join("vendor/index.md").exists());
+
+    // Clean up and regenerate with `.gitignore` honoured.
+    std::fs::remove_file(tmp.path().join("vendor/index.md")).unwrap();
+    std::fs::remove_file(tmp.path().join("vendor/pkg/index.md")).unwrap();
+    let opts = LoadOptions::with_ignore(IgnoreConfig::new().with_name(".gitignore"));
+    let written = regenerate_indexes_with_options(tmp.path(), &default_synthesize, &opts).unwrap();
+    assert_eq!(written_dirs(&written).len(), 1);
+    assert!(!tmp.read("index.md").contains("vendor"));
+    assert!(!tmp.path().join("vendor/index.md").exists());
+}

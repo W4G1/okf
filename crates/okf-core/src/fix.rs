@@ -18,10 +18,11 @@
 //! - **Duplicate log dates** (`L27`): Consolidates duplicate `## YYYY-MM-DD` headings in `log.md`.
 //! - **Index sync** (`L16`): Re-indexes all bundle directories.
 
+use crate::bundle::LoadOptions;
 use crate::computation::ATTESTED_COMPUTATION_TYPE;
 use crate::document::Document;
 use crate::frontmatter::{Frontmatter, PREFERRED_KEY_ORDER};
-use crate::index::regenerate_indexes;
+use crate::index::{default_synthesize, regenerate_indexes_with_options};
 use crate::links::Citation;
 use crate::log::{Log, LogDay};
 use crate::scaffold::{current_iso_timestamp, default_author, title_from_name};
@@ -98,6 +99,9 @@ pub struct FixOptions {
     pub regenerate_indexes: bool,
     /// Whether to quote unquoted `okf_version` in root index.md (L13).
     pub quote_okf_version: bool,
+    /// How the bundle is walked: which ignore sources apply on top of the
+    /// built-in rules and `.okfignore`.
+    pub load: LoadOptions,
 }
 
 impl FixOptions {
@@ -118,6 +122,7 @@ impl FixOptions {
             clean_whitespace: false,
             regenerate_indexes: false,
             quote_okf_version: true,
+            load: LoadOptions::new(),
         }
     }
 }
@@ -138,6 +143,7 @@ impl Default for FixOptions {
             clean_whitespace: true,
             regenerate_indexes: true,
             quote_okf_version: true,
+            load: LoadOptions::new(),
         }
     }
 }
@@ -763,7 +769,11 @@ impl BundleFixReport {
         let regenerated = if self.options.regenerate_indexes
             && (count > 0 || !self.index_files_to_regenerate.is_empty())
         {
-            regenerate_indexes(&self.bundle_root)?
+            regenerate_indexes_with_options(
+                &self.bundle_root,
+                &default_synthesize,
+                &self.options.load,
+            )?
         } else {
             Vec::new()
         };
@@ -862,6 +872,10 @@ pub fn remediate_file(path: impl AsRef<Path>, options: &FixOptions) -> io::Resul
 
 /// Remediates an entire bundle directory tree.
 ///
+/// Walks with the same rules as every other bundle operation: the default
+/// skips (hidden directories, `target`, `node_modules`), `options.load`'s
+/// ignore sources, and `.okfignore`.
+///
 /// # Errors
 ///
 /// Returns [`io::Error`] on filesystem read errors.
@@ -871,10 +885,11 @@ pub fn remediate_bundle(
 ) -> io::Result<BundleFixReport> {
     let bundle_root = bundle_root.as_ref().to_path_buf();
     let mut files = Vec::new();
-    let mut md_paths = Vec::new();
 
-    collect_md_files(&bundle_root, &mut md_paths)?;
-    md_paths.sort();
+    let md_paths = crate::walk::walk_markdown(
+        &bundle_root,
+        &crate::walk::WalkOptions::new(&options.load.ignore),
+    )?;
 
     for path in &md_paths {
         let filename = path
@@ -906,7 +921,7 @@ pub fn remediate_bundle(
                 }
             }
             index_files_to_regenerate = all_dirs.into_iter().map(|d| d.join("index.md")).collect();
-        } else if let Ok(bundle) = crate::bundle::Bundle::load(&bundle_root) {
+        } else if let Ok(bundle) = crate::bundle::Bundle::load_with(&bundle_root, &options.load) {
             let mut all_dirs = std::collections::BTreeSet::new();
             for c in bundle.concepts() {
                 if let Some(parent) = c.path.parent() {
@@ -928,22 +943,6 @@ pub fn remediate_bundle(
         index_files_to_regenerate,
         options: options.clone(),
     })
-}
-
-fn collect_md_files(dir: &Path, out: &mut Vec<PathBuf>) -> io::Result<()> {
-    for entry in fs::read_dir(dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.is_dir() {
-            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            if !name.starts_with('.') && name != "target" && name != "node_modules" {
-                collect_md_files(&path, out)?;
-            }
-        } else if path.extension().and_then(|e| e.to_str()) == Some("md") {
-            out.push(path);
-        }
-    }
-    Ok(())
 }
 
 #[cfg(test)]

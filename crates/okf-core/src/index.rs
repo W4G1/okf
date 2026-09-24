@@ -13,9 +13,11 @@
 //! Rust and modified from the original Apache-2.0 Python source; see the NOTICE
 //! file.
 
+use crate::bundle::LoadOptions;
 use crate::document::Document;
+use crate::walk::{WalkOptions, walk_entries};
 use crate::yaml::Value;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ffi::OsStr;
 use std::fs;
 use std::io;
@@ -198,13 +200,35 @@ pub fn regenerate_indexes_with(
     bundle_root: impl AsRef<Path>,
     synthesize: &Synthesize,
 ) -> io::Result<Vec<PathBuf>> {
+    regenerate_indexes_with_options(bundle_root, synthesize, &LoadOptions::new())
+}
+
+/// Regenerates every `index.md` in the bundle, honouring the ignore rules in
+/// `options` so ignored files never appear as entries and ignored directories
+/// never get an index.
+///
+/// Directories are processed deepest-first so a parent index can reuse the
+/// descriptions computed for its children. Empty directories are skipped.
+/// Returns the paths of the index files written.
+///
+/// # Errors
+///
+/// Returns the underlying [`io::Error`] from any directory walk or file write.
+pub fn regenerate_indexes_with_options(
+    bundle_root: impl AsRef<Path>,
+    synthesize: &Synthesize,
+    options: &LoadOptions,
+) -> io::Result<Vec<PathBuf>> {
     let bundle_root = bundle_root.as_ref();
     let mut written = Vec::new();
     if !bundle_root.exists() {
         return Ok(written);
     }
 
-    let mut directories = directories_to_index(bundle_root)?;
+    // One walk gives both the directories to index and each directory's
+    // visible children, all under the same ignore rules.
+    let tree = WalkedTree::collect(bundle_root, options)?;
+    let mut directories = tree.directories_to_index(bundle_root);
     // Deepest-first; ties broken by path for determinism.
     directories.sort_by(|a, b| {
         let da = depth(bundle_root, a);
@@ -217,13 +241,7 @@ pub fn regenerate_indexes_with(
     for directory in &directories {
         let mut entries: Vec<IndexEntry> = Vec::new();
 
-        let mut children: Vec<PathBuf> = fs::read_dir(directory)?
-            .filter_map(Result::ok)
-            .map(|e| e.path())
-            .collect();
-        children.sort();
-
-        for child in children {
+        for (child, child_kind) in tree.children_of(directory) {
             let name = child
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
@@ -231,8 +249,8 @@ pub fn regenerate_indexes_with(
             if crate::bundle::RESERVED_FILENAMES.contains(&name.as_str()) {
                 continue;
             }
-            if child.is_file() && child.extension().is_some_and(|e| e == "md") {
-                let Some(doc) = load_doc(&child) else {
+            if *child_kind == Kind::File && child.extension().is_some_and(|e| e == "md") {
+                let Some(doc) = load_doc(child) else {
                     continue;
                 };
                 let stem = child
@@ -262,8 +280,8 @@ pub fn regenerate_indexes_with(
                     link: encoded_component(child.file_name().unwrap_or_default()),
                     description,
                 });
-            } else if child.is_dir() {
-                let description = dir_descriptions.get(&child).cloned().unwrap_or_default();
+            } else if *child_kind == Kind::Dir {
+                let description = dir_descriptions.get(child).cloned().unwrap_or_default();
                 let encoded_name = encoded_component(child.file_name().unwrap_or_default());
                 entries.push(IndexEntry {
                     type_: "Subdirectories".to_string(),
@@ -350,39 +368,83 @@ fn depth(root: &Path, dir: &Path) -> usize {
     dir.strip_prefix(root).map_or(0, |r| r.components().count())
 }
 
-/// All directories that contain at least one `.md` file at any depth, including
-/// the bundle root (matching the reference `_directories_to_index`).
-fn directories_to_index(bundle_root: &Path) -> io::Result<Vec<PathBuf>> {
-    let mut md_files = Vec::new();
-    collect_markdown(bundle_root, &mut md_files)?;
-
-    let mut dirs: std::collections::BTreeSet<PathBuf> = std::collections::BTreeSet::new();
-    let root_parent = bundle_root.parent();
-    for md in &md_files {
-        let mut cur = md.parent();
-        while let Some(dir) = cur {
-            if Some(dir) == root_parent {
-                break;
-            }
-            dirs.insert(dir.to_path_buf());
-            if dir == bundle_root {
-                break;
-            }
-            cur = dir.parent();
-        }
-    }
-    Ok(dirs.into_iter().collect())
+/// What kind of entry a walked child is. A symlink or other special file is
+/// neither a directory nor a regular file, and gets listed as neither.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Kind {
+    Dir,
+    File,
+    Other,
 }
 
-fn collect_markdown(dir: &Path, out: &mut Vec<PathBuf>) -> io::Result<()> {
-    for entry in fs::read_dir(dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if entry.file_type()?.is_dir() {
-            collect_markdown(&path, out)?;
-        } else if path.extension().is_some_and(|e| e == "md") {
-            out.push(path);
+/// The non-ignored entries under a bundle root, from one walk.
+struct WalkedTree {
+    /// The direct children of each directory, sorted by path. Grouping them
+    /// while walking keeps regeneration linear in the tree; scanning one flat
+    /// list of entries per indexed directory would be quadratic on a bundle
+    /// with many directories.
+    children: HashMap<PathBuf, Vec<(PathBuf, Kind)>>,
+    /// Every visible `.md` file, which is what decides the directories that
+    /// need an index.
+    md_files: Vec<PathBuf>,
+}
+
+impl WalkedTree {
+    fn collect(bundle_root: &Path, options: &LoadOptions) -> io::Result<Self> {
+        let mut children: HashMap<PathBuf, Vec<(PathBuf, Kind)>> = HashMap::new();
+        let mut md_files = Vec::new();
+        walk_entries(
+            bundle_root,
+            &WalkOptions::new(&options.ignore),
+            &mut |path, ft| {
+                let kind = if ft.is_dir() {
+                    Kind::Dir
+                } else if ft.is_file() {
+                    Kind::File
+                } else {
+                    Kind::Other
+                };
+                if let Some(parent) = path.parent() {
+                    children
+                        .entry(parent.to_path_buf())
+                        .or_default()
+                        .push((path.to_path_buf(), kind));
+                }
+                if kind == Kind::File && path.extension().is_some_and(|e| e == "md") {
+                    md_files.push(path.to_path_buf());
+                }
+            },
+        )?;
+        for entries in children.values_mut() {
+            entries.sort_by(|(a, _), (b, _)| a.cmp(b));
         }
+        Ok(Self { children, md_files })
     }
-    Ok(())
+
+    /// All directories that contain at least one visible `.md` file at any
+    /// depth, including the bundle root (matching the reference
+    /// `_directories_to_index`).
+    fn directories_to_index(&self, bundle_root: &Path) -> Vec<PathBuf> {
+        let mut dirs: BTreeSet<PathBuf> = BTreeSet::new();
+        let root_parent = bundle_root.parent();
+        for path in &self.md_files {
+            let mut cur = path.parent();
+            while let Some(dir) = cur {
+                if Some(dir) == root_parent {
+                    break;
+                }
+                dirs.insert(dir.to_path_buf());
+                if dir == bundle_root {
+                    break;
+                }
+                cur = dir.parent();
+            }
+        }
+        dirs.into_iter().collect()
+    }
+
+    /// The visible direct children of `directory`, sorted by path.
+    fn children_of(&self, directory: &Path) -> &[(PathBuf, Kind)] {
+        self.children.get(directory).map_or(&[], Vec::as_slice)
+    }
 }

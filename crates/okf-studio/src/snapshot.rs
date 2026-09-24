@@ -8,6 +8,7 @@
 
 use crate::graph::GraphModel;
 use crate::search::{SearchEntry, SearchIndex};
+use okf_core::bundle::LoadOptions;
 use okf_core::log::{Log, LogEntry};
 use okf_core::{
     ActorKind, AttestedComputation, Bundle, BundleError, ComputationSource, ConceptId, Date,
@@ -208,10 +209,11 @@ impl Snapshot {
     /// per-file parse failures land in the tree and diagnostics instead.
     pub fn build(
         root: &std::path::Path,
+        load: &LoadOptions,
         today: Option<Date>,
         generation: u64,
     ) -> Result<Self, BundleError> {
-        let bundle = Bundle::load(root)?;
+        let bundle = Bundle::load_with(root, load)?;
         let today = today.or_else(Date::today_utc).unwrap_or(Date {
             year: 2026,
             month: 1,

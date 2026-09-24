@@ -20,6 +20,7 @@ use crate::concept_id::ConceptId;
 use crate::date::{Date, DateTime};
 use crate::document::Document;
 use crate::error::{BundleError, DocumentError};
+use crate::ignore::IgnoreConfig;
 use crate::links;
 use crate::provenance::Source;
 use crate::trust::{Status, TrustTier};
@@ -121,10 +122,37 @@ pub struct ResolvedSource {
     pub concept: Option<ConceptId>,
 }
 
+/// Options controlling how a bundle is loaded.
+///
+/// The built-in ignore rules and `.okfignore` always apply; `ignore` adds
+/// further sources such as `.gitignore`. See [`crate::walk`].
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct LoadOptions {
+    /// Extra ignore sources honoured while walking the bundle.
+    pub ignore: IgnoreConfig,
+}
+
+impl LoadOptions {
+    /// Options with no extra ignore sources.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            ignore: IgnoreConfig::new(),
+        }
+    }
+
+    /// Options with the given ignore configuration.
+    #[must_use]
+    pub const fn with_ignore(ignore: IgnoreConfig) -> Self {
+        Self { ignore }
+    }
+}
+
 /// A loaded OKF bundle.
 #[derive(Debug)]
 pub struct Bundle {
     root: PathBuf,
+    options: LoadOptions,
     concepts: Vec<Concept>,
     index: HashMap<ConceptId, usize>,
     index_files: Vec<PathBuf>,
@@ -152,14 +180,70 @@ impl Bundle {
     /// not a directory, and [`BundleError::Io`] for any underlying I/O failure
     /// while walking the tree.
     pub fn load(root: impl AsRef<Path>) -> Result<Self, BundleError> {
+        Self::load_with(root, &LoadOptions::new())
+    }
+
+    /// Loads a bundle from a directory tree with explicit [`LoadOptions`].
+    ///
+    /// Files matched by the built-in ignore rules, `.okfignore`, or any
+    /// source in `options.ignore` are not read. Otherwise identical to
+    /// [`Bundle::load`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BundleError::NotADirectory`] if `root` does not exist or is
+    /// not a directory, and [`BundleError::Io`] for any underlying I/O failure
+    /// while walking the tree, including an explicit ignore file in
+    /// `options.ignore` that cannot be read.
+    pub fn load_with(root: impl AsRef<Path>, options: &LoadOptions) -> Result<Self, BundleError> {
+        Self::load_with_including(root, options, &[])
+    }
+
+    /// Loads a bundle like [`Bundle::load_with`], but always includes the
+    /// files in `include` even when an ignore rule would exclude them.
+    ///
+    /// This is how an explicitly named target (`okf validate drafts/a.md`)
+    /// is validated in the context of its enclosing bundle while that bundle
+    /// still honours its ignore rules. Paths in `include` that are not
+    /// existing `.md` files under `root` are skipped.
+    ///
+    /// # Errors
+    ///
+    /// As [`Bundle::load_with`].
+    pub fn load_with_including(
+        root: impl AsRef<Path>,
+        options: &LoadOptions,
+        include: &[PathBuf],
+    ) -> Result<Self, BundleError> {
         let root = root.as_ref().to_path_buf();
         if !root.is_dir() {
             return Err(BundleError::NotADirectory(root));
         }
 
-        let mut md_files = Vec::new();
-        collect_markdown(&root, &mut md_files)?;
-        md_files.sort();
+        let mut md_files =
+            crate::walk::walk_markdown(&root, &crate::walk::WalkOptions::new(&options.ignore))?;
+        let mut extra = false;
+        for path in include {
+            if !path.is_file() || path.extension().is_none_or(|e| e != "md") {
+                continue;
+            }
+            // Taking the path back in the form the walk reports is what makes
+            // the comparison below sound: an equivalent spelling of a file
+            // already walked (`./drafts/a.md` for `drafts/a.md`, or a route
+            // through a symlink inside the bundle) would otherwise be parsed
+            // a second time and yield a duplicate concept.
+            let Some(walked_form) = crate::walk::under_root(&root, path)? else {
+                continue;
+            };
+            if md_files.contains(&walked_form) {
+                continue;
+            }
+            md_files.push(walked_form);
+            extra = true;
+        }
+        if extra {
+            md_files.sort();
+        }
 
         // Parse every non-reserved file in parallel. The work per file is
         // I/O-bound (`fs::read_to_string`) followed by CPU-bound
@@ -196,6 +280,7 @@ impl Bundle {
 
         Ok(Self {
             root,
+            options: options.clone(),
             concepts,
             index,
             index_files,
@@ -207,6 +292,13 @@ impl Bundle {
             derived_by,
             okf_version,
         })
+    }
+
+    /// The options this bundle was loaded with, so a reload or a companion
+    /// walk (index regeneration, a file watcher) sees the same file set.
+    #[must_use]
+    pub const fn load_options(&self) -> &LoadOptions {
+        &self.options
     }
 
     /// Loads a single concept file into a one-concept bundle.
@@ -257,6 +349,7 @@ impl Bundle {
 
         Ok(Self {
             root,
+            options: LoadOptions::new(),
             concepts,
             index,
             index_files: Vec::new(),
@@ -564,22 +657,6 @@ fn read_okf_version(root: &Path) -> Option<String> {
     doc.frontmatter
         .get("okf_version")
         .and_then(Value::as_display_string)
-}
-
-/// Recursively collects `*.md` file paths under `dir`.
-fn collect_markdown(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), BundleError> {
-    let mut entries: Vec<_> = fs::read_dir(dir)?.collect::<Result<_, _>>()?;
-    entries.sort_by_key(std::fs::DirEntry::file_name);
-    for entry in entries {
-        let path = entry.path();
-        let file_type = entry.file_type()?;
-        if file_type.is_dir() {
-            collect_markdown(&path, out)?;
-        } else if file_type.is_file() && path.extension().is_some_and(|e| e == "md") {
-            out.push(path);
-        }
-    }
-    Ok(())
 }
 
 /// Builds the outbound link and backlink maps for all concepts.

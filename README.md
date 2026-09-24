@@ -53,6 +53,7 @@ A **pure-Rust** implementation, library and CLI toolkit for the [Open Knowledge 
   - [Listing computations: computations](#listing-computations-computations)
   - [Semantic diffs: diff](#semantic-diffs-diff)
   - [Formatting and indexing: fmt, index, and parse](#formatting-and-indexing-fmt-index-and-parse)
+  - [Ignoring files: .okfignore and --ignore](#ignoring-files-okfignore-and---ignore)
   - [Universal JSON output: --json / -j](#universal-json-output---json---j)
 - [CI/CD integration](#cicd-integration)
 - [Using as a Rust library](#using-as-a-rust-library)
@@ -494,6 +495,50 @@ okf index ./company_knowledge
 # Inspect AST and parsed frontmatter structure of a single document
 okf parse ./company_knowledge/policies/travel_expenses.md
 ```
+
+### Ignoring files: `.okfignore` and `--ignore`
+
+A bundle often lives inside a larger repository, next to drafts, vendored packages, and build output that will never be published. Every subcommand that walks a bundle (`validate`, `lint`, `fmt`, `index`, `info`, `studio`, ...) uses one shared walker and one set of ignore rules, so they always agree on which files are in the bundle.
+
+**`.okfignore`** is the bundle-native ignore file. It uses the familiar `.gitignore` grammar and is always honoured, with no flag:
+
+```gitignore
+# .okfignore
+drafts/
+*.wip.md
+node_modules
+```
+
+Like `.gitignore`, it is read from every directory (deeper files override shallower ones) and from the bundle's ancestors up to the nearest directory containing `.git`.
+
+**`--ignore <SOURCE>`** opts in to more ignore files. It is global and repeatable, and works before or after the subcommand:
+
+```sh
+# Also honour .gitignore files (per directory, and up to the repo root)
+okf validate --ignore .gitignore ./company_knowledge
+
+# .dockerignore is read at the bundle root only, with Docker's anchored rules
+okf lint --ignore .dockerignore ./company_knowledge
+
+# A path (anything containing a separator) is read once and anchored to its
+# own directory; a missing path is an error (exit 66)
+okf fmt --check --ignore ../shared.ignore ./company_knowledge
+```
+
+Rules are applied in this order, later ones overriding earlier ones: the built-in defaults described below, then each `--ignore` source in command-line order, then `.okfignore`. A file named explicitly on the command line (`okf validate drafts/a.md`) is always processed, even if an ignore rule matches it.
+
+`index.md` files are never ignored on their own, since every bundle directory has one. A rule that matches `index.md` has no effect, and `okf` prints a warning naming each index file it matches. To leave a directory out, ignore the directory itself (`drafts/`).
+
+**Built-in defaults.** Every command skips hidden directories (which covers `.git`, `.hg`, `.svn`), `target`, and `node_modules` at any depth. `okf fmt` and `--fix` always did this; `validate`, `lint`, `index`, `info`, and `studio` now agree with them, so one bundle has one set of files no matter which command you run. The defaults have the lowest precedence, so a `!` rule in `.okfignore` (or any `--ignore` source) re-includes a directory when you want it processed:
+
+```gitignore
+# .okfignore
+!.notes/
+```
+
+Hidden *files* such as `.hidden.md` are not skipped; only directories are.
+
+Library users get the same behaviour through `Bundle::load_with(root, &LoadOptions)`; the option-less `Bundle::load` honours `.okfignore` and the built-in defaults.
 
 ### Universal JSON output: `--json` / `-j`
 

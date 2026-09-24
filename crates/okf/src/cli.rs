@@ -24,6 +24,8 @@
 
 #![warn(clippy::pedantic, clippy::nursery)]
 
+use crate::bundle::LoadOptions;
+use crate::ignore::IgnoreSource;
 use crate::{
     Bundle, BundleInitOptions, ConceptId, ConceptOptions, Date, Document, DocumentError,
     FixOptions, Link, MergeOptions, MoveOptions, RemoveOptions, RenameSectionOptions, Report,
@@ -121,6 +123,13 @@ static CLI_VERSION: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
     styles = Styles::plain()
 )]
 pub struct Cli {
+    /// Also honour this ignore file (repeatable). A bare name such as
+    /// `.gitignore` is looked up in every directory walked and in the
+    /// bundle's ancestors up to the repository root; a path such as
+    /// `../shared.ignore` is read once and anchored to its directory.
+    /// `.okfignore` is always honoured. `.dockerignore` uses Docker rules.
+    #[arg(long, global = true, value_name = "SOURCE")]
+    pub ignore: Vec<String>,
     #[command(subcommand)]
     pub command: Commands,
 }
@@ -715,27 +724,27 @@ pub fn run(args: &[String]) -> ExitCode {
         }
     };
 
-    let result = match cli.command {
+    let result = load_options(&cli.ignore).and_then(|opts| match cli.command {
         Commands::Init(ref a) => cmd_init(a),
         Commands::New(ref a) => cmd_new(a),
-        Commands::Mv(ref a) => cmd_mv(a),
-        Commands::Rm(ref a) => cmd_rm(a),
-        Commands::Split(ref a) => cmd_split(a),
-        Commands::Merge(ref a) => cmd_merge(a),
-        Commands::Validate(ref a) => cmd_validate(a),
-        Commands::Lint(ref a) => cmd_lint(a),
-        Commands::Fmt(ref a) => cmd_fmt(a),
-        Commands::Info(ref a) => cmd_info(a),
-        Commands::Trust(ref a) => cmd_trust(a),
-        Commands::Links(ref a) => cmd_links(a),
-        Commands::Graph(ref a) => cmd_graph(a),
-        Commands::Computations(ref a) => cmd_computations(a),
-        Commands::Diff(ref a) => cmd_diff(a),
-        Commands::Index(ref a) => cmd_index(a),
+        Commands::Mv(ref a) => cmd_mv(a, &opts),
+        Commands::Rm(ref a) => cmd_rm(a, &opts),
+        Commands::Split(ref a) => cmd_split(a, &opts),
+        Commands::Merge(ref a) => cmd_merge(a, &opts),
+        Commands::Validate(ref a) => cmd_validate(a, &opts),
+        Commands::Lint(ref a) => cmd_lint(a, &opts),
+        Commands::Fmt(ref a) => cmd_fmt(a, &opts),
+        Commands::Info(ref a) => cmd_info(a, &opts),
+        Commands::Trust(ref a) => cmd_trust(a, &opts),
+        Commands::Links(ref a) => cmd_links(a, &opts),
+        Commands::Graph(ref a) => cmd_graph(a, &opts),
+        Commands::Computations(ref a) => cmd_computations(a, &opts),
+        Commands::Diff(ref a) => cmd_diff(a, &opts),
+        Commands::Index(ref a) => cmd_index(a, &opts),
         Commands::Parse(ref a) => cmd_parse(a),
         #[cfg(feature = "studio")]
-        Commands::Studio(ref a) => cmd_studio(a),
-    };
+        Commands::Studio(ref a) => cmd_studio(a, &opts),
+    });
 
     match result {
         Ok(code) => code,
@@ -749,8 +758,44 @@ pub fn run(args: &[String]) -> ExitCode {
     }
 }
 
-fn load(path: impl AsRef<Path>) -> Result<Bundle, CliError> {
-    Bundle::load(path.as_ref()).map_err(|e| CliError::no_input(e.to_string()))
+/// Turns the global `--ignore` values into [`LoadOptions`]. An explicit path
+/// that does not exist is refused here, before any subcommand runs, so the
+/// error names the path rather than surfacing as a generic walk failure.
+fn load_options(ignore: &[String]) -> Result<LoadOptions, CliError> {
+    let mut opts = LoadOptions::new();
+    for raw in ignore {
+        let source = IgnoreSource::parse_cli(raw);
+        if let IgnoreSource::File(path) = &source
+            && !path.is_file()
+        {
+            return Err(CliError::no_input(format!("ignore file not found: {raw}")));
+        }
+        opts.ignore.sources.push(source);
+    }
+    Ok(opts)
+}
+
+fn load(path: impl AsRef<Path>, opts: &LoadOptions) -> Result<Bundle, CliError> {
+    let bundle =
+        Bundle::load_with(path.as_ref(), opts).map_err(|e| CliError::no_input(e.to_string()))?;
+    warn_ignored_indexes(bundle.root(), opts);
+    Ok(bundle)
+}
+
+/// Warns on stderr about each `index.md` under `root` that an ignore rule
+/// matches. Index files are never ignored, so the rule has no effect.
+fn warn_ignored_indexes(root: &Path, opts: &LoadOptions) {
+    let Ok(paths) =
+        crate::walk::ignored_index_files(root, &crate::walk::WalkOptions::new(&opts.ignore))
+    else {
+        return;
+    };
+    for path in paths {
+        eprintln!(
+            "warning: an ignore rule matches {}; index files are always processed",
+            path.display()
+        );
+    }
 }
 
 /// Opens the interactive studio. The bundle is loaded once *before* entering
@@ -758,10 +803,10 @@ fn load(path: impl AsRef<Path>) -> Result<Bundle, CliError> {
 /// the same well-coded exit as every other subcommand; studio itself then
 /// reloads live. Studio never takes `--json`: it *is* the presentation.
 #[cfg(feature = "studio")]
-fn cmd_studio(args: &StudioArgs) -> Result<ExitCode, CliError> {
+fn cmd_studio(args: &StudioArgs, opts: &LoadOptions) -> Result<ExitCode, CliError> {
     use std::io::IsTerminal as _;
 
-    let _ = load(&args.bundle)?;
+    let _ = load(&args.bundle, opts)?;
     let initial_tab = args
         .tab
         .as_deref()
@@ -779,6 +824,7 @@ fn cmd_studio(args: &StudioArgs) -> Result<ExitCode, CliError> {
         no_watch: args.no_watch,
         initial_tab,
         author: args.author.clone(),
+        load: opts.clone(),
     })
     .map_err(|e| CliError::data(format!("studio failed: {e}")))
 }
@@ -790,7 +836,7 @@ struct LoadedTarget {
     concept_count: usize,
 }
 
-fn load_target(raw_path: &Path) -> Result<LoadedTarget, CliError> {
+fn load_target(raw_path: &Path, opts: &LoadOptions) -> Result<LoadedTarget, CliError> {
     let mut resolved_path = raw_path.to_path_buf();
     if !resolved_path.exists() {
         let with_md = resolved_path.with_extension("md");
@@ -803,15 +849,32 @@ fn load_target(raw_path: &Path) -> Result<LoadedTarget, CliError> {
         let mut cur = resolved_path.parent();
         let mut enclosing_root = None;
         while let Some(dir) = cur {
+            // A relative `drafts/a.md` walks up to `""`, which is the current
+            // directory. `Path::new(".").parent()` is `""` again, so the empty
+            // parent is the last ancestor to check.
+            let at_cwd = dir.as_os_str().is_empty();
+            let dir = if at_cwd { Path::new(".") } else { dir };
             if dir.join("index.md").exists() {
                 enclosing_root = Some(dir.to_path_buf());
                 break;
             }
-            cur = dir.parent();
+            cur = if at_cwd { None } else { dir.parent() };
         }
 
         if let Some(root) = enclosing_root {
-            let bundle = Bundle::load(&root).map_err(|e| CliError::no_input(e.to_string()))?;
+            // Take the target in the form the bundle's own walk reports, so
+            // the id derived below is the one the loaded bundle holds. This
+            // covers a root of `.` with a target of `drafts/a.md`, and a
+            // target named through a symlink inside the bundle.
+            let resolved_path = okf_core::walk::under_root(&root, &resolved_path)
+                .map_err(|e| CliError::no_input(e.to_string()))?
+                .unwrap_or(resolved_path);
+            // The named file is loaded even if an ignore rule excludes it;
+            // the rest of the bundle still honours its ignore rules.
+            let bundle =
+                Bundle::load_with_including(&root, opts, std::slice::from_ref(&resolved_path))
+                    .map_err(|e| CliError::no_input(e.to_string()))?;
+            warn_ignored_indexes(&root, opts);
             let target_id = ConceptId::from_path(&root, &resolved_path).ok();
             let is_concept = target_id.as_ref().is_some_and(|id| bundle.contains(id));
             let concept_count = usize::from(is_concept);
@@ -835,7 +898,7 @@ fn load_target(raw_path: &Path) -> Result<LoadedTarget, CliError> {
             })
         }
     } else {
-        let bundle = load(&resolved_path)?;
+        let bundle = load(&resolved_path, opts)?;
         let count = bundle.len();
         Ok(LoadedTarget {
             bundle,
@@ -847,7 +910,7 @@ fn load_target(raw_path: &Path) -> Result<LoadedTarget, CliError> {
 }
 
 #[allow(clippy::too_many_lines)]
-fn cmd_validate(args: &ValidateArgs) -> Result<ExitCode, CliError> {
+fn cmd_validate(args: &ValidateArgs, opts: &LoadOptions) -> Result<ExitCode, CliError> {
     let raw_path = &args.bundle;
     let fix = args.fix;
     let author = args.author.clone();
@@ -865,7 +928,8 @@ fn cmd_validate(args: &ValidateArgs) -> Result<ExitCode, CliError> {
     }
 
     if fix {
-        let options = FixOptions::validation_only(author);
+        let mut options = FixOptions::validation_only(author);
+        options.load = opts.clone();
         if resolved_path.is_file() {
             let fix_report = remediate_file(&resolved_path, &options)
                 .map_err(|e| CliError::data(format!("could not apply fixes: {e}")))?;
@@ -897,7 +961,7 @@ fn cmd_validate(args: &ValidateArgs) -> Result<ExitCode, CliError> {
         target_path,
         target_id,
         concept_count,
-    } = load_target(raw_path)?;
+    } = load_target(raw_path, opts)?;
     let today_date = args.today.or_else(Date::today_utc);
     let full_report = validate_bundle_at(&bundle, today_date);
 
@@ -973,7 +1037,7 @@ fn cmd_validate(args: &ValidateArgs) -> Result<ExitCode, CliError> {
 }
 
 #[allow(clippy::too_many_lines)]
-fn cmd_lint(args: &LintArgs) -> Result<ExitCode, CliError> {
+fn cmd_lint(args: &LintArgs, opts: &LoadOptions) -> Result<ExitCode, CliError> {
     let raw_path = &args.bundle;
     let fix = args.fix;
     let author = args.author.clone();
@@ -993,6 +1057,7 @@ fn cmd_lint(args: &LintArgs) -> Result<ExitCode, CliError> {
     if fix {
         let options = FixOptions {
             author,
+            load: opts.clone(),
             ..Default::default()
         };
         if resolved_path.is_file() {
@@ -1026,7 +1091,7 @@ fn cmd_lint(args: &LintArgs) -> Result<ExitCode, CliError> {
         target_path,
         target_id,
         concept_count,
-    } = load_target(raw_path)?;
+    } = load_target(raw_path, opts)?;
     let today_date = args.today.or_else(Date::today_utc);
     let full_report = lint_bundle_at(&bundle, today_date);
 
@@ -1102,9 +1167,9 @@ fn cmd_lint(args: &LintArgs) -> Result<ExitCode, CliError> {
     }
 }
 
-fn cmd_info(args: &InfoArgs) -> Result<ExitCode, CliError> {
+fn cmd_info(args: &InfoArgs, opts: &LoadOptions) -> Result<ExitCode, CliError> {
     let path = &args.bundle;
-    let bundle = load(path)?;
+    let bundle = load(path, opts)?;
     let today_date = args.today.or_else(Date::today_utc);
     let json = args.json || args.format.as_deref() == Some("json");
 
@@ -1195,9 +1260,9 @@ fn cmd_info(args: &InfoArgs) -> Result<ExitCode, CliError> {
     Ok(ExitCode::SUCCESS)
 }
 
-fn cmd_trust(args: &TrustArgs) -> Result<ExitCode, CliError> {
+fn cmd_trust(args: &TrustArgs, opts: &LoadOptions) -> Result<ExitCode, CliError> {
     let path = &args.bundle;
-    let bundle = load(path)?;
+    let bundle = load(path, opts)?;
     let today_date = args.today.or_else(Date::today_utc);
     let json = args.json || args.format.as_deref() == Some("json");
 
@@ -1243,9 +1308,9 @@ fn cmd_trust(args: &TrustArgs) -> Result<ExitCode, CliError> {
     Ok(ExitCode::SUCCESS)
 }
 
-fn cmd_computations(args: &ComputationsArgs) -> Result<ExitCode, CliError> {
+fn cmd_computations(args: &ComputationsArgs, opts: &LoadOptions) -> Result<ExitCode, CliError> {
     let path = &args.bundle;
-    let bundle = load(path)?;
+    let bundle = load(path, opts)?;
     let json = args.json || args.format.as_deref() == Some("json");
 
     if json {
@@ -1308,7 +1373,7 @@ fn cmd_computations(args: &ComputationsArgs) -> Result<ExitCode, CliError> {
     Ok(ExitCode::SUCCESS)
 }
 
-fn cmd_index(args: &IndexArgs) -> Result<ExitCode, CliError> {
+fn cmd_index(args: &IndexArgs, opts: &LoadOptions) -> Result<ExitCode, CliError> {
     let path = &args.bundle;
     if !path.is_dir() {
         return Err(CliError::no_input(format!(
@@ -1317,8 +1382,13 @@ fn cmd_index(args: &IndexArgs) -> Result<ExitCode, CliError> {
         )));
     }
     let json = args.json || args.format.as_deref() == Some("json");
-    let written =
-        crate::index::regenerate_indexes(path).map_err(|e| CliError::no_input(e.to_string()))?;
+    warn_ignored_indexes(path, opts);
+    let written = crate::index::regenerate_indexes_with_options(
+        path,
+        &crate::index::default_synthesize,
+        opts,
+    )
+    .map_err(|e| CliError::no_input(e.to_string()))?;
     if json {
         let val = serde_json::json!({
             "okf_version": crate::OKF_VERSION,
@@ -1345,7 +1415,7 @@ enum GraphFormat {
     Json,
 }
 
-fn cmd_graph(args: &GraphArgs) -> Result<ExitCode, CliError> {
+fn cmd_graph(args: &GraphArgs, opts: &LoadOptions) -> Result<ExitCode, CliError> {
     let path = &args.bundle;
     let format = if args.json || args.format == "json" {
         GraphFormat::Json
@@ -1355,7 +1425,7 @@ fn cmd_graph(args: &GraphArgs) -> Result<ExitCode, CliError> {
         GraphFormat::Text
     };
     let sources = args.sources;
-    let bundle = load(path)?;
+    let bundle = load(path, opts)?;
 
     match format {
         GraphFormat::Text => print_graph_text(&bundle, sources),
@@ -1404,7 +1474,7 @@ fn cmd_parse(args: &ParseArgs) -> Result<ExitCode, CliError> {
 }
 
 #[allow(clippy::too_many_lines)]
-fn cmd_fmt(args: &FmtArgs) -> Result<ExitCode, CliError> {
+fn cmd_fmt(args: &FmtArgs, opts: &LoadOptions) -> Result<ExitCode, CliError> {
     let mut resolved_path = args.path.clone();
     if !resolved_path.exists() {
         let with_md = resolved_path.with_extension("md");
@@ -1424,13 +1494,11 @@ fn cmd_fmt(args: &FmtArgs) -> Result<ExitCode, CliError> {
 
     let path_str = target_path.to_string_lossy();
     if check {
-        return cmd_fmt_check(target_path, &path_str, json);
+        return cmd_fmt_check(target_path, &path_str, json, opts);
     }
 
     if target_path.is_dir() {
-        let mut md_files = Vec::new();
-        collect_markdown_files(target_path, &mut md_files)?;
-        md_files.sort();
+        let md_files = collect_markdown_files(target_path, opts)?;
 
         if md_files.is_empty() {
             if json {
@@ -1643,9 +1711,9 @@ fn cmd_new(args: &NewArgs) -> Result<ExitCode, CliError> {
     Ok(ExitCode::SUCCESS)
 }
 
-fn cmd_links(args: &LinksArgs) -> Result<ExitCode, CliError> {
+fn cmd_links(args: &LinksArgs, opts: &LoadOptions) -> Result<ExitCode, CliError> {
     let path = &args.bundle;
-    let bundle = load(path)?;
+    let bundle = load(path, opts)?;
     let broken_only = args.broken;
     let check = args.check;
     let show_external = args.all;
@@ -1658,9 +1726,9 @@ fn cmd_links(args: &LinksArgs) -> Result<ExitCode, CliError> {
     }
 }
 
-fn cmd_diff(args: &DiffArgs) -> Result<ExitCode, CliError> {
-    let a = load(&args.a)?;
-    let b = load(&args.b)?;
+fn cmd_diff(args: &DiffArgs, opts: &LoadOptions) -> Result<ExitCode, CliError> {
+    let a = load(&args.a, opts)?;
+    let b = load(&args.b, opts)?;
     let diff = bundle_diff(&a, &b);
     let json = args.json || args.format.as_deref() == Some("json");
 
@@ -2431,14 +2499,17 @@ fn format_markdown_file(file_path: &Path, text: &str) -> Result<String, Document
 }
 
 #[allow(clippy::too_many_lines)]
-fn cmd_fmt_check(target_path: &Path, path_str: &str, json: bool) -> Result<ExitCode, CliError> {
-    let mut files = Vec::new();
-    if target_path.is_dir() {
-        collect_markdown_files(target_path, &mut files)?;
-        files.sort();
+fn cmd_fmt_check(
+    target_path: &Path,
+    path_str: &str,
+    json: bool,
+    opts: &LoadOptions,
+) -> Result<ExitCode, CliError> {
+    let files = if target_path.is_dir() {
+        collect_markdown_files(target_path, opts)?
     } else {
-        files.push(target_path.to_path_buf());
-    }
+        vec![target_path.to_path_buf()]
+    };
 
     if files.is_empty() {
         if json {
@@ -2529,21 +2600,12 @@ fn cmd_fmt_check(target_path: &Path, path_str: &str, json: bool) -> Result<ExitC
     }
 }
 
-fn collect_markdown_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), CliError> {
-    let entries = std::fs::read_dir(dir).map_err(|e| CliError::no_input(e.to_string()))?;
-    for entry in entries {
-        let entry = entry.map_err(|e| CliError::no_input(e.to_string()))?;
-        let path = entry.path();
-        if path.is_dir() {
-            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            if !name.starts_with('.') && name != "target" && name != "node_modules" {
-                collect_markdown_files(&path, files)?;
-            }
-        } else if path.extension().and_then(|e| e.to_str()) == Some("md") {
-            files.push(path);
-        }
-    }
-    Ok(())
+/// The markdown files `okf fmt` operates on: the same set every other
+/// subcommand sees for this root and ignore configuration.
+fn collect_markdown_files(dir: &Path, opts: &LoadOptions) -> Result<Vec<PathBuf>, CliError> {
+    warn_ignored_indexes(dir, opts);
+    crate::walk::walk_markdown(dir, &crate::walk::WalkOptions::new(&opts.ignore))
+        .map_err(|e| CliError::no_input(e.to_string()))
 }
 
 fn print_links_text(
@@ -2815,9 +2877,23 @@ fn print_diff_json(a: &Bundle, b: &Bundle, diff: &crate::BundleDiff) {
     println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());
 }
 
-fn load_refactor_bundle(bundle_arg: &Path, source_arg: &str) -> Result<Bundle, CliError> {
+fn load_refactor_bundle(
+    bundle_arg: &Path,
+    source_arg: &str,
+    opts: &LoadOptions,
+) -> Result<Bundle, CliError> {
+    let bundle = find_refactor_bundle(bundle_arg, source_arg, opts)?;
+    warn_ignored_indexes(bundle.root(), opts);
+    Ok(bundle)
+}
+
+fn find_refactor_bundle(
+    bundle_arg: &Path,
+    source_arg: &str,
+    opts: &LoadOptions,
+) -> Result<Bundle, CliError> {
     if bundle_arg.join("index.md").exists()
-        && let Ok(b) = Bundle::load(bundle_arg)
+        && let Ok(b) = Bundle::load_with(bundle_arg, opts)
     {
         return Ok(b);
     }
@@ -2829,13 +2905,13 @@ fn load_refactor_bundle(bundle_arg: &Path, source_arg: &str) -> Result<Bundle, C
     };
     while let Some(dir) = cur {
         if dir.join("index.md").exists()
-            && let Ok(b) = Bundle::load(dir)
+            && let Ok(b) = Bundle::load_with(dir, opts)
         {
             return Ok(b);
         }
         cur = dir.parent();
     }
-    Bundle::load(bundle_arg).map_err(|e| CliError::no_input(e.to_string()))
+    Bundle::load_with(bundle_arg, opts).map_err(|e| CliError::no_input(e.to_string()))
 }
 
 fn resolve_concept_id(raw: &str, bundle: &Bundle) -> Result<ConceptId, CliError> {
@@ -2888,6 +2964,7 @@ fn cmd_mv_section(
     source_concept_raw: &str,
     old_sec: &str,
     json: bool,
+    opts: &LoadOptions,
 ) -> Result<ExitCode, CliError> {
     let target_str = &args.target;
     let (_, new_sec) = if let Some((tc, ns)) = target_str.split_once('#') {
@@ -2896,7 +2973,7 @@ fn cmd_mv_section(
         (source_concept_raw, target_str.as_str())
     };
 
-    let bundle = load_refactor_bundle(&args.bundle, source_concept_raw)?;
+    let bundle = load_refactor_bundle(&args.bundle, source_concept_raw, opts)?;
     let concept_id = resolve_concept_id(source_concept_raw, &bundle)?;
 
     let options = RenameSectionOptions {
@@ -2935,14 +3012,14 @@ fn cmd_mv_section(
     Ok(ExitCode::SUCCESS)
 }
 
-fn cmd_mv(args: &MvArgs) -> Result<ExitCode, CliError> {
+fn cmd_mv(args: &MvArgs, opts: &LoadOptions) -> Result<ExitCode, CliError> {
     let json = args.json || args.format.as_deref() == Some("json");
 
     if let Some((source_concept_raw, old_sec)) = args.source.split_once('#') {
-        return cmd_mv_section(args, source_concept_raw, old_sec, json);
+        return cmd_mv_section(args, source_concept_raw, old_sec, json, opts);
     }
 
-    let bundle = load_refactor_bundle(&args.bundle, &args.source)?;
+    let bundle = load_refactor_bundle(&args.bundle, &args.source, opts)?;
     let source = resolve_concept_id(&args.source, &bundle)?;
     let target = resolve_target_concept_id(&args.target, &bundle)?;
 
@@ -2983,8 +3060,8 @@ fn cmd_mv(args: &MvArgs) -> Result<ExitCode, CliError> {
     Ok(ExitCode::SUCCESS)
 }
 
-fn cmd_rm(args: &RmArgs) -> Result<ExitCode, CliError> {
-    let bundle = load_refactor_bundle(&args.bundle, &args.target)?;
+fn cmd_rm(args: &RmArgs, opts: &LoadOptions) -> Result<ExitCode, CliError> {
+    let bundle = load_refactor_bundle(&args.bundle, &args.target, opts)?;
     let target = resolve_concept_id(&args.target, &bundle)?;
     let redirect_to = match &args.redirect_to {
         Some(raw) => Some(resolve_concept_id(raw, &bundle)?),
@@ -3030,8 +3107,8 @@ fn cmd_rm(args: &RmArgs) -> Result<ExitCode, CliError> {
     Ok(ExitCode::SUCCESS)
 }
 
-fn cmd_split(args: &SplitArgs) -> Result<ExitCode, CliError> {
-    let bundle = load_refactor_bundle(&args.bundle, &args.source)?;
+fn cmd_split(args: &SplitArgs, opts: &LoadOptions) -> Result<ExitCode, CliError> {
+    let bundle = load_refactor_bundle(&args.bundle, &args.source, opts)?;
     let source = resolve_concept_id(&args.source, &bundle)?;
     let target = resolve_target_concept_id(&args.target, &bundle)?;
     let json = args.json || args.format.as_deref() == Some("json");
@@ -3077,8 +3154,8 @@ fn cmd_split(args: &SplitArgs) -> Result<ExitCode, CliError> {
     Ok(ExitCode::SUCCESS)
 }
 
-fn cmd_merge(args: &MergeArgs) -> Result<ExitCode, CliError> {
-    let bundle = load_refactor_bundle(&args.bundle, &args.source)?;
+fn cmd_merge(args: &MergeArgs, opts: &LoadOptions) -> Result<ExitCode, CliError> {
+    let bundle = load_refactor_bundle(&args.bundle, &args.source, opts)?;
     let source = resolve_concept_id(&args.source, &bundle)?;
     let target = resolve_concept_id(&args.target, &bundle)?;
     let json = args.json || args.format.as_deref() == Some("json");
