@@ -144,19 +144,50 @@ fn l5_unused_source() {
 }
 
 #[test]
-fn l6_non_standard_actor() {
+fn l6_actor_with_an_undefined_scheme() {
+    // `humans:` is a valid `<scheme>:<id>` actor, but not the `human:` scheme,
+    // so the review does not count as a human one. Worth a note.
     let tmp = TempDir::new();
     tmp.write(
         "metric.md",
         "---\ntype: Metric\ntitle: Revenue\ndescription: d\n\
-         generated: { by: 'Alice Baker', at: 2026-06-20T22:53:05Z }\n\
-         verified: { by: human:walter, at: 2026-06-25T09:00:00Z }\n\
+         generated: { by: reference_agent/v1, at: 2026-06-20T22:53:05Z }\n\
+         verified: { by: humans:walter, at: 2026-06-25T09:00:00Z }\n\
+         sources:\n  - { resource: https://example.com, author: team:finance }\n\
          ---\n\n# Definition\n\nProse.\n",
     );
     tmp.write("index.md", "# Metric\n\n* [Revenue](metric.md)\n");
     let bundle = Bundle::load(tmp.path()).unwrap();
     let report = lint_bundle(&bundle);
-    assert!(has(&report, "L6"), "expected L6 for non-standard actor");
+    let notes: Vec<&str> = report
+        .diagnostics
+        .iter()
+        .filter(|d| d.message.starts_with("[L6]"))
+        .map(|d| d.message.as_str())
+        .collect();
+    // The defined schemes (`team:`) and the agent form are not reported.
+    assert_eq!(notes.len(), 1, "{notes:#?}");
+    assert!(notes[0].contains("`humans`"), "{notes:#?}");
+    assert_eq!(
+        bundle.concepts()[0].trust_tier(),
+        okf_core::TrustTier::MachineConfirmed
+    );
+
+    // A string in neither actor form is a validation warning, not a lint note.
+    tmp.write(
+        "metric.md",
+        "---\ntype: Metric\ntitle: Revenue\ndescription: d\n\
+         generated: { by: 'Alice Baker', at: 2026-06-20T22:53:05Z }\n\
+         ---\n\n# Definition\n\nProse.\n",
+    );
+    let bundle = Bundle::load(tmp.path()).unwrap();
+    assert!(!has(&lint_bundle(&bundle), "L6"));
+    assert!(
+        okf_validator::validate_bundle(&bundle)
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("`generated.by` is not an actor"))
+    );
 }
 
 #[test]

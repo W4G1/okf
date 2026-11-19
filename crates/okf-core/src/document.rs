@@ -2,13 +2,21 @@
 //!
 //! The parse, serialize, and validation behaviour is a faithful port of the
 //! reference implementation's `OKFDocument`
-//! (`okf/src/reference_agent/bundle/document.py`), so documents round-trip
+//! (`src/reference_agent/bundle/document.py`), so documents round-trip
 //! compatibly between the two. Ported to Rust and modified from the original
 //! Apache-2.0 Python source; see the NOTICE file.
 //!
-//! On top of parsing, [`Document`] exposes the v0.2 body conventions that pair
+//! On top of parsing, [`Document`] exposes the body conventions that pair
 //! with frontmatter: footnote attribution keyed to `sources[].id` and
 //! the `# Computation` block of an Attested Computation.
+//!
+//! ## Frontmatter syntax
+//!
+//! The file starts with a line that is exactly `---` and the block ends at
+//! the next such line. A UTF-8 byte order mark before the first line is ignored, and CRLF
+//! line endings are read the same as LF. The block must parse as a YAML
+//! mapping. A file that does not open with `---` has no frontmatter and is all
+//! body; such a file is not a concept.
 
 use crate::computation::{AttestedComputation, InlineComputation};
 use crate::error::DocumentError;
@@ -16,9 +24,20 @@ use crate::footnotes::{self, FootnoteDef, FootnoteRef};
 use crate::frontmatter::{Frontmatter, RECOMMENDED_FRONTMATTER_KEYS, REQUIRED_FRONTMATTER_KEYS};
 use crate::links::{self, Citation, Link};
 use crate::provenance::{self, Attribution};
-use crate::yaml::Value;
 
 const FRONTMATTER_DELIM: &str = "---";
+
+/// `true` for a frontmatter delimiter line: exactly `---`, with nothing
+/// before it. Trailing whitespace is tolerated, since it is invisible in an
+/// editor, but indentation is not: an indented `---` inside a block scalar is
+/// content, and taking it for the end of the block would cut the frontmatter
+/// short.
+pub(crate) fn is_delimiter(line: &str) -> bool {
+    line.trim_end() == FRONTMATTER_DELIM
+}
+
+/// The UTF-8 byte order mark some editors write at the start of a file.
+const BOM: char = '\u{feff}';
 
 /// A parsed OKF concept document.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -65,8 +84,10 @@ impl Document {
     /// is not valid YAML, and [`DocumentError::FrontmatterNotMapping`] if it
     /// parses to a scalar or sequence rather than a mapping.
     pub fn parse(text: &str) -> Result<Self, DocumentError> {
+        // Drop a byte order mark so that the opening `---` is found.
+        let text = text.strip_prefix(BOM).unwrap_or(text);
         let lines: Vec<&str> = text.lines().collect();
-        if lines.is_empty() || lines[0].trim() != FRONTMATTER_DELIM {
+        if lines.is_empty() || !is_delimiter(lines[0]) {
             return Ok(Self {
                 frontmatter: Frontmatter::new(),
                 body: text.to_string(),
@@ -75,7 +96,7 @@ impl Document {
 
         let mut end_idx = None;
         for (i, line) in lines.iter().enumerate().skip(1) {
-            if line.trim() == FRONTMATTER_DELIM {
+            if is_delimiter(line) {
                 end_idx = Some(i);
                 break;
             }
@@ -83,12 +104,7 @@ impl Document {
         let end_idx = end_idx.ok_or(DocumentError::UnterminatedFrontmatter)?;
 
         let fm_text = lines[1..end_idx].join("\n");
-        let value = Value::parse(&fm_text)?;
-        let frontmatter = match value {
-            Value::Null => Frontmatter::new(),
-            Value::Mapping(m) => Frontmatter::from_mapping(m),
-            _ => return Err(DocumentError::FrontmatterNotMapping),
-        };
+        let frontmatter = Frontmatter::parse(&fm_text)?;
 
         let mut body = lines[end_idx + 1..].join("\n");
         if let Some(stripped) = body.strip_prefix('\n') {
@@ -98,17 +114,47 @@ impl Document {
         Ok(Self { frontmatter, body })
     }
 
+    /// `true` when `text` opens a frontmatter block: its first line, after an
+    /// optional byte order mark, is `---`.
+    ///
+    /// This tells a file with an empty block (`---` / `---`) apart from a file
+    /// with no block at all, which [`Document::parse`] reads the same way.
+    #[must_use]
+    pub fn has_frontmatter_block(text: &str) -> bool {
+        text.strip_prefix(BOM)
+            .unwrap_or(text)
+            .lines()
+            .next()
+            .is_some_and(is_delimiter)
+    }
+
     /// Serializes the document back to text: frontmatter delimited by `---`,
     /// a blank line, then the body (terminated by a newline). If the
     /// frontmatter is empty, the delimiters are omitted and only the body is
     /// emitted.
     ///
-    /// `parse` followed by `serialize` preserves frontmatter key order and the
-    /// body (modulo trailing-newline normalization), matching the reference.
-    /// Flow collections are re-emitted in block style, which is the same value
-    /// written differently.
+    /// Frontmatter entries whose value has not changed since the document was
+    /// parsed are written back exactly as they were, so a rewrite touches only
+    /// what it changed: quoting, flow or block style, and comments of the
+    /// other entries survive. See [`Frontmatter::to_yaml_preserving`]. For the
+    /// normalized form that `okf fmt` writes, use
+    /// [`Document::serialize_canonical`].
     #[must_use]
     pub fn serialize(&self) -> String {
+        self.serialize_with(&self.frontmatter.to_yaml_preserving())
+    }
+
+    /// Serializes the document with its frontmatter re-emitted in the
+    /// canonical block style, whatever it looked like when it was parsed.
+    ///
+    /// This is a deliberate reformat. Tools that edit a document should prefer
+    /// [`Document::serialize`], which leaves untouched values as written.
+    #[must_use]
+    pub fn serialize_canonical(&self) -> String {
+        self.serialize_with(&self.frontmatter.to_yaml_canonical())
+    }
+
+    fn serialize_with(&self, frontmatter_yaml: &str) -> String {
         let body = if self.body.ends_with('\n') {
             self.body.clone()
         } else {
@@ -117,20 +163,30 @@ impl Document {
         if self.frontmatter.is_empty() {
             body
         } else {
-            let fm_text = Value::Mapping(self.frontmatter.as_mapping().clone())
-                .to_yaml_string()
-                .trim_end()
-                .to_string();
+            let fm_text = frontmatter_yaml.trim_end();
             format!("{FRONTMATTER_DELIM}\n{fm_text}\n{FRONTMATTER_DELIM}\n\n{body}")
         }
     }
 
-    /// Validates the document: the frontmatter must carry a
+    /// `true` when the document is a concept: its frontmatter carries a
+    /// non-empty `type`.
+    ///
+    /// A markdown file without frontmatter, or without `type`, is not a
+    /// concept. Consumers skip it, and it does not affect conformance, which
+    /// is what lets a bundle hold a `README.md` or a `SKILL.md`. The reserved
+    /// names `index.md` and `log.md` are never concepts whatever they contain,
+    /// which only the file's name can tell.
+    #[must_use]
+    pub fn is_concept(&self) -> bool {
+        self.validate().is_ok()
+    }
+
+    /// Validates the document as a concept: the frontmatter must carry a
     /// non-empty `type`, and nothing else is required.
     ///
-    /// That single check is the whole of document-level validation in v0.2, and
-    /// it matches the reference implementation's `OKFDocument.validate`. Every
-    /// other field the spec describes is a SHOULD, so a concept carrying only
+    /// That single check is the whole of document-level validation, and it
+    /// matches the reference implementation's `OKFDocument.validate`. Every
+    /// other field the spec describes is optional, so a concept carrying only
     /// `type` passes here; see [`Document::missing_recommended`] for the
     /// producer-side checklist and
     /// `validate_bundle` (in the okf-validator crate) for the full diagnostics.

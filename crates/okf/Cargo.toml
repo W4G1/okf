@@ -1,6 +1,6 @@
 [package]
 name = "okf"
-description = "The Open Knowledge Format (OKF) v0.2 in pure Rust: the `okf` CLI (validate, lint, inspect, index, graph, format, diff) plus the full okf-core and okf-validator library APIs re-exported."
+description = "The Open Knowledge Format (OKF) v0.3 in pure Rust: the `okf` CLI (validate, lint, inspect, index, graph, format, diff) plus the full okf-core and okf-validator library APIs re-exported."
 documentation = "https://docs.rs/okf"
 readme = "../../README.md"
 version.workspace = true

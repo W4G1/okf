@@ -11,7 +11,7 @@ use crate::search::{SearchEntry, SearchIndex};
 use okf_core::log::{Log, LogEntry};
 use okf_core::{
     ActorKind, AttestedComputation, Bundle, BundleError, ComputationSource, ConceptId, Date,
-    DateTimeField, Status, TrustTier,
+    DateTimeField, Freshness, Status, TrustTier,
 };
 use okf_validator::{Language, Report, check_syntax, lint_bundle_at, validate_bundle_at};
 use std::collections::{BTreeMap, HashMap};
@@ -24,8 +24,19 @@ pub struct ConceptMeta {
     pub tier: TrustTier,
     /// Lifecycle status.
     pub status: Status,
-    /// Whether the concept is stale on the snapshot's `today`.
+    /// Whether the concept is stale on the snapshot's `today`. A concept whose
+    /// `stale_after` does not parse counts as stale: it is never shown as
+    /// fresh.
     pub stale: bool,
+    /// Where the concept stands against its `stale_after` on the snapshot's
+    /// `today`: undated, fresh, stale, or malformed (present but unparseable).
+    pub freshness: Freshness,
+    /// Whether every verification predates the last change to the content,
+    /// which leaves the concept unverified.
+    pub verified_before_change: bool,
+    /// The concept that replaces this one, when it is deprecated and names a
+    /// replacement in the bundle.
+    pub superseded_by: Option<ConceptId>,
     /// Days until `stale_after` when it lies within the next 30 days.
     pub stale_in_days: Option<i64>,
     /// Days since `stale_after` passed, when stale.
@@ -42,7 +53,7 @@ pub struct ConceptMeta {
     pub out_degree: usize,
     /// Incoming link count.
     pub in_degree: usize,
-    /// Outgoing links whose target does not exist.
+    /// Outgoing links whose target names nothing in the bundle.
     pub broken_out: usize,
     /// Number of `sources` entries.
     pub source_count: usize,
@@ -68,6 +79,8 @@ pub struct ActorStats {
 pub struct BundleStats {
     /// Total concepts.
     pub concepts: usize,
+    /// Markdown files that are not concepts (no frontmatter, or no `type`).
+    pub non_concepts: usize,
     /// Files that failed to parse.
     pub parse_errors: usize,
     /// Concept counts by trust tier: `[unverified, machine, human]`.
@@ -108,6 +121,9 @@ pub struct ContractInfo {
     pub contract: AttestedComputation,
     /// Path-valued fields with their resolution result.
     pub path_checks: Vec<(String, String, Option<PathBuf>)>,
+    /// Whether a consumer may show a value from this computation as attested:
+    /// it has a `runtime`, an `attester`, and a computation that can be found.
+    pub attestable: bool,
     /// Inline-code syntax verdict, when the computation is inline and the
     /// runtime names a checkable language.
     pub syntax: Option<Result<(), String>>,
@@ -132,6 +148,9 @@ pub enum LeafKind {
     Index(PathBuf),
     /// A reserved `log.md`.
     Log(PathBuf),
+    /// A markdown file that is not a concept: it has no frontmatter, or no
+    /// `type`. A README, say.
+    Document(PathBuf),
     /// A file whose frontmatter failed to parse.
     Broken(PathBuf),
 }
@@ -269,11 +288,11 @@ fn build_meta(
         let fm = &concept.document.frontmatter;
         let stale_after = fm.stale_after();
         let stale = concept.is_stale_on(today);
-        let effective = stale_after.as_ref().and_then(|f| {
-            f.datetime
-                .map(|dt| dt.utc_date())
-                .or_else(|| Date::parse(f.raw.trim().get(..10).unwrap_or("")))
-        });
+        let freshness = concept.freshness_at(today.to_utc_datetime());
+        let effective = stale_after
+            .as_ref()
+            .and_then(DateTimeField::instant)
+            .map(|instant| instant.utc_date());
         let (stale_in_days, overdue_days) = effective.map_or((None, None), |date| {
             let delta = days_between(today, date);
             if stale {
@@ -302,6 +321,9 @@ fn build_meta(
                 tier: concept.trust_tier(),
                 status: concept.status(),
                 stale,
+                freshness,
+                verified_before_change: fm.verified_before_change(),
+                superseded_by: bundle.superseded_by(&concept.id).cloned(),
                 stale_in_days,
                 overdue_days,
                 stale_after,
@@ -310,7 +332,7 @@ fn build_meta(
                 lint_findings: count_for(lint, None),
                 out_degree: links.len(),
                 in_degree: bundle.backlinks(&concept.id).len(),
-                broken_out: links.iter().filter(|l| !l.exists).count(),
+                broken_out: links.iter().filter(|l| l.is_broken()).count(),
                 source_count: concept.sources().len(),
                 is_computation: concept.document.frontmatter.is_attested_computation(),
                 headings: okf_core::extract_headings(&concept.document.body)
@@ -425,6 +447,15 @@ fn build_tree(bundle: &Bundle) -> FileTree {
             insert(&mut root, &dirs, (name, LeafKind::Log(path.clone())));
         }
     }
+    for file in bundle.non_concepts() {
+        if let Some((dirs, name)) = rel_segments(&file.path) {
+            insert(
+                &mut root,
+                &dirs,
+                (name, LeafKind::Document(file.path.clone())),
+            );
+        }
+    }
     for (path, _) in bundle.parse_errors() {
         if let Some((dirs, name)) = rel_segments(path) {
             insert(&mut root, &dirs, (name, LeafKind::Broken(path.clone())));
@@ -448,16 +479,14 @@ fn build_search(bundle: &Bundle, meta: &HashMap<ConceptId, ConceptMeta>) -> Sear
                     .document
                     .frontmatter
                     .description()
-                    .map(std::borrow::Cow::into_owned)
-                    .unwrap_or_default(),
+                    .map_or_else(String::new, std::borrow::Cow::into_owned),
                 tags: concept.document.frontmatter.tags(),
-                headings: m
-                    .map(|m| m.headings.iter().map(|(_, t)| t.clone()).collect())
-                    .unwrap_or_default(),
+                headings: m.map_or_else(Vec::new, |m| {
+                    m.headings.iter().map(|(_, t)| t.clone()).collect()
+                }),
                 type_: concept
                     .type_()
-                    .map(std::borrow::Cow::into_owned)
-                    .unwrap_or_default(),
+                    .map_or_else(String::new, std::borrow::Cow::into_owned),
                 tier: concept.trust_tier(),
                 status: concept.status(),
                 stale: m.is_some_and(|m| m.stale),
@@ -499,6 +528,7 @@ fn build_log_views(bundle: &Bundle) -> LogViews {
 fn build_stats(bundle: &Bundle, meta: &HashMap<ConceptId, ConceptMeta>) -> BundleStats {
     let mut stats = BundleStats {
         concepts: bundle.len(),
+        non_concepts: bundle.non_concepts().len(),
         parse_errors: bundle.parse_errors().len(),
         broken_links: bundle.broken_links().len(),
         ..BundleStats::default()
@@ -555,11 +585,19 @@ fn build_attention(bundle: &Bundle, meta: &HashMap<ConceptId, ConceptMeta>) -> V
         } else if let Some(days) = m.stale_in_days {
             risk += 10 + (30 - days).max(0);
             reasons.push(format!("stale in {days}d"));
+        } else if m.freshness == Freshness::Malformed {
+            // Never treated as fresh: nobody can tell when it needs a review.
+            risk += 40;
+            reasons.push("stale_after malformed".to_string());
         } else if m.stale {
             risk += 40;
             reasons.push("stale".to_string());
         }
         match m.tier {
+            TrustTier::Unverified if m.verified_before_change => {
+                risk += 25;
+                reasons.push("verified before last change".to_string());
+            }
             TrustTier::Unverified => {
                 risk += 25;
                 reasons.push("unverified".to_string());
@@ -572,10 +610,18 @@ fn build_attention(bundle: &Bundle, meta: &HashMap<ConceptId, ConceptMeta>) -> V
         }
         if m.status.is_deprecated() && m.in_degree > 0 {
             risk += 20;
+            let replacement = m
+                .superseded_by
+                .as_ref()
+                .map_or_else(String::new, |id| format!(" · superseded by {id}"));
             reasons.push(format!(
-                "deprecated · {} incoming links remain",
+                "deprecated · {} incoming links remain{replacement}",
                 m.in_degree
             ));
+        } else if !m.status.is_known() {
+            // Kept and shown, but not current knowledge.
+            risk += 10;
+            reasons.push(format!("unknown status `{}`", m.status));
         }
         if m.in_degree > 0 {
             risk += i64::try_from(m.in_degree).unwrap_or(0).min(10) * 3;
@@ -615,18 +661,40 @@ fn build_contracts(bundle: &Bundle) -> Vec<ContractInfo> {
             if contract.runtime.is_none() {
                 issues.push("missing required `runtime`".to_string());
             }
-            if contract.computation.is_missing() {
-                issues.push(
-                    "no computation: neither inline block nor `computation` path".to_string(),
-                );
+            match &contract.computation {
+                ComputationSource::Missing => issues.push(
+                    "no computation: neither a fenced block nor a `computation` path".to_string(),
+                ),
+                ComputationSource::Inline(inline) if !inline.fenced => issues.push(
+                    "computation block is indented, not fenced: consumers cannot locate it"
+                        .to_string(),
+                ),
+                ComputationSource::Inline(inline) if inline.fenced_blocks > 1 => {
+                    issues.push(format!(
+                        "{} fenced blocks in the Computation section; the first is used",
+                        inline.fenced_blocks
+                    ));
+                }
+                _ => {}
             }
             if contract.has_redundant_inline {
                 issues.push("both `computation` path and inline block present".to_string());
             }
-            for parameter in &contract.parameters {
-                if parameter.name.is_none() {
-                    issues.push("a parameter entry lacks `name`".to_string());
-                }
+            // Entries without `name` and `type` are ignored by consumers, so
+            // they are missing from the typed contract. Count them from the
+            // raw value.
+            let ignored_parameters = concept
+                .document
+                .frontmatter
+                .get("parameters")
+                .map_or_else(Vec::new, okf_core::Parameter::list_from_value)
+                .iter()
+                .filter(|parameter| !parameter.is_complete())
+                .count();
+            if ignored_parameters > 0 {
+                issues.push(format!(
+                    "{ignored_parameters} parameter entr(ies) lack `name` or `type` and are ignored"
+                ));
             }
             let mut path_checks = Vec::new();
             for (field, raw) in contract.path_fields() {
@@ -640,11 +708,14 @@ fn build_contracts(bundle: &Bundle) -> Vec<ContractInfo> {
                 (ComputationSource::Inline(inline), runtime) => {
                     // `None` (no verdict) when this build has no parser for the
                     // language, so an unchecked body is not shown as passing.
+                    // A template (dbt, Looker) is not valid in the language
+                    // its fence names until its runtime expands it.
                     inline
                         .language
                         .clone()
                         .or_else(|| runtime.map(String::from))
                         .filter(|tag| Language::from_tag(tag).is_supported())
+                        .filter(|_| !okf_validator::is_templated(&inline.code))
                         .map(|tag| check_syntax(&tag, &inline.code).map_err(|e| e.to_string()))
                 }
                 _ => None,
@@ -657,6 +728,7 @@ fn build_contracts(bundle: &Bundle) -> Vec<ContractInfo> {
                 title: concept.display_title(),
                 contract,
                 path_checks,
+                attestable: bundle.is_attestable(&concept.id),
                 syntax,
                 issues,
             })

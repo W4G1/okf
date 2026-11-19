@@ -12,7 +12,7 @@ fn okf() -> Command {
 #[test]
 fn cli_mv_renames_and_rewrites_links() {
     let tmp = TempDir::new();
-    tmp.write("index.md", "---\nokf_version: \"0.2\"\n---\n\n# Bundle\n");
+    tmp.write("index.md", "---\nokf_version: \"0.3\"\n---\n\n# Bundle\n");
     tmp.write(
         "auth/token.md",
         "---\ntype: Concept\ntitle: Auth Token\n---\n\n# Auth Token\n\nSee [Profile](../users/profile.md).\n",
@@ -56,7 +56,7 @@ fn cli_mv_renames_and_rewrites_links() {
 #[test]
 fn cli_rename_alias_and_json_output() {
     let tmp = TempDir::new();
-    tmp.write("index.md", "---\nokf_version: \"0.2\"\n---\n\n# Bundle\n");
+    tmp.write("index.md", "---\nokf_version: \"0.3\"\n---\n\n# Bundle\n");
     tmp.write(
         "old_name.md",
         "---\ntype: Concept\ntitle: Old Name\n---\n\n# Old Name\n",
@@ -89,7 +89,7 @@ fn cli_rename_alias_and_json_output() {
 #[test]
 fn cli_rm_protection_and_redirect() {
     let tmp = TempDir::new();
-    tmp.write("index.md", "---\nokf_version: \"0.2\"\n---\n\n# Bundle\n");
+    tmp.write("index.md", "---\nokf_version: \"0.3\"\n---\n\n# Bundle\n");
     tmp.write(
         "deprecated.md",
         "---\ntype: Concept\ntitle: Deprecated\n---\n\n# Deprecated\n",
@@ -138,7 +138,7 @@ fn cli_rm_protection_and_redirect() {
 #[test]
 fn cli_rm_unlink_flag() {
     let tmp = TempDir::new();
-    tmp.write("index.md", "---\nokf_version: \"0.2\"\n---\n\n# Bundle\n");
+    tmp.write("index.md", "---\nokf_version: \"0.3\"\n---\n\n# Bundle\n");
     tmp.write(
         "obsolete.md",
         "---\ntype: Concept\ntitle: Obsolete\n---\n\n# Obsolete\n",
@@ -174,7 +174,7 @@ fn cli_rm_unlink_flag() {
 #[test]
 fn cli_split_extracts_section() {
     let tmp = TempDir::new();
-    tmp.write("index.md", "---\nokf_version: \"0.2\"\n---\n\n# Bundle\n");
+    tmp.write("index.md", "---\nokf_version: \"0.3\"\n---\n\n# Bundle\n");
     tmp.write(
         "billing/pricing.md",
         "---\ntype: Concept\ntitle: Pricing\n---\n\n# Pricing\n\nGeneral overview.\n\n## Enterprise Tier\n\nEnterprise pricing includes dedicated support.\nSLA is 99.99% uptime.\n\n## Community Tier\n\nFree tier.\n",
@@ -220,7 +220,7 @@ fn cli_split_extracts_section() {
 #[test]
 fn cli_merge_consolidates_concepts() {
     let tmp = TempDir::new();
-    tmp.write("index.md", "---\nokf_version: \"0.2\"\n---\n\n# Bundle\n");
+    tmp.write("index.md", "---\nokf_version: \"0.3\"\n---\n\n# Bundle\n");
     tmp.write(
         "billing/discounts.md",
         "---\ntype: Concept\ntitle: Discounts\n---\n\n# Discounts\n\nCoupon codes.\n",
@@ -267,7 +267,7 @@ fn cli_merge_consolidates_concepts() {
 #[test]
 fn cli_mv_renames_section_and_rewrites_anchors() {
     let tmp = TempDir::new();
-    tmp.write("index.md", "---\nokf_version: \"0.2\"\n---\n\n# Bundle\n");
+    tmp.write("index.md", "---\nokf_version: \"0.3\"\n---\n\n# Bundle\n");
     tmp.write(
         "billing/pricing.md",
         "---\ntype: Concept\ntitle: Pricing\n---\n\n# Pricing\n\nSee [Internal Tiers](#pricing-tiers).\n\n## Pricing Tiers\n\nTier details.\n",
@@ -327,7 +327,7 @@ fn cli_refactor_exit_codes_missing_bundle_and_data_error() {
 
     // 2. Concept not found -> EX_DATAERR (65)
     let tmp = TempDir::new();
-    tmp.write("index.md", "---\nokf_version: \"0.2\"\n---\n\n# Bundle\n");
+    tmp.write("index.md", "---\nokf_version: \"0.3\"\n---\n\n# Bundle\n");
 
     let output_data_err = okf()
         .args([
@@ -361,7 +361,7 @@ fn cli_refactor_exit_codes_missing_bundle_and_data_error() {
 #[test]
 fn cli_refactor_author_attribution_and_path_resolution() {
     let tmp = TempDir::new();
-    tmp.write("index.md", "---\nokf_version: \"0.2\"\n---\n\n# Bundle\n");
+    tmp.write("index.md", "---\nokf_version: \"0.3\"\n---\n\n# Bundle\n");
     tmp.write(
         "module/service.md",
         "---\ntype: Concept\ntitle: Service\n---\n\n# Service\n\n## Implementation\n\n```python\n# ## Implementation\npass\n```\n\nDetails.\n",
@@ -417,7 +417,7 @@ fn cli_refactor_author_attribution_and_path_resolution() {
 #[test]
 fn cli_merge_force_flag_accepted() {
     let tmp = TempDir::new();
-    tmp.write("index.md", "---\nokf_version: \"0.2\"\n---\n\n# Bundle\n");
+    tmp.write("index.md", "---\nokf_version: \"0.3\"\n---\n\n# Bundle\n");
     tmp.write(
         "a.md",
         "---\ntype: Concept\ntitle: A\n---\n\n# A\n\nContent A.\n",
@@ -452,7 +452,7 @@ fn cli_refactor_infers_bundle_from_source_file_path() {
 
     std::fs::write(
         bundle_dir.join("index.md"),
-        "---\nokf_version: \"0.2\"\n---\n\n# Bundle\n",
+        "---\nokf_version: \"0.3\"\n---\n\n# Bundle\n",
     )
     .unwrap();
     std::fs::write(
@@ -481,4 +481,75 @@ fn cli_refactor_infers_bundle_from_source_file_path() {
     );
     assert!(!bundle_dir.join("source.md").exists());
     assert!(bundle_dir.join("target.md").exists());
+}
+
+#[test]
+fn cli_mv_leave_stub_keeps_a_deprecated_concept_at_the_old_path() {
+    let tmp = TempDir::new();
+    tmp.write("index.md", "---\nokf_version: \"0.3\"\n---\n\n# Bundle\n");
+    tmp.write(
+        "metrics/mrr.md",
+        "---\ntype: Metric\ntitle: MRR\ndescription: Monthly recurring revenue.\ngenerated:\n  by: human:alice\n  at: \"2026-01-01T00:00:00Z\"\n---\n\n# MRR\n\nBody.\n",
+    );
+    tmp.write(
+        "metrics/legacy.md",
+        "---\ntype: Metric\ntitle: Legacy MRR\nstatus: deprecated\nsuperseded_by: mrr.md\n---\n\n# Legacy\n\nRetired.\n",
+    );
+
+    let output = okf()
+        .args([
+            "mv",
+            "metrics/mrr",
+            "finance/mrr",
+            "--bundle",
+            tmp.path().to_str().unwrap(),
+            "--leave-stub",
+            "--author",
+            "human:alice",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["left_stub"].as_bool(), Some(true));
+
+    // The stub names the new location, and the path field that named the old
+    // one follows the concept.
+    let stub = tmp.read("metrics/mrr.md");
+    assert!(stub.contains("status: deprecated"), "{stub}");
+    assert!(stub.contains("superseded_by: /finance/mrr.md"), "{stub}");
+    assert!(
+        tmp.read("metrics/legacy.md")
+            .contains("superseded_by: ../finance/mrr.md"),
+        "{}",
+        tmp.read("metrics/legacy.md")
+    );
+
+    // `okf trust` follows the stub to its replacement, and the bundle is
+    // still conformant.
+    let trust = okf()
+        .args(["trust", tmp.path().to_str().unwrap()])
+        .output()
+        .unwrap();
+    let trust = String::from_utf8_lossy(&trust.stdout).into_owned();
+    assert!(
+        trust.contains("metrics/mrr [deprecated] unverified\n  superseded_by: finance/mrr\n"),
+        "{trust}"
+    );
+    let validate = okf()
+        .args(["validate", tmp.path().to_str().unwrap(), "--json"])
+        .output()
+        .unwrap();
+    let validate: serde_json::Value = serde_json::from_slice(&validate.stdout).unwrap();
+    assert_eq!(
+        validate["conformant"].as_bool(),
+        Some(true),
+        "{validate:#?}"
+    );
+    assert_eq!(validate["error_count"].as_i64(), Some(0));
 }

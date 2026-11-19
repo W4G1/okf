@@ -30,24 +30,94 @@ impl std::error::Error for YamlError {}
 /// Empty or comment/whitespace-only input parses to [`Value::Null`], mirroring
 /// `PyYAML`'s `safe_load("") is None`.
 pub fn parse(text: &str) -> Result<Value, YamlError> {
-    let lines: Vec<String> = text.lines().map(std::string::ToString::to_string).collect();
-    let mut p = Parser { lines, pos: 0 };
+    parse_with_layout(text).map(|(value, _)| value)
+}
+
+/// The source text of a top-level block mapping, split per entry.
+///
+/// This is what lets a document be rewritten without re-serializing the
+/// values that did not change: an entry whose value is untouched is written
+/// back from [`EntryLayout::text`] verbatim, keeping its quoting, its flow or
+/// block style, and its comments.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Layout {
+    /// One element per entry of the top-level mapping, in source order, so the
+    /// indices line up with the parsed mapping's entries.
+    pub entries: Vec<EntryLayout>,
+    /// Blank and comment lines after the last entry.
+    pub trailing: String,
+}
+
+/// The source lines of one top-level mapping entry.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct EntryLayout {
+    /// Blank and comment lines that precede the entry.
+    pub leading: String,
+    /// The entry itself: its `key:` line and every line of its value.
+    pub text: String,
+}
+
+/// Parses YAML text and, when the document is a block mapping at column zero,
+/// also returns where each top-level entry sits in the source.
+pub fn parse_with_layout(text: &str) -> Result<(Value, Option<Layout>), YamlError> {
+    let source: Vec<&str> = text.lines().collect();
+    let lines: Vec<String> = source.iter().map(|line| (*line).to_string()).collect();
+    let mut p = Parser {
+        lines,
+        pos: 0,
+        spans: None,
+    };
     p.skip_blank_and_comments();
     if p.pos >= p.lines.len() {
-        return Ok(Value::Null);
+        return Ok((Value::Null, None));
     }
     let base = p.current_indent()?;
+    if base == 0 {
+        p.spans = Some(Vec::new());
+    }
     let value = p.parse_node(base)?;
     p.skip_blank_and_comments();
     if p.pos < p.lines.len() {
         return Err(p.err("unexpected trailing content"));
     }
-    Ok(value)
+
+    let layout = match (&value, p.spans.take()) {
+        (Value::Mapping(map), Some(spans)) if spans.len() == map.len() => {
+            let join = |from: usize, to: usize| -> String {
+                source[from..to]
+                    .iter()
+                    .fold(String::new(), |mut acc, line| {
+                        acc.push_str(line);
+                        acc.push('\n');
+                        acc
+                    })
+            };
+            let mut previous_end = 0;
+            let mut entries = Vec::with_capacity(spans.len());
+            for (start, end) in spans {
+                entries.push(EntryLayout {
+                    leading: join(previous_end, start),
+                    text: join(start, end),
+                });
+                previous_end = end;
+            }
+            Some(Layout {
+                entries,
+                trailing: join(previous_end, source.len()),
+            })
+        }
+        _ => None,
+    };
+    Ok((value, layout))
 }
 
 struct Parser {
     lines: Vec<String>,
     pos: usize,
+    /// While the outermost mapping is being parsed, the `[start, end)` line
+    /// span of each of its entries. `None` when the layout is not wanted, or
+    /// once a nested mapping is being parsed.
+    spans: Option<Vec<(usize, usize)>>,
 }
 
 impl Parser {
@@ -97,6 +167,9 @@ impl Parser {
 
     fn parse_mapping(&mut self, indent: usize) -> Result<Value, YamlError> {
         let mut map = Mapping::new();
+        // Only the outermost mapping records its layout. Taking the recorder
+        // here hides it from every nested mapping parsed below.
+        let mut spans = self.spans.take();
         loop {
             self.skip_blank_and_comments();
             if self.pos >= self.lines.len() {
@@ -132,7 +205,25 @@ impl Parser {
                 }
             };
             map.push_raw(key, value);
+            if let Some(spans) = spans.as_mut() {
+                // Parsing a nested block runs past the blank and comment lines
+                // that follow it. Those belong to the next entry, so stop the
+                // span at the last line that is part of this value. An
+                // indented `#` line is kept: inside a block scalar it is
+                // content, not a comment.
+                let mut end = self.pos;
+                while end > entry_line + 1 {
+                    let line = &self.lines[end - 1];
+                    if line.trim().is_empty() || line.starts_with('#') {
+                        end -= 1;
+                    } else {
+                        break;
+                    }
+                }
+                spans.push((entry_line, end));
+            }
         }
+        self.spans = spans;
         Ok(Value::Mapping(map))
     }
 
@@ -166,6 +257,15 @@ impl Parser {
                 self.pos += 1;
                 let v = self.parse_nested(indent)?;
                 seq.push(v);
+            } else if item_text == "-" || item_text.starts_with("- ") {
+                // A sequence that starts on its parent's line ("- - x").
+                // Rewrite the outer dash to whitespace, as for an inline
+                // mapping below, and parse the inner sequence in place.
+                let mut rewritten = " ".repeat(item_offset);
+                rewritten.push_str(&item_text);
+                self.lines[entry_line] = rewritten;
+                let v = self.parse_sequence(item_offset)?;
+                seq.push(v);
             } else if item_text.starts_with('|') || item_text.starts_with('>') {
                 self.pos += 1;
                 let v = self.parse_block_scalar(indent, &item_text)?;
@@ -189,7 +289,7 @@ impl Parser {
     }
 
     /// Reads a scalar that starts as `first` and may continue on the following
-    /// lines, folding each line break into a single space.
+    /// lines.
     ///
     /// YAML lets both plain and quoted scalars span lines (line folding),
     /// and `PyYAML`'s `safe_dump` leans on it: any value longer than its 80-column
@@ -198,12 +298,21 @@ impl Parser {
     /// `title` values, and a parser that rejects them cannot read
     /// reference-produced OKF at all.
     ///
-    /// A following line continues the scalar when it reaches `min_indent` and,
-    /// outside an open quote, does not itself open a mapping entry, a sequence
-    /// item, or a comment. Inside an unclosed quote every line belongs to the
-    /// scalar until the closing quote, since a wrapped quoted value may contain
-    /// anything, `key: value` shapes included. Flow collections are returned as
-    /// they stand: nothing emits one across lines.
+    /// The folding rules are YAML's. A line break between two lines of text
+    /// becomes a single space, and each blank line inside a quoted scalar
+    /// becomes a newline. In a double-quoted scalar a line that ends in `\`
+    /// escapes its break, so the next line continues it with nothing in
+    /// between.
+    ///
+    /// A following line continues a *plain* scalar when it reaches
+    /// `min_indent` and is not a comment or a mapping entry. A line that
+    /// starts with `- ` is text there, not a sequence item: nothing can nest
+    /// under a scalar. Inside an unclosed quote every line belongs to the
+    /// scalar until the closing quote, since a wrapped quoted value may
+    /// contain anything, `key: value` shapes included.
+    ///
+    /// A flow collection may span lines too; its lines are gathered until its
+    /// brackets balance.
     fn read_scalar(
         &mut self,
         first: &str,
@@ -211,26 +320,56 @@ impl Parser {
         line: usize,
     ) -> Result<Value, YamlError> {
         if first.starts_with('[') || first.starts_with('{') {
-            return parse_inline_value(first, line);
+            let mut text = first.to_string();
+            while !flow_is_complete(&text) {
+                let Some(next) = self.lines.get(self.pos) else {
+                    break;
+                };
+                text.push(' ');
+                text.push_str(next.trim());
+                self.pos += 1;
+            }
+            return parse_inline_value(&text, line);
         }
 
         let mut text = first.to_string();
         let mut open_quote = unclosed_quote(first);
+        // Blank lines seen inside an open quote since the last line of text.
+        let mut blank_lines = 0;
         while self.pos < self.lines.len() {
             let raw = &self.lines[self.pos];
             if raw.trim().is_empty() {
-                break;
+                if open_quote.is_none() {
+                    break;
+                }
+                blank_lines += 1;
+                self.pos += 1;
+                continue;
             }
-            let ind = indent_of(raw).ok_or_else(|| self.err("tab character in indentation"))?;
-            if ind < min_indent {
-                break;
+            if open_quote.is_none() {
+                let ind = indent_of(raw).ok_or_else(|| self.err("tab character in indentation"))?;
+                if ind < min_indent {
+                    break;
+                }
             }
             let content = raw.trim();
-            if open_quote.is_none() && starts_a_new_node(content) {
+            if open_quote.is_none()
+                && (content.starts_with('#') || split_key_value(content).is_some())
+            {
                 break;
             }
-            text.push(' ');
+            if open_quote == Some('"') && blank_lines == 0 && ends_with_escaped_break(&text) {
+                // The break is escaped: join the lines with nothing between.
+                text.pop();
+            } else if blank_lines > 0 {
+                text.push_str(&"\n".repeat(blank_lines));
+            } else {
+                text.push(' ');
+            }
+            blank_lines = 0;
             text.push_str(content);
+            // Only the line just added can close the quote; everything before
+            // it was already scanned.
             if let Some(quote) = open_quote
                 && closes_quote(content, quote, 0)
             {
@@ -281,11 +420,38 @@ impl Parser {
         header: &str,
     ) -> Result<Value, YamlError> {
         let style = header.as_bytes()[0]; // b'|' or b'>'
-        let chomp = header[1..].chars().find(|c| *c == '+' || *c == '-');
+        // After the indicator come an optional chomping indicator and an
+        // optional indentation digit, in either order, then nothing but a
+        // comment. Anything else is not a block scalar at all: `>90% of
+        // orders` is a mistake for a quoted string, and reading it as an
+        // empty block would silently lose the text.
+        let indicators = header[1..]
+            .split_once(" #")
+            .map_or(&header[1..], |(before, _)| before)
+            .trim_end();
+        let mut chomp = None;
+        let mut explicit_indent = None;
+        for c in indicators.chars() {
+            match c {
+                '+' | '-' if chomp.is_none() => chomp = Some(c),
+                '1'..='9' if explicit_indent.is_none() => {
+                    explicit_indent = c.to_digit(10).map(|d| d as usize);
+                }
+                _ => {
+                    return Err(YamlError {
+                        line: self.pos,
+                        message: format!(
+                            "invalid block scalar header {header:?}; quote the value if it \
+                             is meant as text"
+                        ),
+                    });
+                }
+            }
+        }
 
         // Collect body lines: blanks, or lines indented deeper than the parent.
         let mut body: Vec<String> = Vec::new();
-        let mut block_indent: Option<usize> = None;
+        let mut block_indent: Option<usize> = explicit_indent.map(|n| parent_indent + n);
         while self.pos < self.lines.len() {
             let line = &self.lines[self.pos];
             if line.trim().is_empty() {
@@ -297,16 +463,16 @@ impl Parser {
             if ind <= parent_indent {
                 break;
             }
-            if block_indent.is_none() {
-                block_indent = Some(ind);
+            let bi = *block_indent.get_or_insert(ind);
+            if ind < bi {
+                // Every line of a block scalar is indented at least as far as
+                // its first. Fewer columns would put the cut inside the text.
+                return Err(
+                    self.err("block scalar line is indented less than the block's first line")
+                );
             }
-            let bi = block_indent.unwrap();
-            let stripped = if line.len() >= bi {
-                line[bi..].to_string()
-            } else {
-                String::new()
-            };
-            body.push(stripped);
+            // The first `bi` bytes are spaces, so this is a character boundary.
+            body.push(line[bi..].to_string());
             self.pos += 1;
         }
 
@@ -363,13 +529,46 @@ fn fold_lines(lines: &[String]) -> String {
     out
 }
 
-/// Whether a (trimmed) line opens a node of its own rather than continuing the
-/// scalar above it: a comment, a sequence item, or a mapping entry.
-fn starts_a_new_node(content: &str) -> bool {
-    content.starts_with('#')
-        || content == "-"
-        || content.starts_with("- ")
-        || split_key_value(content).is_some()
+/// Whether a double-quoted scalar's text so far ends with a `\` that escapes
+/// the line break after it: an odd run of trailing backslashes.
+fn ends_with_escaped_break(text: &str) -> bool {
+    text.chars().rev().take_while(|c| *c == '\\').count() % 2 == 1
+}
+
+/// Whether the brackets of a flow collection are balanced, so that it ends
+/// on the last line gathered. Brackets inside quotes do not count.
+fn flow_is_complete(text: &str) -> bool {
+    let chars: Vec<char> = text.chars().collect();
+    let mut depth: i32 = 0;
+    let mut quote: Option<char> = None;
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        match quote {
+            Some('"') if c == '\\' => i += 1,
+            Some(q) if c == q => {
+                if q == '\'' && chars.get(i + 1) == Some(&'\'') {
+                    i += 1;
+                } else {
+                    quote = None;
+                }
+            }
+            Some(_) => {}
+            None => match c {
+                // A quote opens a scalar only where a scalar can start.
+                '\'' | '"'
+                    if i == 0 || matches!(chars[i - 1], ' ' | '\t' | ',' | '[' | '{' | ':') =>
+                {
+                    quote = Some(c);
+                }
+                '[' | '{' => depth += 1,
+                ']' | '}' => depth -= 1,
+                _ => {}
+            },
+        }
+        i += 1;
+    }
+    depth <= 0 && quote.is_none()
 }
 
 /// The quote character of a quoted scalar that `s` opens but does not close, or
@@ -512,7 +711,39 @@ fn parse_scalar(token: &str, line: usize) -> Result<Value, YamlError> {
     }
     // Plain scalar: strip a trailing " #" comment.
     let plain = strip_trailing_comment(t);
+    check_plain_scalar(plain, line)?;
     Ok(interpret_plain(plain))
+}
+
+/// Rejects a plain scalar that is not one in YAML, rather than reading it as
+/// the text it looks like.
+///
+/// Other YAML readers refuse these, so accepting them here would call a
+/// document valid that the next tool cannot open:
+///
+/// - `key: a: b`. A plain scalar cannot contain `: `, which YAML reads as the
+///   start of a nested mapping on the same line. The value needs quotes.
+/// - `&anchor`, `*alias`, and `!tag`. This parser implements none of them
+///   (see the module docs), and reading the marker as text would change what
+///   the document says.
+fn check_plain_scalar(plain: &str, line: usize) -> Result<(), YamlError> {
+    let fail = |message: String| {
+        Err(YamlError {
+            line: line + 1,
+            message,
+        })
+    };
+    if plain.contains(": ") || plain.contains(":\t") || (plain.len() > 1 && plain.ends_with(':')) {
+        return fail(format!(
+            "a plain scalar cannot contain `: `; quote the value: {plain:?}"
+        ));
+    }
+    match plain.chars().next() {
+        Some('&') => fail(format!("anchors are not supported: {plain:?}")),
+        Some('*') => fail(format!("aliases are not supported: {plain:?}")),
+        Some('!') => fail(format!("tags are not supported: {plain:?}")),
+        _ => Ok(()),
+    }
 }
 
 /// Strips a trailing ` #...` comment from a plain scalar.
@@ -598,7 +829,7 @@ fn parse_double_quoted(s: &str, line: usize) -> Result<String, YamlError> {
             })?;
             match e {
                 'n' => out.push('\n'),
-                't' => out.push('\t'),
+                't' | '\t' => out.push('\t'),
                 'r' => out.push('\r'),
                 '"' => out.push('"'),
                 '\\' => out.push('\\'),
@@ -606,9 +837,22 @@ fn parse_double_quoted(s: &str, line: usize) -> Result<String, YamlError> {
                 '0' => out.push('\0'),
                 'b' => out.push('\u{0008}'),
                 'f' => out.push('\u{000C}'),
-                'u' => {
+                'a' => out.push('\u{0007}'),
+                'v' => out.push('\u{000B}'),
+                'e' => out.push('\u{001B}'),
+                ' ' => out.push(' '),
+                'N' => out.push('\u{0085}'),
+                '_' => out.push('\u{00A0}'),
+                'L' => out.push('\u{2028}'),
+                'P' => out.push('\u{2029}'),
+                'x' | 'u' | 'U' => {
+                    let digits = match e {
+                        'x' => 2,
+                        'u' => 4,
+                        _ => 8,
+                    };
                     let start = i + 1;
-                    let end = start + 4;
+                    let end = start + digits;
                     let hex = chars.get(start..end).ok_or_else(|| YamlError {
                         line: line + 1,
                         message: "truncated Unicode escape in double-quoted string".into(),
@@ -834,7 +1078,11 @@ impl FlowParser {
             }
         }
         let raw: String = self.chars[start..self.pos].iter().collect();
-        Ok(interpret_plain(raw.trim()))
+        let plain = raw.trim();
+        if matches!(plain.chars().next(), Some('&' | '*' | '!')) {
+            check_plain_scalar(plain, self.line)?;
+        }
+        Ok(interpret_plain(plain))
     }
 }
 

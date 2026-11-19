@@ -1,19 +1,30 @@
-//! Calendar dates and ISO-8601 datetimes for the trust and lifecycle families.
+//! Calendar dates and RFC 3339 timestamps for the trust and lifecycle families.
 //!
-//! OKF v0.2 puts timestamp fields in frontmatter and asks consumers to answer
-//! questions about them: which verification is the most recent, and is
-//! `now >= stale_after`.
+//! OKF puts timestamp fields in frontmatter and asks consumers to answer
+//! questions about them: which verification is current, which is the most
+//! recent, and is `now >= stale_after`.
 //!
-//! Every timestamp-valued key in OKF frontmatter is an ISO-8601 datetime with
-//! an explicit UTC offset (e.g. `2026-06-30T14:00:00Z`), across `generated.at`,
-//! `verified[].at`, `stale_after`, `sources[].last_modified`, and `usage_window`.
-//! Plain `YYYY-MM-DD` dates are used only in `log.md` section headings.
+//! The timestamp keys are `generated.at`, `verified[].at`, `stale_after`,
+//! `sources[].last_modified`, `usage_window.from`, and `usage_window.to`. Each
+//! value has one of two forms from RFC 3339, and no other form is valid:
 //!
-//! Answering those needs real date arithmetic, so this module implements the
-//! small amount required on the standard library alone: a proleptic Gregorian
-//! [`Date`], an offset-aware [`DateTime`] that orders correctly across time
-//! zones, and the [`DateField`] / [`DateTimeField`] wrappers that keep the raw
-//! scalar around so a validator can report *what* failed to parse.
+//! | Form      | Example                | Meaning                                |
+//! |-----------|------------------------|----------------------------------------|
+//! | Date-time | `2026-06-30T14:00:00Z` | That instant (an offset is required).  |
+//! | Date only | `2026-06-30`           | The start of that day in UTC.          |
+//!
+//! Plain `YYYY-MM-DD` dates are also what `log.md` section headings use.
+//!
+//! Answering those questions needs real date arithmetic, so this module
+//! implements the small amount required on the standard library alone: a
+//! proleptic Gregorian [`Date`], an offset-aware [`DateTime`] that orders
+//! correctly across time zones, and the [`DateTimeField`] wrapper that keeps
+//! the raw scalar around so a validator can report *what* failed to parse.
+//!
+//! Two parsers sit side by side on purpose. [`DateTime::parse_rfc3339`] is the
+//! strict one that decides whether a frontmatter value is valid, and
+//! [`DateTime::parse`] is a lenient ISO 8601 reader used to *repair* values
+//! that are close (a missing offset, a space separator).
 
 use std::fmt;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -147,11 +158,15 @@ pub struct DateTime {
 }
 
 impl DateTime {
-    /// Parses an ISO-8601 datetime.
+    /// Parses an ISO-8601 datetime leniently.
     ///
     /// Accepts `YYYY-MM-DD`, `YYYY-MM-DDTHH:MM[:SS[.fraction]]` (with `T`, `t`,
     /// or a space as the separator), and an optional `Z` / `±HH:MM` / `±HHMM` /
     /// `±HH` zone.
+    ///
+    /// This is deliberately wider than what OKF accepts in frontmatter, so
+    /// that a value which is merely close can be read and repaired. Use
+    /// [`DateTime::parse_rfc3339`] to decide whether a value is valid.
     pub fn parse(s: &str) -> Option<Self> {
         let s = s.trim();
         if !s.is_ascii() || s.len() < 10 {
@@ -192,13 +207,7 @@ impl DateTime {
                     return None;
                 }
                 rest = &rest[digits.len()..];
-                // Left-align to nanosecond precision, truncating beyond 9 digits.
-                let mut nanos = digits;
-                nanos.truncate(9);
-                while nanos.len() < 9 {
-                    nanos.push('0');
-                }
-                nanosecond = nanos.parse().ok()?;
+                nanosecond = fraction_to_nanos(&digits)?;
             }
         }
         if hour > 23 || minute > 59 || second > 60 {
@@ -213,6 +222,82 @@ impl DateTime {
             second,
             nanosecond,
             offset_minutes,
+            has_time: true,
+        })
+    }
+
+    /// Parses an OKF timestamp: one of the two RFC 3339 forms the
+    /// specification allows, and nothing else.
+    ///
+    /// - A `date-time`, `YYYY-MM-DDTHH:MM:SS[.fraction]` followed by `Z` or a
+    ///   `±HH:MM` offset. The `T` and `Z` may be lower case. The offset is
+    ///   required: a date-time without one is malformed.
+    /// - A `full-date`, `YYYY-MM-DD`, which means the start of that day in
+    ///   UTC. The result is midnight with a zero offset, and
+    ///   [`DateTime::has_time`] stays `false` so the written form is still
+    ///   distinguishable.
+    ///
+    /// Unlike [`DateTime::parse`], nothing is trimmed and nothing is guessed:
+    /// a space separator, a missing seconds field, or a `±HHMM` offset all
+    /// return `None`.
+    #[must_use]
+    pub fn parse_rfc3339(s: &str) -> Option<Self> {
+        if !s.is_ascii() || s.len() < 10 {
+            return None;
+        }
+        let date = Date::parse(&s[..10])?;
+        let rest = &s[10..];
+        if rest.is_empty() {
+            return Some(Self {
+                has_time: false,
+                ..Self::from_date_utc(date)
+            });
+        }
+
+        let mut rest = rest.strip_prefix('T').or_else(|| rest.strip_prefix('t'))?;
+        let hour = take_u32(&mut rest, 2)?;
+        expect(&mut rest, ':')?;
+        let minute = take_u32(&mut rest, 2)?;
+        expect(&mut rest, ':')?;
+        let second = take_u32(&mut rest, 2)?;
+        let mut nanosecond = 0;
+        if let Some(after_dot) = rest.strip_prefix('.') {
+            let digits = after_dot.bytes().take_while(u8::is_ascii_digit).count();
+            if digits == 0 {
+                return None;
+            }
+            nanosecond = fraction_to_nanos(&after_dot[..digits])?;
+            rest = &after_dot[digits..];
+        }
+        if hour > 23 || minute > 59 || second > 60 {
+            return None;
+        }
+
+        let offset_minutes = if rest.eq_ignore_ascii_case("z") {
+            0
+        } else {
+            let sign = match rest.as_bytes().first() {
+                Some(b'+') => 1,
+                Some(b'-') => -1,
+                _ => return None,
+            };
+            let mut zone = &rest[1..];
+            let hours = take_u32(&mut zone, 2)?;
+            expect(&mut zone, ':')?;
+            let minutes = take_u32(&mut zone, 2)?;
+            if !zone.is_empty() || hours > 23 || minutes > 59 {
+                return None;
+            }
+            sign * (i32::try_from(hours).ok()? * 60 + i32::try_from(minutes).ok()?)
+        };
+
+        Some(Self {
+            date,
+            hour,
+            minute,
+            second,
+            nanosecond,
+            offset_minutes: Some(offset_minutes),
             has_time: true,
         })
     }
@@ -285,6 +370,10 @@ impl DateTime {
 /// - Datetime with space separator `YYYY-MM-DD HH:MM:SS` -> `YYYY-MM-DDTHH:MM:SSZ`
 /// - Already valid datetime with offset -> canonical formatted string
 /// - Unparseable string -> `None`
+///
+/// This always produces the date-time form. A date-only value is valid on its
+/// own, so prefer [`repair_timestamp`] when the aim is to fix what is broken
+/// and leave what is valid untouched.
 #[must_use]
 pub fn normalize_iso_datetime(s: &str) -> Option<String> {
     let clean = s.trim().trim_matches(|c| c == '\'' || c == '"').trim();
@@ -298,6 +387,41 @@ pub fn normalize_iso_datetime(s: &str) -> Option<String> {
     } else {
         Some(dt.to_string())
     }
+}
+
+/// Repairs a timestamp value, returning the replacement text, or `None` when
+/// the value should be left exactly as written.
+///
+/// A value that is already one of the two valid forms is not rewritten, with
+/// one exception: with `prefer_datetime` set, a date-only value is expanded to
+/// the equivalent `YYYY-MM-DDT00:00:00Z`. That is for `generated.at` and
+/// `verified[].at`, which the specification asks producers to write as
+/// date-times because consumers compare them.
+///
+/// A value that is close but not valid is rewritten to the canonical
+/// date-time form: a space separator becomes `T`, a `±HHMM` offset gains its
+/// colon, and a missing offset is filled in as UTC. That last repair is an
+/// assumption, so callers should say so when they report it. A value that
+/// cannot be read as a date at all returns `None`.
+#[must_use]
+pub fn repair_timestamp(s: &str, prefer_datetime: bool) -> Option<String> {
+    if let Some(valid) = DateTime::parse_rfc3339(s) {
+        return (prefer_datetime && !valid.has_time).then(|| format!("{}T00:00:00Z", valid.date));
+    }
+    let dt = DateTime::parse(s)?;
+    if !dt.has_time {
+        // A date with stray whitespace around it.
+        return Some(if prefer_datetime {
+            format!("{}T00:00:00Z", dt.date)
+        } else {
+            dt.date.to_string()
+        });
+    }
+    let mut repaired = dt;
+    if repaired.offset_minutes.is_none() {
+        repaired.offset_minutes = Some(0);
+    }
+    Some(repaired.to_string())
 }
 
 impl PartialOrd for DateTime {
@@ -343,15 +467,14 @@ impl std::str::FromStr for DateTime {
     }
 }
 
-/// A frontmatter date field: the scalar exactly as written, plus its parse.
+/// A date-only field: the scalar exactly as written, plus its parse.
 ///
-/// Keeping the raw text lets a consumer round-trip the value and lets
-/// the okf-validator crate report *which* scalar is malformed instead of
-/// silently dropping it: the spec's permissiveness rule means an
-/// unparseable date must never make a document unreadable.
+/// OKF's own timestamp keys are read through [`DateTimeField`], which accepts
+/// a date as well as a date-time. This stricter wrapper is for values that are
+/// dates and nothing else, such as a `log.md` date heading.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DateField {
-    /// The scalar as written in the frontmatter.
+    /// The scalar as written.
     pub raw: String,
     /// The parsed date, or `None` if `raw` is not a `YYYY-MM-DD` date.
     pub date: Option<Date>,
@@ -372,17 +495,7 @@ impl DateField {
     }
 
     /// The date this field designates, accepting a datetime by taking its date
-    /// part.
-    ///
-    /// [`DateField::date`] is deliberately strict, because the spec asks
-    /// `stale_after` for "an absolute date (`YYYY-MM-DD`)" and the validator
-    /// should report a datetime there as the deviation it is. A comparison still
-    /// has to reach a verdict, though, and reading a malformed date as "never
-    /// stale" is the dangerous direction: a concept well past its date would
-    /// look current. So comparisons use this instead, which matches the
-    /// reference implementation's `is_stale` (it truncates with
-    /// `date.fromisoformat(str(raw)[:10])`). The written date is used as-is,
-    /// without shifting by any UTC offset, exactly as that truncation does.
+    /// part as written, without shifting by any UTC offset.
     #[must_use]
     pub fn effective_date(&self) -> Option<Date> {
         self.date
@@ -396,42 +509,71 @@ impl fmt::Display for DateField {
     }
 }
 
-/// A frontmatter datetime field: the scalar exactly as written, plus its parse.
+/// A frontmatter timestamp field: the scalar exactly as written, plus its
+/// parse.
 ///
 /// Keeping the raw text lets a consumer round-trip the value and lets
 /// the okf-validator crate report *which* scalar is malformed instead of
 /// silently dropping it: the spec's permissiveness rule means an
-/// unparseable datetime must never make a document unreadable.
+/// unparseable timestamp must never make a document unreadable.
+///
+/// Read the value through [`DateTimeField::instant`], which is `Some` only for
+/// the two forms the specification allows. [`DateTimeField::datetime`] is the
+/// lenient reading kept for diagnostics and repair, and it is also set for
+/// values that are *not* valid, so do not compare with it directly.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DateTimeField {
     /// The scalar as written in the frontmatter.
     pub raw: String,
-    /// The parsed datetime, or `None` if `raw` is not an ISO-8601
-    /// datetime. A date-only or offset-less value remains available through
-    /// `datetime` so it can be diagnosed without losing the original scalar.
+    /// A lenient ISO-8601 reading of `raw`, or `None` if it is not a date at
+    /// all. An offset-less or space-separated value still parses here, so
+    /// that it can be diagnosed and repaired without losing the original
+    /// scalar. Use [`DateTimeField::instant`] for the valid reading.
     pub datetime: Option<DateTime>,
+    /// The strict reading: `Some` only for a valid OKF timestamp.
+    instant: Option<DateTime>,
 }
 
 impl DateTimeField {
     /// Wraps a raw scalar, parsing it if possible.
     pub fn new(raw: impl Into<String>) -> Self {
         let raw = raw.into();
-        let datetime = DateTime::parse(&raw);
-        Self { raw, datetime }
+        let instant = DateTime::parse_rfc3339(&raw);
+        let datetime = instant.or_else(|| DateTime::parse(&raw));
+        Self {
+            raw,
+            datetime,
+            instant,
+        }
     }
 
-    /// `true` if the raw scalar parsed as an ISO-8601 datetime with a time of
-    /// day and an explicit UTC offset.
+    /// `true` if the raw scalar is a valid OKF timestamp: an RFC 3339
+    /// date-time with an explicit offset, or a date only.
     #[must_use]
     pub const fn is_valid(&self) -> bool {
-        self.has_time() && self.has_offset()
+        self.instant.is_some()
     }
 
-    /// `true` if the raw scalar parsed as a datetime with a time of day.
+    /// The instant this field names, or `None` when the value is malformed.
     ///
-    /// [`DateTime::parse`] intentionally also accepts date-only values for
-    /// callers that need a generic ISO-8601 date/datetime parser. OKF frontmatter
-    /// timestamp fields use [`DateTimeField::is_valid`].
+    /// A date-only value is the start of that day in UTC, so the two forms
+    /// compare with each other directly.
+    #[must_use]
+    pub const fn instant(&self) -> Option<DateTime> {
+        self.instant
+    }
+
+    /// `true` if the value is valid and written in the date-only form.
+    #[must_use]
+    pub const fn is_date_only(&self) -> bool {
+        match self.instant {
+            Some(instant) => !instant.has_time,
+            None => false,
+        }
+    }
+
+    /// `true` if the raw scalar reads as a datetime with a time of day,
+    /// whether or not it is valid.
     #[must_use]
     pub const fn has_time(&self) -> bool {
         match self.datetime {
@@ -440,13 +582,20 @@ impl DateTimeField {
         }
     }
 
-    /// `true` if the raw scalar parsed with an explicit UTC offset.
+    /// `true` if the raw scalar was written with an explicit UTC offset.
     #[must_use]
     pub const fn has_offset(&self) -> bool {
         match self.datetime {
-            Some(datetime) => datetime.offset_minutes.is_some(),
+            Some(datetime) => datetime.has_time && datetime.offset_minutes.is_some(),
             None => false,
         }
+    }
+
+    /// `true` if the value can be read leniently, so that
+    /// [`repair_timestamp`] has something to work with.
+    #[must_use]
+    pub const fn is_repairable(&self) -> bool {
+        self.instant.is_none() && self.datetime.is_some()
     }
 }
 
@@ -454,6 +603,16 @@ impl fmt::Display for DateTimeField {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.raw)
     }
+}
+
+/// Left-aligns a run of fraction digits to nanosecond precision, truncating
+/// beyond nine digits.
+fn fraction_to_nanos(digits: &str) -> Option<u32> {
+    let mut nanos: String = digits.chars().take(9).collect();
+    while nanos.len() < 9 {
+        nanos.push('0');
+    }
+    nanos.parse().ok()
 }
 
 fn expect<'a>(s: &mut &'a str, c: char) -> Option<()> {
@@ -621,6 +780,51 @@ mod tests {
     }
 
     #[test]
+    fn rfc3339_accepts_exactly_the_two_forms() {
+        let instant = DateTime::parse_rfc3339("2026-06-30T14:00:00Z").unwrap();
+        assert!(instant.has_time);
+        assert_eq!(instant.offset_minutes, Some(0));
+        assert_eq!(
+            DateTime::parse_rfc3339("2026-06-30t14:00:00.5z")
+                .unwrap()
+                .nanosecond,
+            500_000_000
+        );
+        assert_eq!(
+            DateTime::parse_rfc3339("2026-09-23T14:00:00+02:00")
+                .unwrap()
+                .offset_minutes,
+            Some(120)
+        );
+
+        // A date only is the start of that day in UTC.
+        let day = DateTime::parse_rfc3339("2026-06-30").unwrap();
+        assert!(!day.has_time);
+        assert_eq!(
+            day.cmp(&DateTime::parse_rfc3339("2026-06-30T00:00:00Z").unwrap()),
+            std::cmp::Ordering::Equal
+        );
+        assert_eq!(day.to_string(), "2026-06-30");
+
+        for malformed in [
+            "2026-06-30T14:00:00",      // no offset
+            "2026-06-30 14:00:00Z",     // space separator
+            "2026-06-30T14:00Z",        // no seconds
+            "2026-06-30T14:00:00+0200", // offset without a colon
+            "2026-06-30T14:00:00+02",   // offset without minutes
+            "2026-06-30T14:00:00.Z",    // empty fraction
+            "2026-06-30T24:00:00Z",     // hour out of range
+            "2026-02-30",               // no such day
+            "20260630",
+            " 2026-06-30",
+            "soon",
+            "",
+        ] {
+            assert_eq!(DateTime::parse_rfc3339(malformed), None, "{malformed:?}");
+        }
+    }
+
+    #[test]
     fn fields_keep_raw_text() {
         let bad = DateField::new("last tuesday");
         assert!(!bad.is_valid());
@@ -630,17 +834,58 @@ mod tests {
         assert!(good.is_valid());
         assert!(good.has_time());
         assert!(good.has_offset());
-        assert_eq!(good.datetime.unwrap().date, Date::new(2026, 6, 25).unwrap());
+        assert!(!good.is_date_only());
+        assert_eq!(
+            good.instant().unwrap().date,
+            Date::new(2026, 6, 25).unwrap()
+        );
 
+        // No offset: readable for repair, but not a valid timestamp.
         let no_offset = DateTimeField::new("2026-06-25T09:00:00");
         assert!(!no_offset.is_valid());
+        assert!(no_offset.instant().is_none());
         assert!(no_offset.has_time());
         assert!(!no_offset.has_offset());
+        assert!(no_offset.is_repairable());
 
+        // A date only is valid, and names midnight UTC.
         let date_only = DateTimeField::new("2026-06-25");
-        assert!(!date_only.is_valid());
+        assert!(date_only.is_valid());
+        assert!(date_only.is_date_only());
         assert!(!date_only.has_time());
-        assert!(!date_only.has_offset());
+        assert_eq!(
+            date_only.instant().unwrap().to_utc_seconds(),
+            DateTime::parse("2026-06-25T00:00:00Z")
+                .unwrap()
+                .to_utc_seconds()
+        );
+
+        let garbage = DateTimeField::new("soon");
+        assert!(!garbage.is_valid());
+        assert!(!garbage.is_repairable());
+    }
+
+    #[test]
+    fn repair_leaves_valid_values_alone() {
+        // Valid values are never rewritten.
+        assert_eq!(repair_timestamp("2026-06-30T14:20:00Z", false), None);
+        assert_eq!(repair_timestamp("2026-06-30T14:20:00+02:00", true), None);
+        assert_eq!(repair_timestamp("2026-06-30", false), None);
+        // Except a date where a date-time is preferred.
+        assert_eq!(
+            repair_timestamp("2026-06-30", true).as_deref(),
+            Some("2026-06-30T00:00:00Z")
+        );
+        // Close-but-invalid values are repaired.
+        assert_eq!(
+            repair_timestamp("2026-06-30T14:20:00", false).as_deref(),
+            Some("2026-06-30T14:20:00Z")
+        );
+        assert_eq!(
+            repair_timestamp("2026-06-30 14:20:00+0200", false).as_deref(),
+            Some("2026-06-30T14:20:00+02:00")
+        );
+        assert_eq!(repair_timestamp("last tuesday", true), None);
     }
 
     #[test]

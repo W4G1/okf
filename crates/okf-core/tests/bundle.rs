@@ -4,7 +4,9 @@
 mod common;
 
 use common::TempDir;
-use okf_core::{Bundle, BundleError, ConceptId, ConceptIdError, DocumentError};
+use okf_core::{
+    Bundle, ConceptId, ConceptIdError, DocumentError, LinkTarget, NonConceptReason, PathResolution,
+};
 use okf_validator::{Severity, validate_bundle};
 
 /// Builds the Appendix A example bundle and returns its temp dir.
@@ -117,16 +119,113 @@ fn appendix_a_is_conformant() {
 }
 
 #[test]
-fn missing_type_is_a_conformance_error() {
+fn a_file_without_type_is_not_a_concept() {
+    // A markdown file with no frontmatter, or no `type`, is not a concept.
+    // It is skipped, and the bundle stays conformant: this is what lets a
+    // bundle hold a README.
     let tmp = TempDir::new();
-    tmp.write("bad.md", "---\ntitle: No Type\n---\nbody\n");
+    tmp.write("a.md", "---\ntype: Note\n---\nbody\n");
+    tmp.write("untyped.md", "---\ntitle: No Type\n---\nbody\n");
+    tmp.write("blank-type.md", "---\ntype: \"\"\n---\nbody\n");
+    tmp.write("README.md", "# Read me\n\nNot knowledge.\n");
     let bundle = Bundle::load(tmp.path()).unwrap();
+
+    assert_eq!(bundle.len(), 1);
+    assert!(bundle.parse_errors().is_empty());
+    let skipped: Vec<(String, NonConceptReason)> = bundle
+        .non_concepts()
+        .iter()
+        .map(|file| {
+            (
+                file.path
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned(),
+                file.reason,
+            )
+        })
+        .collect();
+    assert_eq!(
+        skipped,
+        vec![
+            ("README.md".to_string(), NonConceptReason::NoFrontmatter),
+            ("blank-type.md".to_string(), NonConceptReason::NoType),
+            ("untyped.md".to_string(), NonConceptReason::NoType),
+        ]
+    );
+
     let report = validate_bundle(&bundle);
-    assert!(!report.is_conformant());
-    assert!(
+    assert!(report.is_conformant());
+    assert_eq!(
         report
-            .of(Severity::Error)
-            .any(|d| d.message.contains("type"))
+            .of(Severity::Warning)
+            .filter(|d| d.message.contains("not a concept"))
+            .count(),
+        3
+    );
+}
+
+#[test]
+fn dot_paths_are_not_part_of_the_bundle() {
+    let tmp = TempDir::new();
+    tmp.write("a.md", "---\ntype: Note\n---\nbody\n");
+    tmp.write(".hidden.md", "---\ntype: Note\n---\nbody\n");
+    tmp.write(
+        ".github/pull_request_template.md",
+        "---\nnot: [valid\n---\n",
+    );
+    tmp.write("tables/.drafts/wip.md", "---\ntype: Note\n---\nbody\n");
+    let bundle = Bundle::load(tmp.path()).unwrap();
+    assert_eq!(bundle.len(), 1);
+    assert!(bundle.non_concepts().is_empty());
+    // Not even its broken frontmatter is looked at.
+    assert!(bundle.parse_errors().is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn symbolic_links_out_of_the_bundle_root_are_not_followed() {
+    let outside = TempDir::new();
+    outside.write("secret.md", "---\ntype: Secret\n---\nbody\n");
+    outside.write("attester.py", "print('x')\n");
+
+    let tmp = TempDir::new();
+    tmp.write(
+        "a.md",
+        "---\ntype: Attested Computation\nruntime: python\nattester:\n  resource: /escape.py\n---\n\
+         See [inside](inside.md) and [outside](outside.md).\n",
+    );
+    tmp.write("real.md", "---\ntype: Note\n---\nbody\n");
+    std::os::unix::fs::symlink(tmp.path().join("real.md"), tmp.path().join("inside.md")).unwrap();
+    std::os::unix::fs::symlink(
+        outside.path().join("secret.md"),
+        tmp.path().join("outside.md"),
+    )
+    .unwrap();
+    std::os::unix::fs::symlink(
+        outside.path().join("attester.py"),
+        tmp.path().join("escape.py"),
+    )
+    .unwrap();
+    std::os::unix::fs::symlink(outside.path(), tmp.path().join("linked-dir")).unwrap();
+
+    let bundle = Bundle::load(tmp.path()).unwrap();
+    let ids: Vec<String> = bundle.concepts().iter().map(|c| c.id.to_string()).collect();
+    // The link that stays inside is a concept; the one that leaves is not
+    // read, and the linked directory is not walked.
+    assert_eq!(ids, vec!["a", "inside", "real"]);
+
+    // A path field that leads out of the root is external: never read.
+    let a = ConceptId::parse("a").unwrap();
+    assert_eq!(
+        bundle.resolve_path(&a, "/escape.py"),
+        PathResolution::External
+    );
+    assert_eq!(bundle.resolve_path_field(&a, "/escape.py"), None);
+    assert_eq!(
+        bundle.resolve_path(&a, "../../etc/passwd"),
+        PathResolution::External
     );
 }
 
@@ -329,12 +428,11 @@ fn parallel_load_path_preserves_sorted_concept_order() {
 }
 
 #[test]
-fn parallel_load_surfaces_io_errors_in_file_order() {
+fn a_file_that_is_not_utf8_is_reported_and_the_rest_still_loads() {
     // >PARALLEL_THRESHOLD files so the worker-thread path is taken. A
-    // mid-list file is non-UTF8, so `read_to_string` returns an `io::Error`,
-    // and the loader surfaces the first I/O failure in chunk order — which,
-    // because chunks are contiguous slices of the sorted file list, is the
-    // earliest failure in file order.
+    // mid-list file is not UTF-8. That is a fault of the one file, like
+    // frontmatter that does not parse: it is recorded against the file, and
+    // the other concepts load, in path order.
     let tmp = TempDir::new();
     let names = [
         "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m",
@@ -345,15 +443,23 @@ fn parallel_load_surfaces_io_errors_in_file_order() {
             &format!("---\ntype: Reference\ntitle: {name}\ndescription: d\n---\n\nProse.\n"),
         );
     }
-    // Overwrite `f.md` with invalid UTF-8 (`read_to_string` errors here).
     std::fs::write(tmp.path().join("f.md"), b"\xff\xfe not utf-8").unwrap();
 
-    let err = Bundle::load(tmp.path()).expect_err("non-UTF8 file must error");
-    let BundleError::Io { kind, .. } = err else {
-        panic!("expected BundleError::Io, got {err:?}");
+    let bundle = Bundle::load(tmp.path()).unwrap();
+    let ids: Vec<String> = bundle.concepts().iter().map(|c| c.id.to_string()).collect();
+    let expected: Vec<String> = names
+        .iter()
+        .filter(|name| **name != "f")
+        .map(|name| (*name).to_string())
+        .collect();
+    assert_eq!(ids, expected);
+
+    let [(path, error)] = bundle.parse_errors() else {
+        panic!("expected one parse error: {:?}", bundle.parse_errors());
     };
-    // `read_to_string` reports `InvalidData` for non-UTF8 input.
-    assert_eq!(kind, std::io::ErrorKind::InvalidData);
+    assert!(path.ends_with("f.md"));
+    assert!(matches!(error, DocumentError::NotUtf8));
+    assert!(error.to_string().contains("not valid UTF-8"));
 }
 
 #[test]
@@ -392,4 +498,85 @@ fn document_error_invalid_concept_id_carries_a_typed_source() {
         .and_then(|s| s.downcast_ref::<ConceptIdError>())
         .expect("source should be a ConceptIdError");
     let _ = src; // presence is the assertion
+}
+
+#[test]
+fn paths_are_case_sensitive_on_every_file_system() {
+    // On a case-insensitive file system `Tables/Orders.md` would open
+    // `tables/orders.md`. Paths are case-sensitive, so it must not resolve,
+    // or the same bundle would read differently on another machine.
+    let tmp = TempDir::new();
+    tmp.write("tables/orders.md", "---\ntype: Table\n---\nbody\n");
+    tmp.write("attesters/check.py", "print(1)\n");
+    tmp.write(
+        "a.md",
+        "---\ntype: Note\nsources:\n  - { resource: /Tables/Orders.md }\n---\n\
+         See [orders](Tables/Orders.md) and the [attester](attesters/Check.py).\n",
+    );
+    let bundle = Bundle::load(tmp.path()).unwrap();
+    let a = ConceptId::parse("a").unwrap();
+
+    assert!(
+        bundle
+            .links_from(&a)
+            .iter()
+            .all(okf_core::ResolvedLink::is_broken)
+    );
+    assert_eq!(
+        bundle.resolve_path(&a, "/Tables/Orders.md"),
+        PathResolution::Missing
+    );
+    assert!(bundle.derived_from(&a).is_empty());
+    assert!(matches!(
+        bundle.resolve_path(&a, "/tables/orders.md"),
+        PathResolution::Found(_)
+    ));
+}
+
+#[cfg(unix)]
+#[test]
+fn a_root_index_that_links_out_of_the_bundle_is_not_its_metadata() {
+    // The root `index.md` is a symbolic link to a file outside the bundle.
+    // What that file says is not this bundle's metadata, and regenerating the
+    // indexes must not write through the link.
+    let outside = TempDir::new();
+    let foreign = "---\nokf_version: \"0.3\"\ntitle: Somebody Else's Bundle\n---\n\n# Elsewhere\n";
+    outside.write("index.md", foreign);
+
+    let tmp = TempDir::new();
+    tmp.write("a.md", "---\ntype: Note\ntitle: A\n---\nBody.\n");
+    std::os::unix::fs::symlink(outside.path().join("index.md"), tmp.path().join("index.md"))
+        .unwrap();
+
+    let bundle = Bundle::load(tmp.path()).unwrap();
+    assert_eq!(bundle.metadata().title, None);
+    assert_eq!(bundle.okf_version(), None);
+
+    okf_core::index::regenerate_indexes(tmp.path()).unwrap();
+    assert_eq!(outside.read("index.md"), foreign);
+}
+
+#[test]
+fn a_link_to_a_directory_is_not_a_link_to_the_concept_of_that_name() {
+    // `[x](/metrics)` names the directory `metrics/`, which exists. The
+    // concept `metrics.md` next to it is a different target: the `.md`-less
+    // reading only applies when the target names nothing on disk.
+    let tmp = TempDir::new();
+    tmp.write("metrics.md", "---\ntype: Note\n---\nAbout metrics.\n");
+    tmp.write("metrics/revenue.md", "---\ntype: Metric\n---\nRevenue.\n");
+    tmp.write(
+        "a.md",
+        "---\ntype: Note\n---\nSee [the folder](/metrics) and [the note](/metrics.md) \
+         and [short](/metrics/revenue).\n",
+    );
+    let bundle = Bundle::load(tmp.path()).unwrap();
+    let a = ConceptId::parse("a").unwrap();
+    let links = bundle.links_from(&a);
+    assert_eq!(links.len(), 3);
+    assert_eq!(links[0].resolution, LinkTarget::File);
+    assert_eq!(links[1].resolution, LinkTarget::Concept);
+    assert_eq!(links[1].target.to_string(), "metrics");
+    // Nothing is named `metrics/revenue`, so the concept is what was meant.
+    assert_eq!(links[2].resolution, LinkTarget::Concept);
+    assert_eq!(links[2].target.to_string(), "metrics/revenue");
 }

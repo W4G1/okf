@@ -4,13 +4,21 @@
 //! entire bundle:
 //!
 //! - [`move_concept`]: Moves/renames a concept, rewrites all incoming backlinks
-//!   across the bundle, and rebases outgoing relative links and frontmatter paths.
+//!   and path fields across the bundle, and rebases outgoing relative links and
+//!   frontmatter paths. It can leave a deprecated stub at the old path with
+//!   `superseded_by` set to the new one, so stored references keep working.
 //! - [`remove_concept`]: Safely deletes a concept, checking for inbound links
-//!   and optionally redirecting or unlinking them.
+//!   and path fields, and optionally redirecting or unlinking them.
 //! - [`split_concept`]: Extracts a section/heading into a new concept, moves
 //!   relevant footnote citations/sources, and links to the new concept.
 //! - [`merge_concepts`]: Consolidates two concepts, merging bodies, sources,
 //!   and verification events, while redirecting incoming backlinks.
+//!
+//! Links and path fields resolve with the same rules, so both are kept intact:
+//! a `superseded_by`, an `executor.resource`, or a `sources[].resource` that
+//! names a moved concept is rewritten just as a body link is. Every rewrite
+//! touches only the value it changes; other frontmatter entries, and unknown
+//! keys inside the ones that are edited, are written back as they were.
 
 use crate::bundle::Bundle;
 use crate::concept_id::ConceptId;
@@ -19,7 +27,6 @@ use crate::document::Document;
 use crate::frontmatter::Frontmatter;
 use crate::index::regenerate_indexes;
 use crate::links::{self, Link, LinkKind};
-use crate::provenance::Source;
 use crate::scaffold::{current_iso_timestamp, default_author};
 use crate::yaml::Value;
 use std::collections::HashSet;
@@ -123,6 +130,10 @@ pub struct MoveOptions {
     pub update_log: bool,
     /// Author attribution for the log entry.
     pub author: Option<String>,
+    /// Keep a short deprecated concept at the old path, with `superseded_by`
+    /// set to the new path, so that links and stored references to the old
+    /// path continue to work.
+    pub leave_stub: bool,
 }
 
 impl Default for MoveOptions {
@@ -133,6 +144,7 @@ impl Default for MoveOptions {
             update_index: true,
             update_log: true,
             author: None,
+            leave_stub: false,
         }
     }
 }
@@ -154,6 +166,9 @@ pub struct MoveReport {
     pub rebased_outgoing_links: usize,
     /// Number of frontmatter path fields rebased.
     pub rebased_frontmatter_paths: usize,
+    /// Whether a deprecated stub with `superseded_by` was left at the old
+    /// path.
+    pub left_stub: bool,
     /// List of all modified or created file paths.
     pub affected_files: Vec<PathBuf>,
     /// Whether this was a dry run.
@@ -517,10 +532,7 @@ impl fmt::Display for RenameSectionReport {
 /// - `from: tables/users`, `to: overview` -> `"../overview.md"`
 #[must_use]
 pub fn compute_relative_path(from_concept: &ConceptId, to_concept: &ConceptId) -> String {
-    let from_dir: Vec<String> = from_concept
-        .parent()
-        .map(|p| p.segments().to_vec())
-        .unwrap_or_default();
+    let from_dir: Vec<String> = from_concept.directory().to_vec();
     let to_segments = to_concept.segments();
     let to_dir = &to_segments[..to_segments.len().saturating_sub(1)];
     let to_name = to_segments.last().map_or("", String::as_str);
@@ -535,13 +547,13 @@ pub fn compute_relative_path(from_concept: &ConceptId, to_concept: &ConceptId) -
     }
 
     let steps_up = from_dir.len() - common_len;
-    let mut parts: Vec<&str> = Vec::new();
-    parts.extend(std::iter::repeat_n("..", steps_up));
+    let mut parts: Vec<String> = Vec::new();
+    parts.extend(std::iter::repeat_n("..".to_string(), steps_up));
     for seg in &to_dir[common_len..] {
-        parts.push(seg);
+        parts.push(links::encode_segment(seg));
     }
-    let file_part = format!("{to_name}.md");
-    parts.push(&file_part);
+    // The result is a link target, so a space in a name is written `%20`.
+    parts.push(format!("{}.md", links::encode_segment(to_name)));
     parts.join("/")
 }
 
@@ -729,7 +741,7 @@ pub fn rename_section(
         let other_id = &other_concept.id;
 
         let (new_other_body, count) = rewrite_markdown_links(&other_doc.body, |link, _| {
-            if let Some(resolved_id) = link.resolve(other_id)
+            if let Some(resolved_id) = bundle.link_concept(other_id, link)
                 && resolved_id == *concept_id
                 && let Some(anchor_idx) = link.target.find('#')
             {
@@ -817,54 +829,43 @@ pub fn move_concept(
     let target_path = target.to_path(bundle.root());
     let source_path = source.to_path(bundle.root());
 
-    if !options.force && bundle.get(target).is_some() {
-        return Err(RefactorError::ConceptAlreadyExists(target.clone()));
-    }
+    check_destination(bundle, target, options.force)?;
 
-    let source_dir: Vec<String> = source
-        .parent()
-        .map(|p| p.segments().to_vec())
-        .unwrap_or_default();
-    let target_dir: Vec<String> = target
-        .parent()
-        .map(|p| p.segments().to_vec())
-        .unwrap_or_default();
+    let source_dir: Vec<String> = source.directory().to_vec();
+    let target_dir: Vec<String> = target.directory().to_vec();
 
     // 1. Rebase outgoing links inside the moved document
     let mut moved_doc = source_concept.document.clone();
     let (rebased_body, rebased_outgoing_count) =
         rewrite_markdown_links(&moved_doc.body, |link, _| {
-            match link.kind {
-                LinkKind::Relative => {
-                    // Try resolving to a concept id
-                    link.resolve(source).map_or_else(
-                        || {
-                            // Relative file path (non-concept)
-                            let new_rel =
-                                rebase_relative_path(&source_dir, &target_dir, &link.target);
-                            LinkRewriteAction::Rewrite(new_rel)
-                        },
-                        |dest_concept| {
-                            let new_rel = compute_relative_path(target, &dest_concept);
-                            let anchor =
-                                link.target.find('#').map_or("", |idx| &link.target[idx..]);
-                            LinkRewriteAction::Rewrite(format!("{new_rel}{anchor}"))
-                        },
-                    )
+            let anchor = link.target.find('#').map_or("", |idx| &link.target[idx..]);
+            match (link.kind, bundle.link_concept(source, link)) {
+                // A link to the concept itself follows it to its new name.
+                (LinkKind::Absolute, Some(dest)) if dest == *source => {
+                    LinkRewriteAction::Rewrite(format!("{}{anchor}", links::rooted_target(target)))
                 }
+                (LinkKind::Relative, Some(dest)) if dest == *source => LinkRewriteAction::Rewrite(
+                    format!("{}.md{anchor}", links::encode_segment(target.name())),
+                ),
+                (LinkKind::Relative, Some(dest)) => LinkRewriteAction::Rewrite(format!(
+                    "{}{anchor}",
+                    compute_relative_path(target, &dest)
+                )),
+                // Not a concept: an asset, an image, a file not written yet.
+                // The path is rebased as it stands, extension and all.
+                (LinkKind::Relative, None) => LinkRewriteAction::Rewrite(rebase_relative_path(
+                    &source_dir,
+                    &target_dir,
+                    &link.target,
+                )),
                 _ => LinkRewriteAction::Keep,
             }
         });
     moved_doc.body = rebased_body;
 
     // 2. Rebase relative frontmatter paths in the moved document
-    let mut rebased_fm_count = 0;
-    rebase_frontmatter_paths(
-        &mut moved_doc.frontmatter,
-        &source_dir,
-        &target_dir,
-        &mut rebased_fm_count,
-    );
+    let rebased_fm_count =
+        rebase_frontmatter_paths(bundle, source, target, &mut moved_doc.frontmatter);
 
     let mut affected_files = Vec::new();
     let mut rewritten_incoming_total = 0;
@@ -882,14 +883,15 @@ pub fn move_concept(
         let mut modified = false;
 
         let (new_body, rewritten_count) = rewrite_markdown_links(&other_doc.body, |link, _| {
-            if let Some(resolved_id) = link.resolve(other_id)
+            if let Some(resolved_id) = bundle.link_concept(other_id, link)
                 && resolved_id == *source
             {
                 let anchor = link.target.find('#').map_or("", |idx| &link.target[idx..]);
                 match link.kind {
-                    LinkKind::Absolute => {
-                        LinkRewriteAction::Rewrite(format!("/{target}.md{anchor}"))
-                    }
+                    LinkKind::Absolute => LinkRewriteAction::Rewrite(format!(
+                        "{}{anchor}",
+                        links::rooted_target(target)
+                    )),
                     LinkKind::Relative => {
                         let new_rel = compute_relative_path(other_id, target);
                         LinkRewriteAction::Rewrite(format!("{new_rel}{anchor}"))
@@ -907,8 +909,9 @@ pub fn move_concept(
             modified = true;
         }
 
-        // Check frontmatter sources and path references in other documents
+        // Path fields in other documents that name the moved concept
         if rewrite_frontmatter_concept_references(
+            bundle,
             &mut other_doc.frontmatter,
             other_id,
             source,
@@ -927,6 +930,10 @@ pub fn move_concept(
     affected_files.push(source_path.clone());
     affected_files.push(target_path.clone());
 
+    let stub = options
+        .leave_stub
+        .then(|| redirect_stub(&source_concept.document, source, target, options));
+
     if !options.dry_run {
         // Create destination directory if needed
         if let Some(parent) = target_path.parent() {
@@ -936,9 +943,13 @@ pub fn move_concept(
         // Write moved document to new location
         fs::write(&target_path, moved_doc.serialize())?;
 
-        // Remove source document
-        if source_path.exists() && source_path != target_path {
-            fs::remove_file(&source_path)?;
+        // Replace the source document with its stub, or remove it
+        if source_path != target_path {
+            if let Some(stub) = &stub {
+                fs::write(&source_path, stub.serialize())?;
+            } else if source_path.exists() {
+                fs::remove_file(&source_path)?;
+            }
         }
 
         // Write updated other documents
@@ -977,9 +988,59 @@ pub fn move_concept(
         rewritten_incoming_links: rewritten_incoming_total,
         rebased_outgoing_links: rebased_outgoing_count,
         rebased_frontmatter_paths: rebased_fm_count,
+        left_stub: stub.is_some(),
         affected_files,
         dry_run: options.dry_run,
     })
+}
+
+/// The short deprecated concept left at the old path of a moved concept.
+///
+/// It keeps the type, title, and tags, so the concept is still recognizable
+/// in a listing, marks it `status: deprecated`, and points `superseded_by` at
+/// the new path. A consumer that filters to current knowledge follows that
+/// field to the replacement.
+fn redirect_stub(
+    moved: &Document,
+    source: &ConceptId,
+    target: &ConceptId,
+    options: &MoveOptions,
+) -> Document {
+    let original = &moved.frontmatter;
+    let title = original
+        .title()
+        .map_or_else(|| source.name().to_string(), std::borrow::Cow::into_owned);
+
+    let mut fm = Frontmatter::new();
+    for key in ["type", "title"] {
+        if let Some(value) = original.get(key) {
+            fm.set(key, value.clone());
+        }
+    }
+    fm.set(
+        "description",
+        Value::String(format!(
+            "Moved to `{target}`. Kept so that links to the old path still resolve."
+        )),
+    );
+    if let Some(tags) = original.get("tags").filter(|tags| !tags.is_blank()) {
+        fm.set("tags", tags.clone());
+    }
+    fm.set("status", Value::String("deprecated".to_string()));
+    fm.set("superseded_by", Value::String(links::rooted_target(target)));
+    let mut generated = crate::yaml::Mapping::new();
+    generated.insert(
+        "by",
+        Value::String(options.author.clone().unwrap_or_else(default_author)),
+    );
+    generated.insert("at", Value::String(current_iso_timestamp()));
+    fm.set("generated", Value::Mapping(generated));
+
+    let link = compute_relative_path(source, target);
+    Document::new(
+        fm,
+        format!("# {title}\n\nThis concept moved to [{title}]({link}).\n"),
+    )
 }
 
 /// Safely removes a concept from the bundle.
@@ -998,15 +1059,27 @@ pub fn remove_concept(
     if bundle.get(target).is_none() {
         return Err(RefactorError::ConceptNotFound(target.clone()));
     }
+    if options.redirect_to.as_ref() == Some(target) {
+        // Redirecting to the concept being removed would leave every link
+        // pointing at nothing.
+        return Err(RefactorError::SameSourceAndTarget(target.clone()));
+    }
 
-    let inbound = bundle.backlinks(target);
+    // Everything that refers to the concept: links in a body, and path
+    // fields such as `superseded_by` or `sources[].resource`.
+    let mut inbound: Vec<ConceptId> = bundle.backlinks(target).to_vec();
+    for referrer in bundle.referenced_by(target) {
+        if !inbound.contains(referrer) {
+            inbound.push(referrer.clone());
+        }
+    }
     let has_inbound = !inbound.is_empty();
 
     if has_inbound && !options.force && options.redirect_to.is_none() && !options.unlink {
         return Err(RefactorError::HasInboundLinks {
             target: target.clone(),
             inbound_count: inbound.len(),
-            inbound_concepts: inbound.to_vec(),
+            inbound_concepts: inbound,
         });
     }
 
@@ -1027,7 +1100,7 @@ pub fn remove_concept(
             let mut modified = false;
 
             let (new_body, count) = rewrite_markdown_links(&other_doc.body, |link, _| {
-                if let Some(resolved_id) = link.resolve(other_id)
+                if let Some(resolved_id) = bundle.link_concept(other_id, link)
                     && resolved_id == *target
                 {
                     options.redirect_to.as_ref().map_or_else(
@@ -1042,9 +1115,10 @@ pub fn remove_concept(
                             let anchor =
                                 link.target.find('#').map_or("", |idx| &link.target[idx..]);
                             match link.kind {
-                                LinkKind::Absolute => {
-                                    LinkRewriteAction::Rewrite(format!("/{redirect_id}.md{anchor}"))
-                                }
+                                LinkKind::Absolute => LinkRewriteAction::Rewrite(format!(
+                                    "{}{anchor}",
+                                    links::rooted_target(redirect_id)
+                                )),
                                 LinkKind::Relative => {
                                     let new_rel = compute_relative_path(other_id, redirect_id);
                                     LinkRewriteAction::Rewrite(format!("{new_rel}{anchor}"))
@@ -1068,9 +1142,11 @@ pub fn remove_concept(
                 modified = true;
             }
 
-            // Also check frontmatter sources
+            // Path fields are redirected too. They cannot be unlinked, so
+            // without a redirect they are left for the validator to report.
             if let Some(redirect_id) = &options.redirect_to
                 && rewrite_frontmatter_concept_references(
+                    bundle,
                     &mut other_doc.frontmatter,
                     other_id,
                     target,
@@ -1162,9 +1238,7 @@ pub fn split_concept(
         .get(source)
         .ok_or_else(|| RefactorError::ConceptNotFound(source.clone()))?;
 
-    if !options.force && bundle.get(target).is_some() {
-        return Err(RefactorError::ConceptAlreadyExists(target.clone()));
-    }
+    check_destination(bundle, target, options.force)?;
 
     let target_path = target.to_path(bundle.root());
     let source_path = source.to_path(bundle.root());
@@ -1204,7 +1278,7 @@ pub fn split_concept(
     for def in all_defs {
         let in_extracted = extracted_refs.contains(&def.label);
         if in_extracted {
-            target_defs.push(def.clone());
+            target_defs.push(def);
         }
     }
 
@@ -1233,26 +1307,30 @@ pub fn split_concept(
     gen_map.insert("at", Value::String(current_iso_timestamp()));
     target_fm.set("generated", Value::Mapping(gen_map));
 
-    // Copy relevant sources to target frontmatter
-    let all_sources = source_concept.document.frontmatter.sources();
+    // Copy relevant sources to target frontmatter. The entries are copied as
+    // raw values, so keys this crate does not know travel with them.
+    let all_sources = raw_entries(&source_concept.document.frontmatter, "sources");
     let mut target_sources = Vec::new();
     let mut kept_sources = Vec::new();
 
+    let source_count = all_sources.len();
     for src in all_sources {
-        let src_id = src.id.as_deref().unwrap_or("");
-        let in_extracted = extracted_refs.contains(src_id);
-        let in_remaining = remaining_refs.contains(src_id);
+        let src_id = entry_string(&src, "id").unwrap_or_default();
+        let in_extracted = extracted_refs.contains(&src_id);
+        let in_remaining = remaining_refs.contains(&src_id);
         if in_extracted {
-            target_sources.push(src.clone());
+            target_sources.push(rebase_source_entry(bundle, source, target, &src));
         }
-        if in_remaining {
+        // A source leaves the original concept only when the extracted
+        // section is the one place that cites it. One that nothing cites
+        // still records where the concept came from, and stays.
+        if in_remaining || !in_extracted {
             kept_sources.push(src);
         }
     }
 
     if !target_sources.is_empty() {
-        let seq = target_sources.iter().map(Source::to_yaml_value).collect();
-        target_fm.set("sources", Value::Sequence(seq));
+        target_fm.set("sources", Value::Sequence(target_sources.clone()));
     }
 
     let mut target_body = format!("# {target_title}\n\n{}\n", extracted_text.trim());
@@ -1268,13 +1346,15 @@ pub fn split_concept(
     // Update source document
     let mut new_source_doc = source_concept.document.clone();
     new_source_doc.body = new_source_body;
-    if kept_sources.is_empty() {
-        new_source_doc.frontmatter.remove("sources");
-    } else {
-        let seq = kept_sources.iter().map(Source::to_yaml_value).collect();
-        new_source_doc
-            .frontmatter
-            .set("sources", Value::Sequence(seq));
+    // Only touch `sources` when an entry actually left.
+    if kept_sources.len() != source_count {
+        if kept_sources.is_empty() {
+            new_source_doc.frontmatter.remove("sources");
+        } else {
+            new_source_doc
+                .frontmatter
+                .set("sources", Value::Sequence(kept_sources));
+        }
     }
 
     let affected_files = vec![source_path.clone(), target_path.clone()];
@@ -1349,29 +1429,28 @@ pub fn merge_concepts(
     let source_path = source.to_path(bundle.root());
     let target_path = target.to_path(bundle.root());
 
-    let source_dir: Vec<String> = source
-        .parent()
-        .map(|p| p.segments().to_vec())
-        .unwrap_or_default();
-    let target_dir: Vec<String> = target
-        .parent()
-        .map(|p| p.segments().to_vec())
-        .unwrap_or_default();
+    let source_dir: Vec<String> = source.directory().to_vec();
+    let target_dir: Vec<String> = target.directory().to_vec();
 
     // 1. Rebase outgoing links in source body to target directory
     let (rebased_source_body, _) =
         rewrite_markdown_links(&source_concept.document.body, |link, _| match link.kind {
-            LinkKind::Relative => link.resolve(source).map_or_else(
+            LinkKind::Relative => bundle.link_concept(source, link).map_or_else(
                 || {
+                    // Not a concept: rebase the path as it stands.
                     let new_rel = rebase_relative_path(&source_dir, &target_dir, &link.target);
                     LinkRewriteAction::Rewrite(new_rel)
                 },
                 |dest_concept| {
-                    if dest_concept == *target {
-                        LinkRewriteAction::Keep
+                    let anchor = link.target.find('#').map_or("", |idx| &link.target[idx..]);
+                    if dest_concept == *source {
+                        // The merged concept ends up inside the target.
+                        LinkRewriteAction::Rewrite(format!(
+                            "{}.md{anchor}",
+                            links::encode_segment(target.name())
+                        ))
                     } else {
                         let new_rel = compute_relative_path(target, &dest_concept);
-                        let anchor = link.target.find('#').map_or("", |idx| &link.target[idx..]);
                         LinkRewriteAction::Rewrite(format!("{new_rel}{anchor}"))
                     }
                 },
@@ -1379,26 +1458,32 @@ pub fn merge_concepts(
             _ => LinkRewriteAction::Keep,
         });
 
-    // 2. Merge sources and resolve ID collisions
+    // 2. Merge sources and resolve ID collisions. Entries are handled as raw
+    // values, so keys this crate does not know are kept.
     let mut target_doc = target_concept.document.clone();
-    let mut target_sources = target_doc.frontmatter.sources();
+    let mut target_sources = raw_entries(&target_doc.frontmatter, "sources");
     let target_defs = target_doc.footnote_definitions();
     let mut existing_ids: HashSet<String> = target_sources
         .iter()
-        .filter_map(|s| s.id.clone())
+        .filter_map(|s| entry_string(s, "id"))
         .chain(target_defs.iter().map(|d| d.label.clone()))
         .collect();
 
     let mut merged_sources_count = 0;
     let mut source_body_final = rebased_source_body;
 
-    for mut src in source_concept.document.frontmatter.sources() {
-        if let Some(orig_id) = src.id.clone() {
+    for src in raw_entries(&source_concept.document.frontmatter, "sources") {
+        // A path that was relative to the source concept is rewritten to be
+        // relative to the target.
+        let mut src = rebase_source_entry(bundle, source, target, &src);
+        if let Some(orig_id) = entry_string(&src, "id") {
             if existing_ids.contains(&orig_id) {
                 // Check if identical source already exists
-                let is_identical = target_sources
-                    .iter()
-                    .any(|s| s.id.as_deref() == Some(&orig_id) && s.resource == src.resource);
+                let resource = entry_string(&src, "resource");
+                let is_identical = target_sources.iter().any(|s| {
+                    entry_string(s, "id").as_deref() == Some(&orig_id)
+                        && entry_string(s, "resource") == resource
+                });
                 if !is_identical {
                     // Remap id
                     let new_id = format!("{}_{orig_id}", source.name());
@@ -1406,7 +1491,9 @@ pub fn merge_concepts(
                         .replace(&format!("[^{orig_id}]"), &format!("[^{new_id}]"));
                     source_body_final = source_body_final
                         .replace(&format!("[^{orig_id}]:"), &format!("[^{new_id}]:"));
-                    src.id = Some(new_id.clone());
+                    if let Some(map) = src.as_mapping_mut() {
+                        map.insert("id", Value::String(new_id.clone()));
+                    }
                     existing_ids.insert(new_id);
                     target_sources.push(src);
                     merged_sources_count += 1;
@@ -1423,33 +1510,50 @@ pub fn merge_concepts(
     }
 
     if !target_sources.is_empty() {
-        let seq = target_sources.iter().map(Source::to_yaml_value).collect();
-        target_doc.frontmatter.set("sources", Value::Sequence(seq));
+        target_doc
+            .frontmatter
+            .set("sources", Value::Sequence(target_sources));
     }
 
     // 3. Merge verified events
-    let mut target_verified = target_doc.frontmatter.verified();
-    for v in source_concept.document.frontmatter.verified() {
-        if !target_verified.contains(&v) {
-            target_verified.push(v);
+    let mut target_verified = raw_entries(&target_doc.frontmatter, "verified");
+    let had_verified = !target_verified.is_empty();
+    let mut added_verified = false;
+    for event in raw_entries(&source_concept.document.frontmatter, "verified") {
+        if !target_verified.contains(&event) {
+            target_verified.push(event);
+            added_verified = true;
         }
     }
-    if !target_verified.is_empty() {
-        let seq = target_verified
-            .iter()
-            .map(|v| {
-                let mut map = crate::yaml::Mapping::new();
-                if let Some(by) = &v.by {
-                    map.insert("by", Value::String(by.as_str().to_string()));
-                }
-                if let Some(at) = &v.at {
-                    map.insert("at", Value::String(at.raw.clone()));
-                }
-                Value::Mapping(map)
-            })
-            .collect();
-        target_doc.frontmatter.set("verified", Value::Sequence(seq));
+    // Leave the target's own value alone unless an event was added: a bare
+    // mapping that is rewritten as a list is a change nobody asked for.
+    if added_verified || (!had_verified && !target_verified.is_empty()) {
+        target_doc
+            .frontmatter
+            .set("verified", Value::Sequence(target_verified));
     }
+
+    // The target now says something it did not say before, so the time of
+    // its last meaningful change moves to now. Every verification above,
+    // merged in or already there, was of a text that no longer stands: they
+    // stay as history, and the concept is unverified until someone confirms
+    // the merged text.
+    let now = Value::String(current_iso_timestamp());
+    let mut generated =
+        if let Some(Value::Mapping(generated)) = target_doc.frontmatter.get("generated") {
+            generated.clone()
+        } else {
+            let mut generated = crate::yaml::Mapping::new();
+            generated.insert(
+                "by",
+                Value::String(options.author.clone().unwrap_or_else(default_author)),
+            );
+            generated
+        };
+    generated.insert("at", now);
+    target_doc
+        .frontmatter
+        .set("generated", Value::Mapping(generated));
 
     // 4. Append body under heading
     let heading = options.heading.clone().unwrap_or_else(|| {
@@ -1481,7 +1585,7 @@ pub fn merge_concepts(
     let heading_anchor = heading_slug(&heading);
     let (new_target_body, target_rewritten) =
         rewrite_markdown_links(&target_doc.body, |link, _| {
-            if let Some(resolved_id) = link.resolve(target)
+            if let Some(resolved_id) = bundle.link_concept(target, link)
                 && resolved_id == *source
             {
                 if heading_anchor.is_empty() {
@@ -1512,14 +1616,15 @@ pub fn merge_concepts(
         let mut modified = false;
 
         let (new_body, count) = rewrite_markdown_links(&other_doc.body, |link, _| {
-            if let Some(resolved_id) = link.resolve(other_id)
+            if let Some(resolved_id) = bundle.link_concept(other_id, link)
                 && resolved_id == *source
             {
                 let anchor = link.target.find('#').map_or("", |idx| &link.target[idx..]);
                 match link.kind {
-                    LinkKind::Absolute => {
-                        LinkRewriteAction::Rewrite(format!("/{target}.md{anchor}"))
-                    }
+                    LinkKind::Absolute => LinkRewriteAction::Rewrite(format!(
+                        "{}{anchor}",
+                        links::rooted_target(target)
+                    )),
                     LinkKind::Relative => {
                         let new_rel = compute_relative_path(other_id, target);
                         LinkRewriteAction::Rewrite(format!("{new_rel}{anchor}"))
@@ -1538,6 +1643,7 @@ pub fn merge_concepts(
         }
 
         if rewrite_frontmatter_concept_references(
+            bundle,
             &mut other_doc.frontmatter,
             other_id,
             source,
@@ -1552,6 +1658,10 @@ pub fn merge_concepts(
             updated_other_docs.push((path, other_doc));
         }
     }
+
+    // The target may itself name the merged concept in a path field, for
+    // example as a source. That reference would now point at the target
+    // itself, so it is left for the author; only body links are rewritten.
 
     if !options.dry_run {
         // Write updated target
@@ -1602,97 +1712,189 @@ pub fn merge_concepts(
     })
 }
 
-fn rebase_frontmatter_paths(
-    fm: &mut Frontmatter,
-    old_dir: &[String],
-    new_dir: &[String],
-    count: &mut usize,
-) {
-    if let Some(Value::String(s)) = fm.get("computation")
-        && !s.starts_with('/')
-        && links::Link::classify(s) == LinkKind::Relative
-    {
-        fm.set(
-            "computation",
-            Value::String(rebase_relative_path(old_dir, new_dir, s)),
-        );
-        *count += 1;
+/// Checks that a concept may be written at `target`.
+///
+/// `index` and `log` are reserved names: a file there is never a concept, so
+/// nothing can be moved or split into one. Any other file already at the
+/// path is protected unless `force` is set, whether or not it is a concept: a
+/// hand-written `NOTES.md` without a `type` is not in the bundle's concept
+/// list, and must not be overwritten for that.
+fn check_destination(
+    bundle: &Bundle,
+    target: &ConceptId,
+    force: bool,
+) -> Result<(), RefactorError> {
+    let file_name = format!("{}.md", target.name());
+    if crate::bundle::RESERVED_FILENAMES.contains(&file_name.as_str()) {
+        return Err(RefactorError::InvalidConceptId(format!(
+            "`{file_name}` is a reserved file name and cannot hold a concept"
+        )));
     }
-
-    if let Some(Value::Mapping(map)) = fm.get_mut("executor")
-        && let Some(Value::String(res)) = map.get("resource")
-        && !res.starts_with('/')
-        && links::Link::classify(res) == LinkKind::Relative
-    {
-        map.insert(
-            "resource",
-            Value::String(rebase_relative_path(old_dir, new_dir, res)),
-        );
-        *count += 1;
+    if !force && (bundle.get(target).is_some() || target.to_path(bundle.root()).exists()) {
+        return Err(RefactorError::ConceptAlreadyExists(target.clone()));
     }
-
-    if let Some(Value::Mapping(map)) = fm.get_mut("attester")
-        && let Some(Value::String(res)) = map.get("resource")
-        && !res.starts_with('/')
-        && links::Link::classify(res) == LinkKind::Relative
-    {
-        map.insert(
-            "resource",
-            Value::String(rebase_relative_path(old_dir, new_dir, res)),
-        );
-        *count += 1;
-    }
-
-    if let Some(Value::Sequence(sources)) = fm.get_mut("sources") {
-        for src_val in sources {
-            if let Value::Mapping(src_map) = src_val
-                && let Some(Value::String(res)) = src_map.get("resource")
-                && !res.starts_with('/')
-                && links::Link::classify(res) == LinkKind::Relative
-            {
-                src_map.insert(
-                    "resource",
-                    Value::String(rebase_relative_path(old_dir, new_dir, res)),
-                );
-                *count += 1;
-            }
-        }
-    }
+    Ok(())
 }
 
+/// The entries of a list-valued family (`sources`, `verified`) as raw values.
+/// One mapping is read as a list with one entry, and anything that is not a
+/// mapping is left out.
+fn raw_entries(fm: &Frontmatter, key: &str) -> Vec<Value> {
+    fm.get(key).map_or_else(Vec::new, |value| {
+        value
+            .as_list()
+            .into_iter()
+            .filter(|entry| entry.as_mapping().is_some())
+            .cloned()
+            .collect()
+    })
+}
+
+/// A non-empty scalar of a raw entry, as a string.
+fn entry_string(entry: &Value, key: &str) -> Option<String> {
+    entry
+        .as_mapping()?
+        .get(key)
+        .and_then(Value::as_display_string)
+        .filter(|s| !s.trim().is_empty())
+}
+
+/// The fragment and query a path value carries after its path.
+fn path_suffix(raw: &str) -> &str {
+    let trimmed = raw.trim();
+    &trimmed[links::path_part(trimmed).len()..]
+}
+
+/// The value a path field of `from` should have after it moves to `to`, or
+/// `None` when the value must stay as written.
+///
+/// - A URL, a `/`-rooted path, and a scope descriptor do not depend on where
+///   the concept is, and stay.
+/// - A path that names another concept is rewritten relative to the new
+///   location.
+/// - A path that only resolves from the bundle root (the reading earlier OKF
+///   versions used) gains its leading `/`, which makes it independent of the
+///   concept's location for good.
+/// - Any other relative path is rebased textually, so that it keeps naming
+///   the same place. The exception is a top-level `resource` that names
+///   nothing in the bundle: that is an opaque asset identifier such as
+///   `acme.sales.orders`, not a path.
+fn rebased_path_value(
+    bundle: &Bundle,
+    from: &ConceptId,
+    to: &ConceptId,
+    field: &str,
+    raw: &str,
+) -> Option<String> {
+    let trimmed = raw.trim();
+    if Link::classify(trimmed) != LinkKind::Relative {
+        return None;
+    }
+    if let Some(rooted) = bundle.rooted_path_suggestion(from, trimmed) {
+        return Some(rooted);
+    }
+    if let Some(edge) = bundle
+        .path_edges_from(from)
+        .iter()
+        .find(|edge| edge.field == field && edge.raw == raw)
+    {
+        // `to` is where the concept itself goes, so a field that names the
+        // concept being moved has nothing sensible to point at.
+        if edge.target == *to {
+            return None;
+        }
+        return Some(format!(
+            "{}{}",
+            compute_relative_path(to, &edge.target),
+            path_suffix(trimmed)
+        ));
+    }
+    if field == "resource" && bundle.resolve_path(from, trimmed).path().is_none() {
+        return None;
+    }
+    Some(rebase_relative_path(
+        from.directory(),
+        to.directory(),
+        trimmed,
+    ))
+}
+
+/// Rebases the relative path fields of a concept that moves from `from` to
+/// `to`. Returns the number of fields rewritten.
+fn rebase_frontmatter_paths(
+    bundle: &Bundle,
+    from: &ConceptId,
+    to: &ConceptId,
+    fm: &mut Frontmatter,
+) -> usize {
+    let mut count = 0;
+    for (field, raw) in fm.path_fields() {
+        if let Some(rebased) = rebased_path_value(bundle, from, to, &field, &raw)
+            && rebased != raw
+            && fm.set_path_field(&field, &rebased)
+        {
+            count += 1;
+        }
+    }
+    count
+}
+
+/// A copy of a raw `sources` entry of `from`, with its `resource` rebased for
+/// a concept at `to`.
+fn rebase_source_entry(bundle: &Bundle, from: &ConceptId, to: &ConceptId, entry: &Value) -> Value {
+    let mut entry = entry.clone();
+    let Some(raw) = entry_string(&entry, "resource") else {
+        return entry;
+    };
+    // The field name only matters for telling `resource` from the rest, so
+    // any `sources[N].resource` name does. Look the edge up by its raw value.
+    let field = bundle
+        .path_edges_from(from)
+        .iter()
+        .find(|edge| edge.is_source() && edge.raw == raw)
+        .map_or_else(
+            || "sources[0].resource".to_string(),
+            |edge| edge.field.clone(),
+        );
+    let is_path = !raw.chars().any(char::is_whitespace);
+    if is_path
+        && let Some(rebased) = rebased_path_value(bundle, from, to, &field, &raw)
+        && let Some(map) = entry.as_mapping_mut()
+    {
+        map.insert("resource", Value::String(rebased));
+    }
+    entry
+}
+
+/// Rewrites the path fields of the concept `from_id` that name `old_target`
+/// so that they name `new_target`. Returns `true` when a field changed.
+///
+/// A `/`-rooted value stays `/`-rooted, and any other value is written
+/// relative to `from_id`. That is also how a value that only resolved from
+/// the bundle root is brought in line with the current resolution rule.
 fn rewrite_frontmatter_concept_references(
+    bundle: &Bundle,
     fm: &mut Frontmatter,
     from_id: &ConceptId,
     old_target: &ConceptId,
     new_target: &ConceptId,
 ) -> bool {
     let mut modified = false;
-
-    if let Some(Value::Sequence(sources)) = fm.get_mut("sources") {
-        for src_val in sources {
-            if let Value::Mapping(src_map) = src_val
-                && let Some(Value::String(res)) = src_map.get("resource")
-            {
-                let link = Link {
-                    text: String::new(),
-                    kind: Link::classify(res),
-                    target: res.clone(),
-                };
-                if let Some(resolved) = link.resolve(from_id)
-                    && resolved == *old_target
-                {
-                    let new_res = match link.kind {
-                        LinkKind::Absolute => format!("/{new_target}.md"),
-                        LinkKind::Relative => compute_relative_path(from_id, new_target),
-                        _ => continue,
-                    };
-                    src_map.insert("resource", Value::String(new_res));
-                    modified = true;
-                }
-            }
+    for edge in bundle.path_edges_from(from_id) {
+        if edge.target != *old_target || from_id == new_target {
+            continue;
+        }
+        let trimmed = edge.raw.trim();
+        let suffix = path_suffix(trimmed);
+        let new_value = if trimmed.starts_with('/') {
+            format!("{}{suffix}", links::rooted_target(new_target))
+        } else {
+            format!("{}{suffix}", compute_relative_path(from_id, new_target))
+        };
+        if fm.set_path_field(&edge.field, &new_value) {
+            modified = true;
         }
     }
-
     modified
 }
 

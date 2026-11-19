@@ -44,7 +44,7 @@ fn fixture() -> TestBundle {
     write(
         &root,
         "index.md",
-        "---\nokf_version: \"0.2\"\n---\n\n# Concept\n\n* [Travel](policies/travel_expenses.md) - travel policy\n",
+        "---\nokf_version: \"0.3\"\n---\n\n# Concept\n\n* [Travel](policies/travel_expenses.md) - travel policy\n",
     );
     write(
         &root,
@@ -69,7 +69,7 @@ fn fixture() -> TestBundle {
     write(
         &root,
         "computations/mileage_calc.md",
-        "---\ntype: Attested Computation\ntitle: Mileage calculator\nruntime: python\nparameters:\n  - { name: miles, type: number, required: true }\n  - { name: rate_per_mile, type: number }\nexecutor:\n  resource: references/skills/submit_expense.md\n  receipt: [report_id, calculated_amount, status]\nattester:\n  resource: references/attesters/verify_rate.py\n---\n\n# Computation\n\n```python\ndef calculate(miles: float, rate: float = 0.67) -> float:\n    return round(miles * rate, 2)\n```\n",
+        "---\ntype: Attested Computation\ntitle: Mileage calculator\nruntime: python\nparameters:\n  - { name: miles, type: number, required: true }\n  - { name: rate_per_mile, type: number }\nexecutor:\n  resource: /references/skills/submit_expense.md\n  receipt: [report_id, calculated_amount, status]\nattester:\n  resource: /references/attesters/verify_rate.py\n---\n\n# Computation\n\n```python\ndef calculate(miles: float, rate: float = 0.67) -> float:\n    return round(miles * rate, 2)\n```\n",
     );
     write(
         &root,
@@ -80,6 +80,12 @@ fn fixture() -> TestBundle {
         &root,
         "references/attesters/verify_rate.py",
         "def verify(receipt):\n    return True\n",
+    );
+    // Not a concept: no frontmatter.
+    write(
+        &root,
+        "README.md",
+        "# About this bundle\n\nRead me first.\n",
     );
     TestBundle { root }
 }
@@ -125,6 +131,8 @@ fn snapshot_derives_the_world_model() {
     let snap = snapshot(&bundle);
 
     assert_eq!(snap.stats.concepts, 5);
+    // The README has no frontmatter: it is listed, but it is not a concept.
+    assert_eq!(snap.stats.non_concepts, 1);
     assert_eq!(snap.stats.stale, 1); // remote_work passed its stale_after
     assert_eq!(snap.stats.broken_links, 1);
     assert_eq!(snap.contracts.len(), 1);
@@ -133,6 +141,7 @@ fn snapshot_derives_the_world_model() {
         "{:?}",
         snap.contracts[0].issues
     );
+    assert!(snap.contracts[0].attestable);
 
     let travel = ConceptId::parse("policies/travel_expenses").unwrap();
     let meta = snap.meta(&travel).unwrap();
@@ -530,4 +539,68 @@ fn overlays_render() {
     let text = draw(&app, 100, 30);
     assert!(text.contains("Move policies/travel_expenses"));
     assert!(text.contains("target id"));
+}
+
+#[test]
+fn snapshot_reflects_v0_3_trust_and_lifecycle_rules() {
+    let bundle = fixture();
+    // Reviewed by a human, then rewritten: the review is no longer current.
+    write(
+        &bundle.root,
+        "policies/rewritten.md",
+        "---\ntype: Policy\ntitle: Rewritten\ngenerated: { by: reference_agent/v2, at: \"2026-08-01T00:00:00Z\" }\nverified: { by: \"human:sarah_hr\", at: \"2026-07-01T00:00:00Z\" }\nstale_after: whenever\n---\n\n# Rewritten\n",
+    );
+    // Retired, with a replacement.
+    write(
+        &bundle.root,
+        "policies/pto_2019.md",
+        "---\ntype: Policy\ntitle: PTO 2019\nstatus: deprecated\nsuperseded_by: paid_time_off.md\n---\n\n# PTO 2019\n",
+    );
+    // An indented computation is read, but it is not attestable.
+    write(
+        &bundle.root,
+        "computations/indented.md",
+        "---\ntype: Attested Computation\ntitle: Indented\nruntime: python\nattester:\n  resource: /references/attesters/verify_rate.py\n---\n\n# Computation\n\n    x = 1\n",
+    );
+    let snap = snapshot(&bundle);
+
+    let rewritten = snap
+        .meta(&ConceptId::parse("policies/rewritten").unwrap())
+        .unwrap();
+    assert_eq!(rewritten.tier, okf_core::TrustTier::Unverified);
+    assert!(rewritten.verified_before_change);
+    // A `stale_after` that does not parse is never shown as fresh.
+    assert!(rewritten.stale);
+    assert_eq!(rewritten.freshness, okf_core::Freshness::Malformed);
+    let reasons = snap
+        .attention
+        .iter()
+        .find(|item| item.id.to_string() == "policies/rewritten")
+        .map(|item| item.reasons.join(" · "))
+        .unwrap();
+    assert!(reasons.contains("stale_after malformed"), "{reasons}");
+    assert!(reasons.contains("verified before last change"), "{reasons}");
+
+    let retired = snap
+        .meta(&ConceptId::parse("policies/pto_2019").unwrap())
+        .unwrap();
+    assert_eq!(
+        retired.superseded_by,
+        Some(ConceptId::parse("policies/paid_time_off").unwrap())
+    );
+
+    let indented = snap
+        .contracts
+        .iter()
+        .find(|contract| contract.id.to_string() == "computations/indented")
+        .unwrap();
+    assert!(!indented.attestable);
+    assert!(
+        indented
+            .issues
+            .iter()
+            .any(|issue| issue.contains("indented, not fenced")),
+        "{:?}",
+        indented.issues
+    );
 }

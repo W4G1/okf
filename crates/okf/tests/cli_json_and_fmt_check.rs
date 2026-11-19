@@ -3,6 +3,7 @@
 mod common;
 
 use common::TempDir;
+use std::path::Path;
 use std::process::{Command, ExitStatus};
 
 fn okf() -> Command {
@@ -136,7 +137,7 @@ fn cli_universal_json_flags() {
         .unwrap();
     assert_eq!(info_out.status.code(), Some(0));
     let info_json = String::from_utf8_lossy(&info_out.stdout);
-    assert!(info_json.contains("\"okf_version\": \"0.2\""));
+    assert!(info_json.contains("\"okf_version\": \"0.3\""));
     assert!(info_json.contains("\"concepts_count\": 2"));
     assert!(info_json.contains("\"computations_count\": 1"));
 
@@ -157,7 +158,7 @@ fn cli_universal_json_flags() {
         .unwrap();
     // Scaffolding placeholder resources will have lint warnings
     let lint_json = String::from_utf8_lossy(&lint_out.stdout);
-    assert!(lint_json.contains("\"okf_version\": \"0.2\""));
+    assert!(lint_json.contains("\"okf_version\": \"0.3\""));
     assert!(lint_json.contains("\"concepts_count\": 2"));
 
     // 6. okf trust --json
@@ -358,7 +359,7 @@ fn cli_single_file_validate_and_lint() {
     let tmp = TempDir::new();
     tmp.write(
         "index.md",
-        "---\nokf_version: \"0.2\"\n---\n\n# Test Bundle\n\n* [Austria](member-states/austria.md)\n",
+        "---\nokf_version: \"0.3\"\n---\n\n# Test Bundle\n\n* [Austria](member-states/austria.md)\n",
     );
     let austria_path = tmp.write(
         "member-states/austria.md",
@@ -373,7 +374,7 @@ fn cli_single_file_validate_and_lint() {
     assert_eq!(val_out.status.code(), Some(0));
     let val_stdout = String::from_utf8_lossy(&val_out.stdout);
     assert!(val_stdout.contains("1 concept(s)"), "got:\n{val_stdout}");
-    assert!(val_stdout.contains("conformant with OKF v0.2"));
+    assert!(val_stdout.contains("conformant with OKF v0.3"));
 
     // Lint single file by exact path
     let lint_out = okf()
@@ -409,7 +410,7 @@ fn cli_uncited_source_is_warning_and_fails_lint() {
     let tmp = TempDir::new();
     tmp.write(
         "index.md",
-        "---\nokf_version: \"0.2\"\n---\n\n# Bundle\n\n* [Revenue](revenue.md)\n",
+        "---\nokf_version: \"0.3\"\n---\n\n# Bundle\n\n* [Revenue](revenue.md)\n",
     );
     tmp.write(
         "revenue.md",
@@ -429,4 +430,95 @@ fn cli_uncited_source_is_warning_and_fails_lint() {
     assert!(stdout.contains("[warning]"), "got:\n{stdout}");
     assert!(stdout.contains("[L5]"), "got:\n{stdout}");
     assert!(stdout.contains("1 lint warning(s)"), "got:\n{stdout}");
+}
+
+#[test]
+fn cli_finds_the_bundle_root_above_a_subdirectory_listing() {
+    // A subdirectory has its own `index.md`. The bundle root is the directory
+    // whose `index.md` carries the metadata, or, without metadata, the
+    // outermost directory of the run that all have a listing.
+    for root_index in ["---\nokf_version: \"0.3\"\n---\n\n# Root\n", "# Root\n"] {
+        let tmp = TempDir::new();
+        tmp.write("index.md", root_index);
+        tmp.write("metrics/index.md", "# Metrics\n");
+        tmp.write("metrics/deep/index.md", "# Deep\n");
+        tmp.write(
+            "tables/orders.md",
+            "---\ntype: Table\ntitle: Orders\n---\n\n# Orders\n",
+        );
+        let file = tmp.write(
+            "metrics/deep/revenue.md",
+            "---\ntype: Metric\ntitle: Revenue\n---\n\n# Revenue\n\nFrom [orders](/tables/orders.md).\n",
+        );
+
+        // Seen from the real root the link resolves, so nothing is said
+        // about it. Seen from `metrics/deep` it would lead nowhere.
+        for target in [file.as_path(), Path::new("metrics/deep/revenue.md")] {
+            let out = okf()
+                .current_dir(tmp.path())
+                .arg("validate")
+                .arg(target)
+                .output()
+                .unwrap();
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            assert!(out.status.success(), "{stdout}");
+            assert!(!stdout.contains("/tables/orders.md"), "{stdout}");
+        }
+    }
+}
+
+#[test]
+fn cli_staleness_is_judged_now_unless_a_day_is_pinned() {
+    let tmp = TempDir::new();
+    tmp.write("index.md", "---\nokf_version: \"0.3\"\n---\n\n# Root\n");
+    tmp.write(
+        "a.md",
+        "---\ntype: Note\ntitle: A\nstale_after: \"2026-07-01T10:00:00Z\"\n---\n\n# A\n",
+    );
+    let stale_count = |today: Option<&str>| {
+        let mut cmd = okf();
+        cmd.arg("info").arg(tmp.path()).arg("--json");
+        if let Some(day) = today {
+            cmd.arg("--today").arg(day);
+        }
+        let out = cmd.output().unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+        let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+        value["stale_count"].as_u64().unwrap()
+    };
+    // A pinned day is judged at its start: 10:00 that day has not come yet.
+    assert_eq!(stale_count(Some("2026-07-01")), 0);
+    assert_eq!(stale_count(Some("2026-07-02")), 1);
+    // Without a pinned day the clock decides, and that moment is long past.
+    assert_eq!(stale_count(None), 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn cli_fmt_leaves_logs_and_files_outside_the_bundle_alone() {
+    let outside = TempDir::new();
+    let foreign = "---\ntitle: Foreign\ntype: Note\n---\nNot ours.\n";
+    outside.write("foreign.md", foreign);
+
+    let tmp = TempDir::new();
+    tmp.write("index.md", "---\nokf_version: \"0.3\"\n---\n\n# Root\n");
+    tmp.write("a.md", "---\ntype: Note\ntags: [x]\n---\n\n# A\n");
+    let log = "# Log\n\nAn introduction.\n\n## 2026-07-01\n\n- An entry\n  wrapped over two lines.\n  - nested\n";
+    tmp.write("log.md", log);
+    std::os::unix::fs::symlink(
+        outside.path().join("foreign.md"),
+        tmp.path().join("linked.md"),
+    )
+    .unwrap();
+
+    let out = okf().arg("fmt").arg("-w").arg(tmp.path()).output().unwrap();
+    assert!(out.status.success());
+    // The concept is normalized (block style) ...
+    assert!(
+        tmp.read("a.md")
+            .starts_with("---\ntype: Note\ntags:\n  - x\n")
+    );
+    // ... the log is prose and stays as written, and the link is not followed.
+    assert_eq!(tmp.read("log.md"), log);
+    assert_eq!(outside.read("foreign.md"), foreign);
 }

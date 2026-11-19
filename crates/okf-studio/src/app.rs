@@ -1069,9 +1069,10 @@ fn flatten_tree(
             TreeNode::Leaf { name, kind } => {
                 let sel = match kind {
                     LeafKind::Concept(id) => TreeSel::Concept(id.clone()),
-                    LeafKind::Index(p) | LeafKind::Log(p) | LeafKind::Broken(p) => {
-                        TreeSel::File(p.clone())
-                    }
+                    LeafKind::Index(p)
+                    | LeafKind::Log(p)
+                    | LeafKind::Document(p)
+                    | LeafKind::Broken(p) => TreeSel::File(p.clone()),
                 };
                 out.push(TreeRow {
                     depth,
@@ -1282,7 +1283,7 @@ impl App {
                 let dir = match &self.explorer.selected {
                     Some(TreeSel::Dir(path)) => path.clone(),
                     Some(TreeSel::Concept(id)) => {
-                        id.parent().map(|p| p.to_string()).unwrap_or_default()
+                        id.parent().map_or_else(String::new, |p| p.to_string())
                     }
                     _ => String::new(),
                 };
@@ -1375,15 +1376,12 @@ impl App {
         let input = match verb {
             VerbKind::Move => subject.to_string(),
             VerbKind::RenameSection => section.clone().unwrap_or_default(),
-            VerbKind::Split => section
-                .as_deref()
-                .map(|s| {
-                    let slug = okf_core::heading_slug(s);
-                    subject
-                        .parent()
-                        .map_or_else(|| slug.clone(), |p| format!("{p}/{slug}"))
-                })
-                .unwrap_or_default(),
+            VerbKind::Split => section.as_deref().map_or_else(String::new, |s| {
+                let slug = okf_core::heading_slug(s);
+                subject
+                    .parent()
+                    .map_or_else(|| slug.clone(), |p| format!("{p}/{slug}"))
+            }),
             _ => String::new(),
         };
         let extra = match verb {
@@ -2419,8 +2417,7 @@ impl App {
             .snapshot
             .as_ref()
             .and_then(|s| s.meta(&state.id))
-            .map(|m| m.headings.clone())
-            .unwrap_or_default();
+            .map_or_else(Vec::new, |m| m.headings.clone());
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => state.sel = state.sel.saturating_sub(1),
             KeyCode::Down | KeyCode::Char('j') => {

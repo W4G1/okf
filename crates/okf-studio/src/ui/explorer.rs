@@ -27,6 +27,7 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
     draw_inspector(frame, app, inspector);
 }
 
+#[allow(clippy::too_many_lines)]
 fn draw_tree(frame: &mut Frame, app: &App, area: Rect) {
     let theme = &app.theme;
     let snapshot = app.snapshot.as_ref().expect("drawn only with a snapshot");
@@ -115,6 +116,11 @@ fn draw_tree(frame: &mut Frame, app: &App, area: Rect) {
                     spans.push(Span::styled(format!("{GLYPH_LOG} "), theme.dim()));
                     spans.push(Span::styled(row.name.clone(), theme.dim()));
                 }
+                LeafKind::Document(_) => {
+                    // Not a concept: no frontmatter, or no `type`.
+                    spans.push(Span::styled("· ".to_string(), theme.dim()));
+                    spans.push(Span::styled(row.name.clone(), theme.dim()));
+                }
                 LeafKind::Broken(_) => {
                     spans.push(Span::styled(format!("{GLYPH_BROKEN} "), theme.error()));
                     spans.push(Span::styled(row.name.clone(), theme.error()));
@@ -158,8 +164,7 @@ fn draw_document(frame: &mut Frame, app: &App, area: Rect) {
                 let text = std::fs::read_to_string(path).unwrap_or_default();
                 let name = path
                     .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_default();
+                    .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
                 (format!(" {name} "), Vec::new(), Some(text))
             }
             Some(TreeSel::Dir(path)) => (format!(" {path}/ "), Vec::new(), None),
@@ -262,8 +267,7 @@ fn frontmatter_header(app: &App, concept: &okf_core::Concept) -> Vec<Line<'stati
     push(
         "type",
         fm.type_()
-            .map(std::borrow::Cow::into_owned)
-            .unwrap_or_default(),
+            .map_or_else(String::new, std::borrow::Cow::into_owned),
         Style::default(),
     );
     let status = fm.status();
@@ -333,6 +337,7 @@ fn kv(label: &str, value: String, style: Style, theme: crate::theme::Theme) -> L
     ])
 }
 
+#[allow(clippy::too_many_lines)]
 fn inspector_meta(app: &App, concept: &okf_core::Concept, width: usize) -> Vec<Line<'static>> {
     let theme = &app.theme;
     let snapshot = app.snapshot.as_ref().expect("drawn only with a snapshot");
@@ -352,6 +357,23 @@ fn inspector_meta(app: &App, concept: &okf_core::Concept, width: usize) -> Vec<L
         theme.status(&status),
         *theme,
     ));
+    if let Some(replacement) = meta.and_then(|m| m.superseded_by.as_ref()) {
+        lines.push(kv(
+            "replaced",
+            format!("→ {replacement}"),
+            theme.accent(),
+            *theme,
+        ));
+    } else if let Some(raw) = fm.superseded_by() {
+        // Present, but not usable: the concept is not deprecated, or the path
+        // names no concept.
+        lines.push(kv(
+            "replaced",
+            format!("{raw} (unused)"),
+            theme.dim(),
+            *theme,
+        ));
+    }
     let tier = fm.trust_tier();
     lines.push(kv(
         "trust",
@@ -359,17 +381,32 @@ fn inspector_meta(app: &App, concept: &okf_core::Concept, width: usize) -> Vec<L
         theme.tier(tier),
         *theme,
     ));
+    if meta.is_some_and(|m| m.verified_before_change) {
+        lines.push(Line::from(Span::styled(
+            "  verified before the last change",
+            theme.warn(),
+        )));
+    }
     if let Some(stale) = fm.stale_after() {
-        let style = if meta.is_some_and(|m| m.stale) {
-            theme.warn()
+        if meta.is_some_and(|m| m.freshness == okf_core::Freshness::Malformed) {
+            lines.push(kv(
+                "fresh",
+                format!("malformed: {}", stale.raw),
+                theme.error(),
+                *theme,
+            ));
         } else {
-            Style::default()
-        };
-        lines.push(kv("fresh", format!("until {}", stale.raw), style, *theme));
+            let style = if meta.is_some_and(|m| m.stale) {
+                theme.warn()
+            } else {
+                Style::default()
+            };
+            lines.push(kv("fresh", format!("until {}", stale.raw), style, *theme));
+        }
     }
     if let Some(generated) = fm.generated() {
         lines.push(Line::from(Span::styled("generated", theme.dim())));
-        let by = generated.by.map(|b| b.to_string()).unwrap_or_default();
+        let by = generated.by.map_or_else(String::new, |b| b.to_string());
         let by_kind = okf_core::Actor::parse(by.clone()).kind();
         lines.push(Line::from(vec![
             Span::raw("  "),
@@ -388,12 +425,21 @@ fn inspector_meta(app: &App, concept: &okf_core::Concept, width: usize) -> Vec<L
     let verified = fm.verified();
     if !verified.is_empty() {
         lines.push(Line::from(Span::styled("verified", theme.dim())));
+        let changed_at = fm.generated().and_then(|generated| generated.at);
         for event in verified {
-            let by = event.by.map(|b| b.to_string()).unwrap_or_default();
+            // Only a current event counts toward the tier. An earlier one is
+            // history, shown dimmed.
+            let current = event.is_current(changed_at.as_ref());
+            let by = event.by.map_or_else(String::new, |b| b.to_string());
             let kind = okf_core::Actor::parse(by.clone()).kind();
-            let at = event.at.map(|a| a.raw).unwrap_or_default();
+            let at = event.at.map_or_else(String::new, |a| a.raw);
+            let (mark, mark_style) = if current {
+                (GLYPH_OK, theme.ok())
+            } else {
+                ("·", theme.dim())
+            };
             lines.push(Line::from(vec![
-                Span::styled(format!("  {GLYPH_OK} "), theme.ok()),
+                Span::styled(format!("  {mark} "), mark_style),
                 Span::styled(
                     truncate_to_width(&by, width.saturating_sub(8)),
                     theme.actor(kind),
@@ -439,10 +485,11 @@ fn inspector_links(app: &App, id: &ConceptId, width: usize) -> Vec<Line<'static>
     let snapshot = app.snapshot.as_ref().expect("drawn only with a snapshot");
     let mut lines = vec![Line::from(Span::styled("OUT", theme.dim()))];
     for link in snapshot.bundle.links_from(id) {
-        let (glyph, style) = if link.exists {
-            (GLYPH_OK, theme.ok())
-        } else {
-            (GLYPH_BROKEN, theme.error())
+        let (glyph, style) = match link.resolution {
+            okf_core::LinkTarget::Concept => (GLYPH_OK, theme.ok()),
+            // An asset or a file that is not a concept: a valid link.
+            okf_core::LinkTarget::File => ("▤", theme.dim()),
+            okf_core::LinkTarget::Missing => (GLYPH_BROKEN, theme.error()),
         };
         lines.push(Line::from(vec![
             Span::styled(format!(" {glyph} "), style),
@@ -462,6 +509,39 @@ fn inspector_links(app: &App, id: &ConceptId, width: usize) -> Vec<Line<'static>
             )),
         ]));
     }
+    // Path fields that resolve to a concept are edges of the bundle graph
+    // too: `superseded_by`, an executor, a source.
+    let fields = snapshot.bundle.path_edges_from(id);
+    if !fields.is_empty() {
+        lines.push(Line::from(Span::styled("FIELDS", theme.dim())));
+        for edge in fields {
+            lines.push(Line::from(vec![
+                Span::styled(" → ".to_string(), theme.accent()),
+                Span::raw(truncate_to_width(
+                    &format!("{} ({})", edge.target, edge.field),
+                    width.saturating_sub(4),
+                )),
+            ]));
+        }
+    }
+    let referrers: Vec<&ConceptId> = snapshot
+        .bundle
+        .referenced_by(id)
+        .iter()
+        .filter(|referrer| !snapshot.bundle.backlinks(id).contains(referrer))
+        .collect();
+    if !referrers.is_empty() {
+        lines.push(Line::from(Span::styled("REFERENCED BY", theme.dim())));
+        for referrer in referrers {
+            lines.push(Line::from(vec![
+                Span::styled(" ← ".to_string(), theme.accent()),
+                Span::raw(truncate_to_width(
+                    &referrer.to_string(),
+                    width.saturating_sub(4),
+                )),
+            ]));
+        }
+    }
     lines
 }
 
@@ -469,9 +549,7 @@ fn inspector_sources(app: &App, id: &ConceptId, width: usize) -> Vec<Line<'stati
     let theme = &app.theme;
     let snapshot = app.snapshot.as_ref().expect("drawn only with a snapshot");
     let concept = snapshot.bundle.get(id);
-    let attributions = concept
-        .map(|c| c.document.attributions())
-        .unwrap_or_default();
+    let attributions = concept.map_or_else(Vec::new, |c| c.document.attributions());
     let mut lines = Vec::new();
     for resolved in snapshot.bundle.sources_of(id) {
         let source = &resolved.source;

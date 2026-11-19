@@ -119,6 +119,7 @@ impl Theme {
     pub fn actor(self, kind: ActorKind) -> Style {
         match kind {
             ActorKind::Human => self.fg(Color::Cyan),
+            ActorKind::Team => self.fg(Color::LightCyan),
             ActorKind::Process => self.fg(Color::Magenta),
             ActorKind::Agent => self.fg(Color::Blue),
             ActorKind::Other => Style::default(),

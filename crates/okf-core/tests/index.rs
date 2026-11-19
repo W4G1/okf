@@ -239,14 +239,144 @@ fn nested_indexes_do_not_keep_root_version_frontmatter() {
 
     regenerate_indexes(tmp.path()).unwrap();
 
+    // The root block is kept exactly as written, quoting included.
     assert!(
         tmp.read("index.md")
-            .starts_with("---\nokf_version: \"0.2\"\n---\n")
+            .starts_with("---\nokf_version: '0.2'\n---\n\n# Subdirectories\n")
     );
     let nested = tmp.read("tables/index.md");
     assert!(!nested.starts_with("---"), "{nested}");
     assert!(!nested.contains("okf_version"), "{nested}");
     assert!(!nested.contains("title: Wrong"), "{nested}");
+}
+
+#[test]
+fn regenerate_keeps_the_bundle_metadata_verbatim() {
+    // A producer that regenerates index.md must keep the existing frontmatter
+    // of the bundle-root index: the metadata, extension keys, and comments.
+    let frontmatter = "---\n\
+        okf_version: \"0.3\"\n\
+        title: Acme retail analytics\n\
+        # Agents read this to choose a bundle.\n\
+        description: Tables and metrics for Acme retail. Use it for sales questions.\n\
+        license: CC-BY-4.0\n\
+        x-acme-owner: { team: data, oncall: \"#data-oncall\" }\n\
+        ---\n";
+    let tmp = TempDir::new();
+    tmp.write(
+        "index.md",
+        &format!("{frontmatter}\n# Old listing\n\n* [Gone](gone.md)\n"),
+    );
+    write_doc(
+        &tmp,
+        "tables/users.md",
+        "BigQuery Table",
+        "users",
+        "Per-user dimension.",
+    );
+
+    regenerate_indexes(tmp.path()).unwrap();
+
+    let root = tmp.read("index.md");
+    assert!(
+        root.starts_with(&format!("{frontmatter}\n# Subdirectories")),
+        "{root}"
+    );
+    assert!(!root.contains("Old listing"));
+
+    // Regenerating again changes nothing.
+    regenerate_indexes(tmp.path()).unwrap();
+    assert_eq!(tmp.read("index.md"), root);
+
+    let bundle = okf_core::Bundle::load(tmp.path()).unwrap();
+    let metadata = bundle.metadata();
+    assert_eq!(metadata.okf_version.as_deref(), Some("0.3"));
+    assert_eq!(metadata.title.as_deref(), Some("Acme retail analytics"));
+    assert_eq!(metadata.license.as_deref(), Some("CC-BY-4.0"));
+    assert!(metadata.frontmatter.get("x-acme-owner").is_some());
+}
+
+#[test]
+fn a_new_root_index_declares_the_version() {
+    let tmp = TempDir::new();
+    write_doc(
+        &tmp,
+        "tables/users.md",
+        "BigQuery Table",
+        "users",
+        "Per-user dimension.",
+    );
+
+    regenerate_indexes(tmp.path()).unwrap();
+
+    assert!(
+        tmp.read("index.md")
+            .starts_with("---\nokf_version: \"0.3\"\n---\n\n# Subdirectories")
+    );
+    assert!(!tmp.read("tables/index.md").starts_with("---"));
+}
+
+#[test]
+fn the_version_is_not_declared_while_a_path_depends_on_the_root_fallback() {
+    // `references/run.md` on a concept in `computations/` only resolves when
+    // read from the bundle root, which is how v0.2 wrote it. Declaring 0.3
+    // would stop it from resolving, so the index is written without it.
+    let tmp = TempDir::new();
+    tmp.write(
+        "computations/revenue.md",
+        "---\ntype: Attested Computation\nruntime: bigquery\nexecutor:\n  resource: references/run.md\n  receipt: [job_id]\n---\n\n# Computation\n\n```sql\nSELECT 1\n```\n",
+    );
+    write_doc(
+        &tmp,
+        "references/run.md",
+        "Skill",
+        "Run",
+        "Run instructions.",
+    );
+
+    regenerate_indexes(tmp.path()).unwrap();
+    assert!(tmp.read("index.md").starts_with("# Subdirectories"));
+}
+
+#[test]
+fn files_that_are_not_concepts_are_not_listed() {
+    let tmp = TempDir::new();
+    write_doc(
+        &tmp,
+        "tables/users.md",
+        "BigQuery Table",
+        "users",
+        "Per-user dimension.",
+    );
+    tmp.write("README.md", "# Read me\n");
+    tmp.write("tables/NOTES.md", "---\ntitle: No type\n---\nScratch.\n");
+    tmp.write("docs/README.md", "# Only prose here\n");
+    tmp.write(".github/x.md", "---\ntype: Hidden\n---\n");
+    tmp.write(
+        "attesters/index.md",
+        "# Code\n\n* [sql](sql.py) - Attester.\n",
+    );
+    tmp.write("attesters/sql.py", "print(1)\n");
+
+    regenerate_indexes(tmp.path()).unwrap();
+
+    let root = tmp.read("index.md");
+    assert!(!root.contains("README"), "{root}");
+    assert!(root.contains("[tables](tables/index.md)"), "{root}");
+    // A directory with nothing to list is linked only if it has an index.
+    assert!(root.contains("[attesters](attesters/index.md)"), "{root}");
+    assert!(!root.contains("docs"), "{root}");
+    assert!(!root.contains(".github"), "{root}");
+    assert!(!tmp.path().join("docs/index.md").exists());
+    // The hand-written index of an asset directory is left alone.
+    assert_eq!(
+        tmp.read("attesters/index.md"),
+        "# Code\n\n* [sql](sql.py) - Attester.\n"
+    );
+
+    let tables = tmp.read("tables/index.md");
+    assert!(tables.contains("[users](users.md)"));
+    assert!(!tables.contains("NOTES"), "{tables}");
 }
 
 #[test]

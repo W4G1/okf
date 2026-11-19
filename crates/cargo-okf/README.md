@@ -2,7 +2,7 @@
 
 The [okf](https://crates.io/crates/okf) command-line tool as a cargo
 subcommand for the [Open Knowledge Format
-(OKF)](https://github.com/GoogleCloudPlatform/open-knowledge-format).
+(OKF)](https://github.com/open-knowledge-format/open-knowledge-format).
 
 ```sh
 cargo install cargo-okf

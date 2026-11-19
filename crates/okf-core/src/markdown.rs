@@ -5,9 +5,15 @@
 //!
 //! - [`heading_slug`]: Generates kebab-case URL anchor slugs matching GitHub/CommonMark conventions.
 //! - [`extract_headings`]: Extracts all headings in document order, skipping fenced code blocks.
-//! - [`rewrite_markdown_links`]: Rewrites inline links while ignoring code blocks and inline code.
+//! - [`rewrite_markdown_links`]: Rewrites links while ignoring code blocks and inline code.
+//!
+//! Two link syntaxes are links in OKF: inline `[text](target)` links and
+//! reference-style links (`[text][label]`, `[label][]`, or `[label]`, with a
+//! `[label]: target` definition elsewhere in the body). Other syntaxes, such
+//! as `[[wikilinks]]`, are not.
 
 use crate::links::Link;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 
 /// A parsed markdown heading.
@@ -232,6 +238,134 @@ pub fn parse_inline_link(chars: &[char], start: usize) -> Option<(String, String
     Some((text, dest, j + 1))
 }
 
+/// A link reference definition: `[label]: destination "optional title"`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReferenceDefinition {
+    /// The label as written, without the brackets.
+    pub label: String,
+    /// The raw destination, including any title suffix.
+    pub destination: String,
+    /// 0-based index of the line the definition is on.
+    pub line_index: usize,
+}
+
+/// Normalizes a reference label for matching: labels compare without regard
+/// to case, and runs of whitespace count as one space.
+#[must_use]
+pub fn normalize_reference_label(label: &str) -> String {
+    label
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
+/// Parses a line as a link reference definition, returning the label and the
+/// raw destination (with any title).
+///
+/// A footnote definition (`[^label]: text`) is not a link reference
+/// definition and returns `None`.
+#[must_use]
+pub fn parse_reference_definition(line: &str) -> Option<(&str, &str)> {
+    let trimmed = line.trim_start();
+    // Four or more columns of indentation makes an indented code block.
+    if line.len() - trimmed.len() > 3 {
+        return None;
+    }
+    let rest = trimmed.strip_prefix('[')?;
+    let close = rest.find(']')?;
+    let label = &rest[..close];
+    if label.trim().is_empty() || label.starts_with('^') || label.contains('[') {
+        return None;
+    }
+    let destination = rest[close + 1..].strip_prefix(':')?.trim();
+    (!destination.is_empty()).then_some((label, destination))
+}
+
+/// Every link reference definition in a body, skipping fenced code blocks.
+/// When a label is defined more than once, the first definition is the one
+/// that applies, so later ones are left out.
+#[must_use]
+pub fn reference_definitions(body: &str) -> Vec<ReferenceDefinition> {
+    // `code_free_lines` says which lines are outside fenced code, but it also
+    // blanks inline code spans. The definition is taken from the line as
+    // written, so that a title such as "the `orders` table" stays whole.
+    let original: Vec<&str> = body.lines().collect();
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut out = Vec::new();
+    for (line_number, _) in code_free_lines(body) {
+        let Some(line) = original.get(line_number - 1) else {
+            continue;
+        };
+        if let Some((label, destination)) = parse_reference_definition(line)
+            && seen.insert(normalize_reference_label(label))
+        {
+            out.push(ReferenceDefinition {
+                label: label.to_string(),
+                destination: destination.to_string(),
+                line_index: line_number - 1,
+            });
+        }
+    }
+    out
+}
+
+/// Attempts to parse a reference-style link starting at `start` (the `[`):
+/// `[text][label]`, the collapsed `[label][]`, or the shortcut `[label]`.
+///
+/// Returns the link text, the label it refers to, and the index just past the
+/// link. Whether the label is defined is for the caller to check; without a
+/// definition the brackets are plain text. A footnote reference (`[^label]`)
+/// and a definition line's own `[label]:` are not links.
+#[must_use]
+pub fn parse_reference_link(chars: &[char], start: usize) -> Option<(String, String, usize)> {
+    let mut i = start + 1;
+    let mut depth = 1;
+    while i < chars.len() {
+        match chars[i] {
+            '\\' => i += 1,
+            '[' => depth += 1,
+            ']' => {
+                depth -= 1;
+                if depth == 0 {
+                    break;
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    if depth != 0 || i >= chars.len() {
+        return None;
+    }
+    let text: String = chars[start + 1..i].iter().collect();
+    if text.trim().is_empty() || text.starts_with('^') {
+        return None;
+    }
+
+    match chars.get(i + 1) {
+        // `[text][label]` or `[label][]`.
+        Some('[') => {
+            let label_start = i + 2;
+            let close = (label_start..chars.len()).find(|&j| chars[j] == ']')?;
+            let label: String = chars[label_start..close].iter().collect();
+            if label.starts_with('^') {
+                return None;
+            }
+            let label = if label.trim().is_empty() {
+                text.clone()
+            } else {
+                label
+            };
+            Some((text, label, close + 1))
+        }
+        // An inline link that did not parse, or a definition line.
+        Some('(' | ':') => None,
+        // The shortcut form.
+        _ => Some((text.clone(), text, i + 1)),
+    }
+}
+
 /// Replaces inline code spans (backtick-delimited) with spaces so links/footnotes inside
 /// them are not extracted.
 #[must_use]
@@ -289,18 +423,62 @@ pub enum LinkRewriteAction {
     Unlink,
 }
 
-/// Rewrites inline markdown links in a document body using a callback function.
+/// Rewrites markdown links in a document body using a callback function.
+///
+/// Inline links are rewritten in place. A reference-style link is rewritten
+/// through its definition line, which is where its destination lives; when
+/// the callback unlinks a definition, the definition is removed and every use
+/// of its label is replaced with the link text. The callback sees each
+/// definition once, however many times its label is used.
 ///
 /// Preserves fenced code blocks and inline code spans untouched.
 pub fn rewrite_markdown_links<F>(body: &str, mut rewrite_fn: F) -> (String, usize)
 where
     F: FnMut(&Link, &str) -> LinkRewriteAction,
 {
-    let mut out_lines = Vec::new();
     let mut total_rewritten = 0;
+
+    // First pass: decide what happens to each reference definition, so that
+    // the uses of an unlinked label can be flattened on the second pass.
+    let mut definition_lines: HashMap<usize, Option<String>> = HashMap::new();
+    let mut unlinked_labels: HashSet<String> = HashSet::new();
+    for definition in reference_definitions(body) {
+        let target = clean_destination(&definition.destination);
+        let link = Link {
+            text: definition.label.clone(),
+            kind: Link::classify(&target),
+            target,
+        };
+        match rewrite_fn(&link, &definition.destination) {
+            LinkRewriteAction::Keep => {}
+            LinkRewriteAction::Rewrite(new_dest) => {
+                let title_suffix = extract_title_suffix(&definition.destination);
+                let formatted_dest = if new_dest.contains(' ') && !new_dest.starts_with('<') {
+                    format!("<{new_dest}>")
+                } else {
+                    new_dest
+                };
+                definition_lines.insert(
+                    definition.line_index,
+                    Some(format!(
+                        "[{}]: {formatted_dest}{title_suffix}",
+                        definition.label
+                    )),
+                );
+                total_rewritten += 1;
+            }
+            LinkRewriteAction::Unlink => {
+                definition_lines.insert(definition.line_index, None);
+                unlinked_labels.insert(normalize_reference_label(&definition.label));
+                total_rewritten += 1;
+            }
+        }
+    }
+
+    let mut out_lines = Vec::new();
     let mut fence: Option<char> = None;
 
-    for line in body.lines() {
+    for (line_index, line) in body.lines().enumerate() {
         let trimmed_start = line.trim_start();
         if let Some(f) = fence {
             if trimmed_start.starts_with(&f.to_string().repeat(3)) {
@@ -320,7 +498,17 @@ where
             continue;
         }
 
-        let (new_line, count) = rewrite_line_links(line, &mut rewrite_fn);
+        match definition_lines.get(&line_index) {
+            Some(Some(replacement)) => {
+                let indent = &line[..line.len() - trimmed_start.len()];
+                out_lines.push(format!("{indent}{replacement}"));
+                continue;
+            }
+            Some(None) => continue,
+            None => {}
+        }
+
+        let (new_line, count) = rewrite_line_links(line, &mut rewrite_fn, &unlinked_labels);
         total_rewritten += count;
         out_lines.push(new_line);
     }
@@ -332,7 +520,11 @@ where
     (result, total_rewritten)
 }
 
-fn rewrite_line_links<F>(line_text: &str, rewrite_fn: &mut F) -> (String, usize)
+fn rewrite_line_links<F>(
+    line_text: &str,
+    rewrite_fn: &mut F,
+    unlinked_labels: &HashSet<String>,
+) -> (String, usize)
 where
     F: FnMut(&Link, &str) -> LinkRewriteAction,
 {
@@ -382,6 +574,20 @@ where
                     count += 1;
                 }
             }
+            i = next_i;
+            continue;
+        }
+
+        // A use of a reference label whose definition was unlinked becomes
+        // plain text.
+        if !in_inline_code
+            && !unlinked_labels.is_empty()
+            && chars[i] == '['
+            && !is_escaped(&chars, i)
+            && let Some((text, label, next_i)) = parse_reference_link(&chars, i)
+            && unlinked_labels.contains(&normalize_reference_label(&label))
+        {
+            out.push_str(&text);
             i = next_i;
             continue;
         }
@@ -471,5 +677,82 @@ pass
         assert!(rewritten.contains("and Profile."));
         assert!(rewritten.contains("`[Code Link](../not/a/link.md)`"));
         assert!(rewritten.contains("# [Python Link](../ignored.md)"));
+    }
+
+    #[test]
+    fn reference_definitions_are_found_and_footnotes_are_not() {
+        let body = "\
+See [the guide][guide] and [Orders][].
+
+[guide]: ../guides/user.md \"User guide\"
+[Orders]: </tables/my orders.md>
+[^note]: A footnote, not a link definition.
+
+```
+[fenced]: ../ignored.md
+```
+";
+        let definitions = reference_definitions(body);
+        assert_eq!(definitions.len(), 2);
+        assert_eq!(definitions[0].label, "guide");
+        assert_eq!(
+            definitions[0].destination,
+            "../guides/user.md \"User guide\""
+        );
+        assert_eq!(definitions[0].line_index, 2);
+        assert_eq!(
+            clean_destination(&definitions[1].destination),
+            "/tables/my orders.md"
+        );
+    }
+
+    #[test]
+    fn reference_links_parse_in_all_three_forms() {
+        let parse = |s: &str| {
+            let chars: Vec<char> = s.chars().collect();
+            parse_reference_link(&chars, 0)
+        };
+        assert_eq!(
+            parse("[the guide][guide] tail"),
+            Some(("the guide".to_string(), "guide".to_string(), 18))
+        );
+        assert_eq!(
+            parse("[Orders][]"),
+            Some(("Orders".to_string(), "Orders".to_string(), 10))
+        );
+        assert_eq!(
+            parse("[Orders] are"),
+            Some(("Orders".to_string(), "Orders".to_string(), 8))
+        );
+        // Not links: a footnote, an inline link, and a definition.
+        assert_eq!(parse("[^note]"), None);
+        assert_eq!(parse("[text](dest)"), None);
+        assert_eq!(parse("[label]: dest"), None);
+        assert_eq!(normalize_reference_label("  The   Guide "), "the guide");
+    }
+
+    #[test]
+    fn rewrites_reference_definitions_and_flattens_unlinked_ones() {
+        let body = "\
+See [the guide][guide], [Orders][] and [Legacy].
+
+[guide]: ../guides/user.md \"User guide\"
+[orders]: ../tables/orders.md
+[legacy]: ../old/legacy.md
+";
+        let (rewritten, count) = rewrite_markdown_links(body, |link, _| {
+            if link.target == "../guides/user.md" {
+                LinkRewriteAction::Rewrite("../docs/user.md".to_string())
+            } else if link.target == "../old/legacy.md" {
+                LinkRewriteAction::Unlink
+            } else {
+                LinkRewriteAction::Keep
+            }
+        });
+        assert_eq!(count, 2);
+        assert!(rewritten.contains("[guide]: ../docs/user.md \"User guide\"\n"));
+        assert!(rewritten.contains("[orders]: ../tables/orders.md\n"));
+        assert!(!rewritten.contains("[legacy]:"));
+        assert!(rewritten.contains("See [the guide][guide], [Orders][] and Legacy."));
     }
 }

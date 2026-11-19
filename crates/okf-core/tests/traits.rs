@@ -274,6 +274,7 @@ fn test_refactor_report_display_traits() {
         rewritten_incoming_links: 3,
         rebased_outgoing_links: 1,
         rebased_frontmatter_paths: 1,
+        left_stub: false,
         affected_files: vec![PathBuf::from("auth/new.md"), PathBuf::from("users.md")],
         dry_run: false,
     };

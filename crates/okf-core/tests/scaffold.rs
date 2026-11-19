@@ -33,6 +33,8 @@ fn init_bundle_creates_conformant_bundle() {
 
     let options = BundleInitOptions {
         title: "Test Bundle".to_string(),
+        description: Some("Policies and metrics. Use it for finance questions.".to_string()),
+        license: Some("CC-BY-4.0".to_string()),
         create_sample: true,
         sample_name: "overview".to_string(),
         author: Some("human:alice".to_string()),
@@ -45,7 +47,7 @@ fn init_bundle_creates_conformant_bundle() {
     // Verify bundle loads and has overview concept
     let bundle = Bundle::load(&bundle_dir).unwrap();
     assert_eq!(bundle.len(), 1);
-    assert_eq!(bundle.okf_version(), Some("0.2"));
+    assert_eq!(bundle.okf_version(), Some("0.3"));
 
     let overview = bundle
         .get(&okf_core::ConceptId::parse("overview").unwrap())
@@ -61,6 +63,8 @@ fn init_bundle_bare_creates_no_concepts() {
 
     let options = BundleInitOptions {
         title: "Bare Base".to_string(),
+        description: None,
+        license: None,
         create_sample: false,
         sample_name: "overview".to_string(),
         author: None,
@@ -72,7 +76,7 @@ fn init_bundle_bare_creates_no_concepts() {
 
     let bundle = Bundle::load(&bundle_dir).unwrap();
     assert_eq!(bundle.len(), 0);
-    assert_eq!(bundle.okf_version(), Some("0.2"));
+    assert_eq!(bundle.okf_version(), Some("0.3"));
 }
 
 #[test]

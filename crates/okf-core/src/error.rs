@@ -18,6 +18,8 @@ pub enum DocumentError {
     MissingKeys(Vec<String>),
     /// The file's path could not be turned into a valid concept id.
     InvalidConceptId(ConceptIdError),
+    /// The file is not valid UTF-8, so it cannot be read as a document.
+    NotUtf8,
 }
 
 impl fmt::Display for DocumentError {
@@ -34,6 +36,7 @@ impl fmt::Display for DocumentError {
                 write!(f, "Missing required frontmatter keys: {}", keys.join(", "))
             }
             Self::InvalidConceptId(e) => write!(f, "Invalid concept id: {e}"),
+            Self::NotUtf8 => write!(f, "The file is not valid UTF-8"),
         }
     }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "okf-validator"
-description = "Conformance validation and opinionated linting for Open Knowledge Format (OKF) v0.2 bundles: severity-tagged diagnostics for spec violations and bundle hygiene."
+description = "Conformance validation and opinionated linting for Open Knowledge Format (OKF) v0.3 bundles: severity-tagged diagnostics for spec violations and bundle hygiene."
 documentation = "https://docs.rs/okf-validator"
 readme = "README.md"
 version.workspace = true
@@ -26,7 +26,7 @@ sqlparser = { version = "0.62.0", optional = true }
 syn = { version = "3.0.4", features = ["full"], optional = true }
 
 # The conformance and lint checks need none of the third-party language
-# parsers; only the two syntax checks (V24, V25) do. Each parser sits behind a
+# parsers; only the syntax checks (V32) do. Each parser sits behind a
 # feature so that a consumer with a strict dependency or licence policy can
 # drop the ones it cannot accept while keeping the rest of the validator.
 # JSON, YAML, and Bash checking is built in and always available.

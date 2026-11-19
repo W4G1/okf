@@ -20,7 +20,7 @@
 //! | L3   | warning  | heading hierarchy drift (heading levels skipped or multiple `#`)   |
 //! | L4   | warning  | empty / stub section heading with no content                       |
 //! | L5   | warning  | source declared in frontmatter but never cited with footnote       |
-//! | L6   | info     | non-standard actor identity in generated, verified, or author      |
+//! | L6   | info     | actor uses a scheme OKF does not define (not `human`/`team`/`process`) |
 //! | L7   | warning  | `# Computation` code block missing language tag                    |
 //! | L8   | info     | trailing whitespace or excess blank lines in markdown body         |
 //! | L9   | warning  | orphan: no inbound links and not listed in any `index.md`          |
@@ -133,7 +133,9 @@ const fn is_fixable_lint(code: &str) -> bool {
 }
 
 fn check_unverified(cx: &mut Cx, fm: &Frontmatter) {
-    if fm.get("verified").is_none() {
+    // A concept whose checks all predate its last change is reported by the
+    // validator; this rule is for the one that was never checked at all.
+    if fm.verified().is_empty() {
         cx.info("L11", "no `verified` events; trust tier is `unverified`");
     }
 }
@@ -300,40 +302,41 @@ fn check_unused_sources(cx: &mut Cx, doc: &Document) {
     }
 }
 
+/// Actors written as `<scheme>:<id>` with a scheme the specification does not
+/// define.
+///
+/// Permitted: producers may use other schemes, and consumers treat them as
+/// non-human. It is noted because a typo in a defined scheme (`humans:alice`)
+/// looks exactly like this and silently costs a concept its human-reviewed
+/// tier. A string in neither actor form is a validation warning instead.
 fn check_non_standard_actor(cx: &mut Cx, fm: &Frontmatter) {
+    let undefined_scheme = |actor: &okf_core::Actor| {
+        matches!(actor.kind(), okf_core::ActorKind::Other) && actor.is_conventional()
+    };
+    let note = |field: &str, actor: &okf_core::Actor| {
+        format!(
+            "actor `{actor}` in `{field}` uses the scheme `{}`, which OKF does not define              (`human`, `team`, `process`); consumers treat it as non-human",
+            actor.scheme().unwrap_or_default()
+        )
+    };
     if let Some(generated) = fm.generated()
         && let Some(by) = &generated.by
-        && matches!(by.kind(), okf_core::ActorKind::Other)
+        && undefined_scheme(by)
     {
-        cx.info(
-            "L6",
-            format!(
-                "actor `{by}` in `generated.by` does not follow the standard `human:<id>`, `process:<id>`, or `<producer>/<version>` convention"
-            ),
-        );
+        cx.info("L6", note("generated.by", by));
     }
     for verification in fm.verified() {
         if let Some(by) = &verification.by
-            && matches!(by.kind(), okf_core::ActorKind::Other)
+            && undefined_scheme(by)
         {
-            cx.info(
-                "L6",
-                format!(
-                    "actor `{by}` in `verified.by` does not follow the standard `human:<id>`, `process:<id>`, or `<producer>/<version>` convention"
-                ),
-            );
+            cx.info("L6", note("verified.by", by));
         }
     }
     for source in fm.sources() {
         if let Some(author) = &source.author
-            && matches!(author.kind(), okf_core::ActorKind::Other)
+            && undefined_scheme(author)
         {
-            cx.info(
-                "L6",
-                format!(
-                    "author `{author}` in `sources.author` does not follow the standard `human:<id>`, `process:<id>`, or `<producer>/<version>` convention"
-                ),
-            );
+            cx.info("L6", note("sources.author", author));
         }
     }
 }
@@ -342,7 +345,10 @@ fn check_computation_block_formatting(cx: &mut Cx, doc: &Document) {
     let Some(contract) = doc.attested_computation() else {
         return;
     };
+    // An indented block has no fence to tag; the validator asks for it to be
+    // fenced first.
     if let okf_core::computation::ComputationSource::Inline(inline) = &contract.computation
+        && inline.fenced
         && inline.language.is_none()
     {
         cx.warn(

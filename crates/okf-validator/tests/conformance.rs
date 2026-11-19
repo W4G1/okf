@@ -1,32 +1,50 @@
 //! End-to-end conformance tests for [`validate_bundle`] and conformance clauses,
 //! driven by the specification's Appendix A worked example: an income statement
-//! whose two figures are split into attested computations, with every
-//! frontmatter family populated and the two computations deliberately left in
-//! different trust and freshness states.
+//! whose two figures are attested computations, with every frontmatter family
+//! populated and the two computations deliberately left in different trust and
+//! freshness states.
 //!
-//! The documents below are transcribed from the spec, so these tests double as
-//! a fidelity check: if the crate cannot read the spec's own examples, it does
-//! not implement the spec. The reference implementation has no counterpart to
-//! this file, since it validates a document at a time rather than a bundle.
+//! The documents below are transcribed from the OKF v0.3 spec, so these tests
+//! double as a fidelity check: if the crate cannot read the spec's own
+//! examples, it does not implement the spec. The reference implementation has
+//! no counterpart to this file, since it validates a document at a time rather
+//! than a bundle.
 
 mod common;
 
 use common::TempDir;
 use okf_core::{
-    ActorKind, Bundle, ComputationSource, ConceptId, Date, Document, ResourceKind, Status,
-    TrustTier,
+    ActorKind, Bundle, ComputationSource, ConceptId, Date, Document, Freshness, LinkTarget,
+    PathResolution, ResourceKind, Status, TrustTier,
 };
 use okf_validator::{Severity, validate_bundle, validate_bundle_at};
 
-const INCOME_STATEMENT: &str = r"---
+const INDEX: &str = r#"---
+okf_version: "0.3"
+title: Acme finance
+description: Income-statement metrics and their sanctioned computations. Use it for revenue and profit questions.
+license: CC-BY-4.0
+---
+
+# Metrics
+
+* [Income statement (fiscal year)](metrics/income-statement.md) - Headline income-statement figures for a fiscal year.
+
+# Computations
+
+* [Revenue for fiscal year](computations/revenue.md) - Recognized revenue for a fiscal year, per Finance's definition.
+* [Gross profit for fiscal year](computations/profit.md) - Gross profit by segment for a fiscal year, per the cost-allocation standard.
+"#;
+
+const INCOME_STATEMENT: &str = r#"---
 type: Metric
 title: Income statement (fiscal year)
 description: Headline income-statement figures for a fiscal year.
 tags: [finance, income-statement]
 status: stable
-generated: { by: reference_agent/gemini-2.5-pro, at: 2026-06-20T22:53:05Z }
-verified: { by: human:walter, at: 2026-06-25T09:00:00Z }
-stale_after: 2026-12-31T00:00:00Z
+generated: { by: reference_agent/gemini-2.5-pro, at: "2026-06-20T22:53:05Z" }
+verified: { by: "human:ahormati", at: "2026-06-25T09:00:00Z" }
+stale_after: "2026-12-31T00:00:00Z"
 sources:
   - id: fpa-handbook
     resource: https://wiki.acme/finance/fpa-handbook
@@ -40,9 +58,9 @@ reporting handbook.[^fpa-handbook] Each figure is produced by a sanctioned,
 attestable computation; this concept only narrates them.
 
 [^fpa-handbook]: FP&A reporting handbook
-";
+"#;
 
-const REVENUE: &str = r"---
+const REVENUE: &str = r#"---
 type: Attested Computation
 title: Revenue for fiscal year
 description: Recognized revenue for a fiscal year, per Finance's definition.
@@ -52,42 +70,44 @@ runtime: bigquery
 parameters:
   - { name: year, type: integer, required: true }
 executor:
-  resource: references/skills/run-on-bq.md
+  resource: /references/skills/run-on-bq.md
   receipt: [job_id, executed_sql, result]
 attester:
-  resource: references/attesters/sql-equality.py
-generated: { by: reference_agent/gemini-2.5-pro, at: 2026-06-28T14:00:00Z }
-verified: { by: human:walter, at: 2026-06-25T09:00:00Z }
-stale_after: 2026-12-31T00:00:00Z
+  resource: /references/attesters/sql-equality.py
+generated: { by: reference_agent/gemini-2.5-pro, at: "2026-06-20T14:00:00Z" }
+verified: { by: "human:ahormati", at: "2026-06-25T09:00:00Z" }
+stale_after: "2026-12-31T00:00:00Z"
 sources:
   - id: rev-policy
     resource: https://wiki.acme/finance/revenue-recognition
     title: Revenue recognition policy
-    author: team:finance-fpa
-    last_modified: 2026-04-02T00:00:00Z
+    author: "team:finance-fpa"
+    last_modified: "2026-04-02T00:00:00Z"
   - id: exec-rev-dash
-    resource: dashboards/exec-revenue
+    resource: https://bi.acme.example/dashboards/exec-revenue
     title: Executive revenue dashboard
-    author: team:finance-fpa
+    author: "team:finance-fpa"
     usage_count: 5000
-    last_modified: 2026-06-18T00:00:00Z
-usage_window: { from: 2026-06-01T00:00:00Z, to: 2026-06-30T00:00:00Z }
+    last_modified: "2026-06-18T00:00:00Z"
+usage_window: { from: "2026-06-01T00:00:00Z", to: "2026-06-30T00:00:00Z" }
 ---
 
 # Computation
 
-    SELECT SUM(amount) AS revenue
-    FROM finance.recognized_revenue
-    WHERE fiscal_year = @year
+```sql
+SELECT SUM(amount) AS revenue
+FROM finance.recognized_revenue
+WHERE fiscal_year = @year
+```
 
 Recognized revenue per the recognition policy,[^rev-policy] corroborated by
 the executive revenue dashboard.[^exec-rev-dash]
 
 [^rev-policy]: Revenue recognition policy
 [^exec-rev-dash]: Executive revenue dashboard
-";
+"#;
 
-const PROFIT: &str = r"---
+const PROFIT: &str = r#"---
 type: Attested Computation
 title: Gross profit for fiscal year
 description: Gross profit by segment for a fiscal year, per the cost-allocation standard.
@@ -98,13 +118,13 @@ parameters:
   - { name: year, type: integer, required: true }
   - { name: segment, type: string, required: true }
 executor:
-  resource: references/skills/run-dbt.md
+  resource: /references/skills/run-dbt.md
   receipt: [run_id, compiled_sql, result]
 attester:
-  resource: references/attesters/dbt-binding.py
-generated: { by: reference_agent/gemini-2.5-pro, at: 2026-06-14T14:00:00Z }
-verified: { by: process:finance-nightly, at: 2026-06-12T08:00:00Z }
-stale_after: 2026-06-15T00:00:00Z
+  resource: /references/attesters/dbt-binding.py
+generated: { by: reference_agent/gemini-2.5-pro, at: "2026-06-10T14:00:00Z" }
+verified: { by: "process:finance-nightly", at: "2026-06-12T08:00:00Z" }
+stale_after: "2026-06-15T00:00:00Z"
 sources:
   - id: cost-alloc
     resource: https://wiki.acme/finance/cost-allocation
@@ -113,30 +133,36 @@ sources:
 
 # Computation
 
-    SELECT gross_profit
-    FROM {{ ref('fct_income_statement') }}
-    WHERE fiscal_year = {{ var('year') }}
-      AND segment = {{ var('segment') }}
+```sql
+SELECT gross_profit
+FROM {{ ref('fct_income_statement') }}
+WHERE fiscal_year = {{ var('year') }}
+  AND segment = {{ var('segment') }}
+```
 
 Gross profit by segment per the cost-allocation standard.[^cost-alloc]
 
 [^cost-alloc]: Cost allocation standard
-";
+"#;
 
 /// The Appendix A bundle, `bundles/finance/`.
+///
+/// The run instructions are plain markdown without frontmatter and the
+/// attesters are Python, so none of the four files under `references/` is a
+/// concept: a path field may point at any file in the bundle.
 fn finance_bundle() -> TempDir {
     let tmp = TempDir::new();
-    tmp.write("index.md", "---\nokf_version: \"0.2\"\n---\n\n# Finance\n");
+    tmp.write("index.md", INDEX);
     tmp.write("metrics/income-statement.md", INCOME_STATEMENT);
     tmp.write("computations/revenue.md", REVENUE);
     tmp.write("computations/profit.md", PROFIT);
     tmp.write(
         "references/skills/run-on-bq.md",
-        "---\ntype: Reference\ntitle: Run on BigQuery\n---\n\nRun instructions.\n",
+        "# Run on BigQuery\n\nRun instructions.\n",
     );
     tmp.write(
         "references/skills/run-dbt.md",
-        "---\ntype: Reference\ntitle: Run dbt\n---\n\nRun instructions.\n",
+        "# Run dbt\n\nRun instructions.\n",
     );
     tmp.write(
         "references/attesters/sql-equality.py",
@@ -158,14 +184,36 @@ fn appendix_a_bundle_loads_and_conforms() {
     let tmp = finance_bundle();
     let bundle = Bundle::load(tmp.path()).unwrap();
 
-    // The two `.py` attesters are not markdown, so they are not concepts.
-    assert_eq!(bundle.len(), 5);
+    // The two run instructions have no frontmatter and the two attesters are
+    // not markdown, so none of them is a concept.
+    assert_eq!(bundle.len(), 3);
+    assert_eq!(bundle.non_concepts().len(), 2);
     assert!(bundle.parse_errors().is_empty());
-    assert_eq!(bundle.okf_version(), Some("0.2"));
+    assert_eq!(bundle.okf_version(), Some("0.3"));
+    assert!(!bundle.legacy_fallbacks_apply());
+
+    let metadata = bundle.metadata();
+    assert_eq!(metadata.title.as_deref(), Some("Acme finance"));
+    assert_eq!(metadata.license.as_deref(), Some("CC-BY-4.0"));
+    assert!(
+        metadata
+            .description
+            .as_deref()
+            .unwrap()
+            .starts_with("Income-statement metrics")
+    );
 
     let report = validate_bundle(&bundle);
     assert!(report.is_conformant(), "{:#?}", report.diagnostics);
     assert_eq!(report.error_count(), 0);
+    // The spec's own example is clean but for the two files that are not
+    // concepts, which a validator should point out.
+    let warnings: Vec<&str> = report
+        .of(Severity::Warning)
+        .map(|d| d.message.as_str())
+        .collect();
+    assert_eq!(warnings.len(), 2, "{warnings:#?}");
+    assert!(warnings.iter().all(|w| w.contains("not a concept")));
 }
 
 #[test]
@@ -184,6 +232,47 @@ fn narrative_concept_links_to_each_computation() {
 
     // Each computation knows which concepts use it (discovery path).
     assert_eq!(bundle.backlinks(&id("computations/revenue")), &[statement]);
+}
+
+#[test]
+fn appendix_a_results_table() {
+    // "A consumer that reads this bundle on or after 2026-06-15 and before
+    // 2026-12-31 gets these results":
+    //
+    // | Concept                    | Trust tier        | Fresh | Attestable |
+    // | metrics/income-statement   | human-reviewed    | yes   | no         |
+    // | computations/revenue       | human-reviewed    | yes   | yes        |
+    // | computations/profit        | machine-confirmed | no    | yes        |
+    let tmp = finance_bundle();
+    let bundle = Bundle::load(tmp.path()).unwrap();
+    let now = Date::new(2026, 7, 1).unwrap().to_utc_datetime();
+
+    for (concept, tier, freshness, attestable) in [
+        (
+            "metrics/income-statement",
+            TrustTier::HumanReviewed,
+            Freshness::Fresh,
+            false,
+        ),
+        (
+            "computations/revenue",
+            TrustTier::HumanReviewed,
+            Freshness::Fresh,
+            true,
+        ),
+        (
+            "computations/profit",
+            TrustTier::MachineConfirmed,
+            Freshness::Stale,
+            true,
+        ),
+    ] {
+        let found = bundle.get(&id(concept)).unwrap();
+        assert_eq!(found.trust_tier(), tier, "{concept}");
+        assert_eq!(found.freshness_at(now), freshness, "{concept}");
+        assert_eq!(bundle.is_attestable(&id(concept)), attestable, "{concept}");
+        assert!(found.is_current(), "{concept}");
+    }
 }
 
 #[test]
@@ -218,11 +307,38 @@ fn trust_tiers_and_freshness_differ_per_computation() {
         generated.by.as_ref().unwrap().producer(),
         Some("reference_agent")
     );
-    // `verified` is independent of `generated.at`: content changed after the
-    // human sign-off, and that is legal.
-    let generated_at = generated.at.unwrap().datetime.unwrap();
-    let verified_at = verified[0].at.as_ref().unwrap().datetime.unwrap();
-    assert!(generated_at > verified_at);
+    // The verification is after the last change, so it is current.
+    let generated_at = generated.at.unwrap().instant().unwrap();
+    let verified_at = verified[0].at.as_ref().unwrap().instant().unwrap();
+    assert!(verified_at > generated_at);
+    assert!(!revenue.document.frontmatter.verified_before_change());
+}
+
+#[test]
+fn a_rewrite_after_review_costs_the_human_reviewed_tier() {
+    // The one change to `generated.at` below is what an agent does when it
+    // regenerates a concept. The review that was current no longer is.
+    let tmp = finance_bundle();
+    tmp.write(
+        "computations/revenue.md",
+        &REVENUE.replace("2026-06-20T14:00:00Z", "2026-06-28T14:00:00Z"),
+    );
+    let bundle = Bundle::load(tmp.path()).unwrap();
+    let revenue = bundle.get(&id("computations/revenue")).unwrap();
+
+    assert_eq!(revenue.trust_tier(), TrustTier::Unverified);
+    assert!(revenue.document.frontmatter.verified_before_change());
+    // The event stays in the file as history.
+    assert_eq!(revenue.document.frontmatter.verified().len(), 1);
+
+    let report = validate_bundle(&bundle);
+    assert!(report.is_conformant());
+    let notes: Vec<_> = report
+        .of(Severity::Info)
+        .filter(|d| d.message.contains("no verification is current"))
+        .collect();
+    assert_eq!(notes.len(), 1, "{:#?}", report.diagnostics);
+    assert_eq!(notes[0].concept, Some(id("computations/revenue")));
 }
 
 #[test]
@@ -238,12 +354,13 @@ fn sources_carry_credibility_signals_framed_by_a_usage_window() {
     let policy = &sources[0];
     assert_eq!(policy.resource_kind(), ResourceKind::Url);
     assert_eq!(policy.author.as_ref().unwrap().as_str(), "team:finance-fpa");
+    assert_eq!(policy.author.as_ref().unwrap().kind(), ActorKind::Team);
     assert_eq!(
         policy
             .last_modified
             .as_ref()
             .unwrap()
-            .datetime
+            .instant()
             .unwrap()
             .date,
         Date::new(2026, 4, 2).unwrap()
@@ -252,15 +369,16 @@ fn sources_carry_credibility_signals_framed_by_a_usage_window() {
 
     // The shared window frames the dashboard's usage_count.
     let dashboard = &sources[1];
+    assert_eq!(dashboard.resource_kind(), ResourceKind::Url);
     assert_eq!(dashboard.usage_count, Some(5000));
     let shared = fm.usage_window();
     let window = dashboard.effective_usage_window(shared.as_ref()).unwrap();
     assert_eq!(
-        window.from.as_ref().unwrap().datetime.unwrap().date,
+        window.from.as_ref().unwrap().instant().unwrap().date,
         Date::new(2026, 6, 1).unwrap()
     );
     assert_eq!(
-        window.to.as_ref().unwrap().datetime.unwrap().date,
+        window.to.as_ref().unwrap().instant().unwrap().date,
         Date::new(2026, 6, 30).unwrap()
     );
 }
@@ -308,7 +426,11 @@ fn attested_computation_contracts_are_read_in_full() {
         revenue.executor.as_ref().unwrap().receipt,
         vec!["job_id", "executed_sql", "result"]
     );
-    assert!(matches!(revenue.computation, ComputationSource::Inline(_)));
+    assert!(matches!(
+        &revenue.computation,
+        ComputationSource::Inline(inline) if inline.fenced && inline.language.as_deref() == Some("sql")
+    ));
+    assert!(revenue.is_attestable());
     assert_eq!(
         revenue.computation.code().unwrap(),
         "SELECT SUM(amount) AS revenue\nFROM finance.recognized_revenue\nWHERE fiscal_year = @year"
@@ -341,41 +463,125 @@ fn attested_computation_contracts_are_read_in_full() {
 }
 
 #[test]
-fn contract_paths_resolve_from_the_bundle_root() {
+fn contract_paths_resolve_like_links() {
     let tmp = finance_bundle();
     let bundle = Bundle::load(tmp.path()).unwrap();
     let revenue_id = id("computations/revenue");
 
-    // The spec writes `references/...` from the bundle root even though the
-    // concept lives in `computations/`.
+    // A path that starts with `/` resolves from the bundle root, wherever the
+    // concept is.
     let executor = bundle
-        .resolve_path_field(&revenue_id, "references/skills/run-on-bq.md")
+        .resolve_path_field(&revenue_id, "/references/skills/run-on-bq.md")
         .unwrap();
     assert!(executor.ends_with("references/skills/run-on-bq.md"));
 
     let attester = bundle
-        .resolve_path_field(&revenue_id, "references/attesters/sql-equality.py")
+        .resolve_path_field(&revenue_id, "/references/attesters/sql-equality.py")
         .unwrap();
     assert!(attester.exists(), "non-markdown attester code resolves too");
 
-    // A path-valued field resolves only to a regular file, not merely an
-    // existing directory.
-    assert!(
+    // Any other path resolves from the directory of the concept's file.
+    assert!(matches!(
+        bundle.resolve_path(&revenue_id, "../references/attesters/sql-equality.py"),
+        PathResolution::Found(_)
+    ));
+    assert!(matches!(
+        bundle.resolve_path(&revenue_id, "profit.md"),
+        PathResolution::Found(_)
+    ));
+    // A directory can be behind a `resource`: a skill is often a folder.
+    assert!(matches!(
+        bundle.resolve_path(&revenue_id, "/references/skills"),
+        PathResolution::Found(_)
+    ));
+
+    // This bundle declares 0.3, so a bare path is not read from the root.
+    assert_eq!(
+        bundle.resolve_path(&revenue_id, "references/skills/run-on-bq.md"),
+        PathResolution::Missing
+    );
+    // But it is recognizable as one that was meant that way.
+    assert_eq!(
         bundle
-            .resolve_path_field(&revenue_id, "references")
-            .is_none()
+            .rooted_path_suggestion(&revenue_id, "references/skills/run-on-bq.md")
+            .as_deref(),
+        Some("/references/skills/run-on-bq.md")
     );
 
-    assert!(
-        bundle
-            .resolve_path_field(&revenue_id, "references/nope.py")
-            .is_none()
+    assert_eq!(
+        bundle.resolve_path(&revenue_id, "/references/nope.py"),
+        PathResolution::Missing
     );
-    assert!(
-        bundle
-            .resolve_path_field(&revenue_id, "https://example.com")
-            .is_none()
+    assert_eq!(
+        bundle.resolve_path(&revenue_id, "https://example.com"),
+        PathResolution::External
     );
+}
+
+#[test]
+fn v0_2_bundles_resolve_bare_path_fields_from_the_root_as_a_fallback() {
+    // The v0.2 examples wrote path fields from the bundle root without a
+    // leading `/`. A bundle that declares 0.2, or nothing, still reads.
+    let legacy_revenue = REVENUE
+        .replace("resource: /references/", "resource: references/")
+        .replace(
+            "https://bi.acme.example/dashboards/exec-revenue",
+            "metrics/income-statement.md",
+        );
+    for declaration in ["---\nokf_version: \"0.2\"\n---\n\n", ""] {
+        let tmp = finance_bundle();
+        tmp.write("index.md", &format!("{declaration}# Finance\n"));
+        tmp.write("computations/revenue.md", &legacy_revenue);
+        let bundle = Bundle::load(tmp.path()).unwrap();
+        let revenue_id = id("computations/revenue");
+        assert!(bundle.legacy_fallbacks_apply());
+
+        match bundle.resolve_path(&revenue_id, "references/skills/run-on-bq.md") {
+            PathResolution::Fallback(path) => {
+                assert!(path.ends_with("references/skills/run-on-bq.md"));
+            }
+            other => panic!("expected the root fallback, found {other:?}"),
+        }
+        assert!(bundle.is_attestable(&revenue_id));
+        // A source written from the root is still a derivation edge.
+        assert_eq!(
+            bundle.derived_from(&revenue_id),
+            vec![&id("metrics/income-statement")]
+        );
+
+        let report = validate_bundle(&bundle);
+        assert!(report.is_conformant(), "{:#?}", report.diagnostics);
+        let fallback: Vec<_> = report
+            .of(Severity::Warning)
+            .filter(|d| d.message.contains("resolves only from the bundle root"))
+            .collect();
+        assert_eq!(fallback.len(), 3, "{:#?}", report.diagnostics);
+        assert!(fallback.iter().all(|d| d.fixable));
+        assert!(fallback.iter().any(|d| {
+            d.message
+                .contains("write it as `/references/skills/run-on-bq.md`")
+        }));
+    }
+
+    // Declare 0.3 and the same values no longer resolve. The validator still
+    // recognizes what was meant, and can fix it.
+    let tmp = finance_bundle();
+    tmp.write("computations/revenue.md", &legacy_revenue);
+    let bundle = Bundle::load(tmp.path()).unwrap();
+    let revenue_id = id("computations/revenue");
+    assert!(!bundle.legacy_fallbacks_apply());
+    assert_eq!(
+        bundle.resolve_path(&revenue_id, "references/skills/run-on-bq.md"),
+        PathResolution::Missing
+    );
+    assert!(bundle.derived_from(&revenue_id).is_empty());
+    let report = validate_bundle(&bundle);
+    let unresolved: Vec<_> = report
+        .of(Severity::Warning)
+        .filter(|d| d.message.contains("would resolve from the bundle root"))
+        .collect();
+    assert_eq!(unresolved.len(), 3, "{:#?}", report.diagnostics);
+    assert!(unresolved.iter().all(|d| d.fixable));
 }
 
 #[test]
@@ -475,7 +681,7 @@ fn v0_1_documents_still_load_under_the_documented_fallbacks() {
     assert!(doc.frontmatter.generated().is_none());
     let changed = doc.frontmatter.content_changed_at().unwrap();
     assert_eq!(
-        changed.datetime.unwrap().date,
+        changed.instant().unwrap().date,
         Date::new(2026, 5, 28).unwrap()
     );
     // Absent trust frontmatter has meaning, and is never a rejection.
@@ -498,7 +704,7 @@ fn v0_1_bundles_are_conformant_but_flagged_for_migration() {
 
     assert!(
         report.is_conformant(),
-        "a v0.1 bundle is still a conformant v0.2 bundle"
+        "a v0.1 bundle is still a conformant bundle"
     );
     let warnings: Vec<&str> = report
         .of(Severity::Warning)
@@ -527,12 +733,18 @@ fn malformed_families_warn_without_breaking_conformance() {
          description: Every family mis-specified.\n\
          tags: finance, revenue\n\
          status: experimental\n\
+         superseded_by: /nowhere.md\n\
          stale_after: soon\n\
          generated: { at: 2026-06-20T22:53:05Z }\n\
-         verified: [{ by: human:walter, at: yesterday }]\n\
+         verified: [{ by: human:walter, at: yesterday }, { by: Finance Team }]\n\
          sources:\n\
-         \x20 - { id: dup, resource: https://a }\n\
+         \x20 - { id: dup, resource: https://a, author: Finance Team }\n\
          \x20 - { id: dup, title: no resource }\n\
+         \x20 - { id: dup, resource: https://b, usage_count: 5 }\n\
+         parameters:\n\
+         \x20 - { name: year }\n\
+         executor: { receipt: job_id }\n\
+         attester: {}\n\
          ---\n\n\
          A claim.[^unknown]\n\n\
          [^unknown]: Not a source id\n",
@@ -542,7 +754,8 @@ fn malformed_families_warn_without_breaking_conformance() {
 
     assert!(
         report.is_conformant(),
-        "`type` is present, so conformance is satisfied"
+        "`type` is present and the frontmatter parses, so conformance is satisfied: {:#?}",
+        report.diagnostics
     );
     let warnings: Vec<&str> = report
         .of(Severity::Warning)
@@ -554,18 +767,36 @@ fn malformed_families_warn_without_breaking_conformance() {
             "missing {needle:?} in {warnings:#?}"
         );
     };
-    has("`tags` should be a list of short strings");
+    has("`tags` should be a YAML list");
+    has("consumers read it as the single tag \"finance, revenue\"");
     has("unknown `status` value");
-    has("`stale_after` is not an ISO-8601 datetime with an explicit offset");
+    has("`superseded_by` has a meaning only with `status: deprecated`");
+    has("`superseded_by` does not resolve to a file in the bundle");
+    has("`stale_after` does not parse");
     has("`generated.by` is required");
-    has("`verified[0].at` is not an ISO-8601 datetime with an explicit offset");
+    has("`verified[0].at` is not an RFC 3339 date-time");
+    has("`verified[1]` is missing `at`");
+    has("`verified[1].by` is not an actor");
+    has("`sources[0].author` is not an actor");
     has("duplicate `sources[].id`");
     has("`sources[1].resource` is required");
+    has("`sources[2].usage_count` needs a `usage_window`");
     has("matches no `sources[].id`");
     has("`runtime` is required");
     has("no computation");
-    has("missing `executor`");
-    has("missing `attester`");
+    has("`parameters[0]` is missing `type`");
+    has("`executor.resource` is missing");
+    has("`attester.resource` is missing");
+
+    // The reader applies the same rules the validator describes.
+    let fm = &bundle.concepts()[0].document.frontmatter;
+    assert_eq!(fm.tags(), vec!["finance, revenue"]);
+    assert!(!fm.is_current());
+    assert!(fm.is_stale_on(Date::new(2000, 1, 1).unwrap()));
+    assert_eq!(fm.sources().len(), 2);
+    assert!(fm.verified().is_empty() || fm.trust_tier() == TrustTier::Unverified);
+    assert!(fm.parameters().is_empty());
+    assert!(!bundle.is_attestable(&bundle.concepts()[0].id));
 }
 
 #[test]
@@ -598,19 +829,86 @@ fn malformed_sources_members_are_diagnosed_without_being_conformance_errors() {
 }
 
 #[test]
-fn non_scalar_type_is_a_conformance_error_and_not_a_type_match() {
+fn a_file_without_a_usable_type_is_not_a_concept_and_not_an_error() {
     let tmp = TempDir::new();
-    tmp.write("bad.md", "---\ntype: [Metric, Note]\n---\nBody.\n");
+    tmp.write("list.md", "---\ntype: [Metric, Note]\n---\nBody.\n");
+    tmp.write("none.md", "---\ntitle: No type at all\n---\nBody.\n");
+    tmp.write("README.md", "# Read me\n");
+    // A number is not a string, but it is a non-empty type: the concept is
+    // kept, and the producer is told to quote it.
+    tmp.write("number.md", "---\ntype: 42\n---\nBody.\n");
     let bundle = Bundle::load(tmp.path()).unwrap();
 
     assert!(bundle.concepts_of_type("Metric").next().is_none());
+    assert_eq!(bundle.len(), 1);
+    assert_eq!(bundle.concepts_of_type("42").count(), 1);
+    assert_eq!(bundle.non_concepts().len(), 3);
+
     let report = validate_bundle(&bundle);
-    assert!(!report.is_conformant());
+    assert!(report.is_conformant(), "{:#?}", report.diagnostics);
+    let not_concepts: Vec<&str> = report
+        .of(Severity::Warning)
+        .filter(|d| d.message.contains("not a concept"))
+        .map(|d| d.message.as_str())
+        .collect();
+    assert_eq!(not_concepts.len(), 3, "{not_concepts:#?}");
+    assert_eq!(
+        not_concepts
+            .iter()
+            .filter(|m| m.contains("no frontmatter"))
+            .count(),
+        1
+    );
     assert!(
         report
-            .of(Severity::Error)
-            .any(|d| d.message.contains("`type` must be a non-empty scalar"))
+            .of(Severity::Warning)
+            .any(|d| d.message.contains("`type` is an integer, not a string"))
     );
+}
+
+#[test]
+fn unparseable_frontmatter_and_repeated_keys_are_conformance_errors() {
+    // Conformance asks one thing of a frontmatter block: that it parses as a
+    // YAML mapping. That holds for every markdown file, concept or not.
+    let tmp = TempDir::new();
+    tmp.write("ok.md", "---\ntype: Note\n---\nBody.\n");
+    tmp.write("unclosed.md", "---\ntype: Note\nBody.\n");
+    tmp.write("list.md", "---\n- a\n- b\n---\nBody.\n");
+    tmp.write("broken.md", "---\ntags: [a, b\n---\nBody.\n");
+    let report = validate_bundle(&Bundle::load(tmp.path()).unwrap());
+    assert!(!report.is_conformant());
+    assert_eq!(
+        report
+            .of(Severity::Error)
+            .filter(|d| d.message.contains("does not parse as a YAML mapping"))
+            .count(),
+        3,
+        "{:#?}",
+        report.diagnostics
+    );
+
+    // Keys must be unique, at any depth, in a concept or any other file.
+    let tmp = TempDir::new();
+    tmp.write(
+        "dup.md",
+        "---\ntype: Note\ntitle: One\ntitle: Two\ngenerated: { by: a/b, by: c/d }\n---\nBody.\n",
+    );
+    tmp.write("untyped.md", "---\ntitle: One\ntitle: Two\n---\nBody.\n");
+    let bundle = Bundle::load(tmp.path()).unwrap();
+    // The loader is lenient and reads the first occurrence.
+    assert_eq!(
+        bundle.concepts()[0].document.frontmatter.title().as_deref(),
+        Some("One")
+    );
+    let report = validate_bundle(&bundle);
+    assert!(!report.is_conformant());
+    let repeated: Vec<&str> = report
+        .of(Severity::Error)
+        .map(|d| d.message.as_str())
+        .collect();
+    assert_eq!(repeated.len(), 3, "{repeated:#?}");
+    assert!(repeated.iter().any(|m| m.contains("`generated.by`")));
+    assert_eq!(repeated.iter().filter(|m| m.contains("`title`")).count(), 2);
 }
 
 #[test]
@@ -621,9 +919,10 @@ fn malformed_verification_events_do_not_elevate_trust_or_hide_diagnostics() {
         "---\n\
          type: Note\n\
          verified:\n\
-         \x20 - { by: human:invalid, at: 2026-06-26 }\n\
+         \x20 - { by: human:invalid, at: 2026-06-26T09:00:00 }\n\
          \x20 - { by: human:also-invalid, at: yesterday }\n\
          \x20 - not-an-event\n\
+         \x20 - { by: human:no-time }\n\
          ---\n\nBody.\n",
     );
     let bundle = Bundle::load(tmp.path()).unwrap();
@@ -631,47 +930,83 @@ fn malformed_verification_events_do_not_elevate_trust_or_hide_diagnostics() {
     assert_eq!(concept.trust_tier(), TrustTier::Unverified);
 
     let report = validate_bundle(&bundle);
+    // A date-time without an offset is close enough to repair.
     assert!(report.of(Severity::Warning).any(|d| {
         d.message
-            .contains("`verified[0].at` is not an ISO-8601 datetime with an explicit offset")
+            .contains("`verified[0].at` is not an RFC 3339 date-time")
+            && d.fixable
     }));
     assert!(report.of(Severity::Warning).any(|d| {
         d.message
-            .contains("`verified[1].at` is not an ISO-8601 datetime with an explicit offset")
+            .contains("`verified[1].at` is not an RFC 3339 date-time")
+            && !d.fixable
     }));
     assert!(
         report
             .of(Severity::Warning)
             .any(|d| d.message.contains("`verified[2]` should be a mapping"))
     );
+    assert!(
+        report
+            .of(Severity::Warning)
+            .any(|d| d.message.contains("`verified[3]` is missing `at`"))
+    );
 }
 
 #[test]
-fn trust_timestamps_require_time_but_generic_datetime_parsing_stays_permissive() {
+fn a_date_only_timestamp_is_valid_and_means_the_start_of_that_day_in_utc() {
     let tmp = TempDir::new();
     tmp.write(
-        "bad.md",
+        "dated.md",
         "---\n\
          type: Note\n\
          generated: { by: tool/v1, at: 2026-06-26 }\n\
-         verified: { by: human:reviewer, at: 2026-06-26 }\n\
+         verified: { by: human:reviewer, at: \"2026-06-26\" }\n\
+         stale_after: 2026-12-31\n\
+         sources:\n\
+         \x20 - { resource: https://example.com, last_modified: 2026-05-15, usage_count: 3 }\n\
+         usage_window: { from: 2026-06-01, to: 2026-06-30 }\n\
          ---\n\nBody.\n",
     );
     let bundle = Bundle::load(tmp.path()).unwrap();
     let report = validate_bundle(&bundle);
 
     assert!(report.is_conformant(), "{:#?}", report.diagnostics);
-    assert_eq!(bundle.concepts()[0].trust_tier(), TrustTier::Unverified);
-    assert!(report.of(Severity::Warning).any(|d| {
-        d.message
-            .contains("`generated.at` is not an ISO-8601 datetime with an explicit offset")
-    }));
-    assert!(report.of(Severity::Warning).any(|d| {
-        d.message
-            .contains("`verified[0].at` is not an ISO-8601 datetime with an explicit offset")
-    }));
-    assert!(okf_core::DateTime::parse("2026-06-26").is_some());
+    // The review and the change name the same instant, so the review is
+    // current.
+    assert_eq!(bundle.concepts()[0].trust_tier(), TrustTier::HumanReviewed);
+    assert!(!bundle.concepts()[0].is_stale_on(Date::new(2026, 12, 30).unwrap()));
+    assert!(bundle.concepts()[0].is_stale_on(Date::new(2026, 12, 31).unwrap()));
+
+    // Nothing here is malformed.
+    assert!(
+        !report
+            .of(Severity::Warning)
+            .any(|d| d.message.contains("is not an RFC 3339 date-time")),
+        "{:#?}",
+        report.diagnostics
+    );
+    // The two timestamps consumers compare should be date-times, though.
+    let prefer: Vec<_> = report
+        .of(Severity::Warning)
+        .filter(|d| d.message.contains("write it as a date-time"))
+        .collect();
+    assert_eq!(prefer.len(), 2, "{:#?}", report.diagnostics);
+    assert!(prefer.iter().all(|d| d.fixable));
+    assert!(prefer.iter().any(|d| d.message.contains("`generated.at`")));
+    assert!(
+        prefer
+            .iter()
+            .any(|d| d.message.contains("`verified[0].at`"))
+    );
+
+    // A date-time without an offset stays invalid.
+    assert!(okf_core::DateTime::parse("2026-06-26T10:00:00").is_some());
+    assert!(okf_core::DateTime::parse_rfc3339("2026-06-26T10:00:00").is_none());
     assert!(!okf_validator::validate::is_iso8601_datetime("2026-06-26"));
+    assert!(!okf_validator::validate::is_iso8601_datetime(
+        "2026-06-26T00:00:00"
+    ));
     assert!(okf_validator::validate::is_iso8601_datetime(
         "2026-06-26T00:00:00Z"
     ));
@@ -681,7 +1016,7 @@ fn trust_timestamps_require_time_but_generic_datetime_parsing_stays_permissive()
 fn malformed_and_unreadable_reserved_files_are_conformance_errors() {
     let tmp = TempDir::new();
     tmp.write("a.md", "---\ntype: Note\n---\nBody.\n");
-    tmp.write("index.md", "---\nokf_version: 0.2\n");
+    tmp.write("index.md", "---\nokf_version: 0.3\n");
     tmp.write("nested/index.md", "---\ntype: Not allowed\n---\n");
     tmp.write(
         "log.md",
@@ -691,21 +1026,21 @@ fn malformed_and_unreadable_reserved_files_are_conformance_errors() {
     let bundle = Bundle::load(tmp.path()).unwrap();
     let report = validate_bundle(&bundle);
     assert!(!report.is_conformant());
-    assert!(
-        report
-            .of(Severity::Error)
-            .any(|d| { d.message.contains("unparseable reserved index.md") })
-    );
-    assert!(
-        report
-            .of(Severity::Error)
-            .any(|d| { d.message.contains("should not contain frontmatter") })
-    );
+    assert!(report.of(Severity::Error).any(|d| {
+        d.path.as_ref().is_some_and(|p| p.ends_with("index.md"))
+            && d.message.contains("does not parse as a YAML mapping")
+    }));
+    assert!(report.of(Severity::Error).any(|d| {
+        d.message
+            .contains("an index.md below the bundle root has no frontmatter")
+    }));
     assert!(
         report
             .of(Severity::Error)
             .any(|d| { d.message.contains("log date heading is not ISO-8601") })
     );
+    // A reserved name is never a concept, whatever frontmatter it contains.
+    assert_eq!(bundle.len(), 1);
 
     let unreadable = TempDir::new();
     unreadable.write("a.md", "---\ntype: Note\n---\nBody.\n");
@@ -727,7 +1062,94 @@ fn malformed_and_unreadable_reserved_files_are_conformance_errors() {
 }
 
 #[test]
-fn log_structure_requires_nonempty_newest_first_date_groups() {
+fn the_root_index_carries_bundle_metadata() {
+    // The bundle-root index.md may have frontmatter: the OKF version, a
+    // title, a description, a license, and extension keys.
+    let tmp = TempDir::new();
+    tmp.write("a.md", "---\ntype: Note\n---\nBody.\n");
+    tmp.write("LICENSE.txt", "All rights reserved.\n");
+    tmp.write(
+        "index.md",
+        "---\nokf_version: \"0.3\"\ntitle: Acme\ndescription: Notes. Use it for nothing.\n\
+         license: /LICENSE.txt\nx-acme-owner: data-team\n---\n\n# Note\n\n* [a](a.md)\n",
+    );
+    let bundle = Bundle::load(tmp.path()).unwrap();
+    let report = validate_bundle(&bundle);
+    assert!(report.is_conformant(), "{:#?}", report.diagnostics);
+    assert!(
+        !report
+            .diagnostics
+            .iter()
+            .any(|d| d.path.as_ref().is_some_and(|p| p.ends_with("index.md"))),
+        "{:#?}",
+        report.diagnostics
+    );
+    assert_eq!(bundle.metadata().license.as_deref(), Some("/LICENSE.txt"));
+
+    // A license that is neither an SPDX expression nor a file is worth a word.
+    tmp.write(
+        "index.md",
+        "---\nokf_version: \"0.3\"\nlicense: see the wiki for terms\n---\n\n# Note\n\n* [a](a.md)\n",
+    );
+    let report = validate_bundle(&Bundle::load(tmp.path()).unwrap());
+    assert!(report.is_conformant());
+    assert!(report.of(Severity::Warning).any(|d| {
+        d.message
+            .contains("`license` is neither an SPDX expression nor a file")
+    }));
+}
+
+#[test]
+fn a_bundle_should_declare_its_version() {
+    // No root index at all.
+    let tmp = TempDir::new();
+    tmp.write("a.md", "---\ntype: Note\n---\nBody.\n");
+    let report = validate_bundle(&Bundle::load(tmp.path()).unwrap());
+    assert!(
+        report.is_conformant(),
+        "a missing index.md is never a violation"
+    );
+    assert!(
+        report
+            .of(Severity::Warning)
+            .any(|d| d.message.contains("no bundle-root index.md"))
+    );
+
+    // A root index with no frontmatter, or frontmatter without the key.
+    for index in [
+        "# Note\n\n* [a](a.md)\n",
+        "---\ntitle: Acme\n---\n\n# Note\n\n* [a](a.md)\n",
+    ] {
+        tmp.write("index.md", index);
+        let report = validate_bundle(&Bundle::load(tmp.path()).unwrap());
+        assert!(report.is_conformant());
+        assert!(
+            report
+                .of(Severity::Warning)
+                .any(|d| d.message.contains("does not declare `okf_version`") && d.fixable),
+            "{:#?}",
+            report.diagnostics
+        );
+    }
+
+    tmp.write(
+        "index.md",
+        "---\nokf_version: \"0.3\"\n---\n\n# Note\n\n* [a](a.md)\n",
+    );
+    let report = validate_bundle(&Bundle::load(tmp.path()).unwrap());
+    assert!(
+        !report
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("okf_version"))
+    );
+}
+
+#[test]
+fn log_structure_beyond_dates_and_frontmatter_is_a_warning() {
+    // A log is non-conformant for frontmatter or for a date heading that is
+    // not `YYYY-MM-DD`. Anything else about its shape still reads, so it is
+    // worth a warning and no more.
     for (contents, expected) in [
         (
             "# My Update History\n\nThis is not a log.\n",
@@ -735,11 +1157,11 @@ fn log_structure_requires_nonempty_newest_first_date_groups() {
         ),
         ("# My Update History\n\n## 2026-06-26\n", "has no entries"),
         (
-            "# My Update History\n\n## 2026-06-26\n* ordinary prose entry\n\n## 2026-06-27\n* another ordinary entry\n",
-            "not newest first",
+            "# My Update History\n\n## 2026-06-27\n* ordinary prose entry\nUnexpected prose.\n",
+            "non-log content",
         ),
         (
-            "# My Update History\n\n## 2026-06-27\n* ordinary prose entry\nUnexpected prose.\n",
+            "# History\n\nAn introduction to this log.\n\n## 2026-06-27\n\n- an entry\n",
             "non-log content",
         ),
     ] {
@@ -748,15 +1170,31 @@ fn log_structure_requires_nonempty_newest_first_date_groups() {
         tmp.write("log.md", contents);
         let report = validate_bundle(&Bundle::load(tmp.path()).unwrap());
 
-        assert!(!report.is_conformant(), "accepted log: {contents:?}");
+        assert!(report.is_conformant(), "rejected log: {contents:?}");
         assert!(
             report
-                .of(Severity::Error)
+                .of(Severity::Warning)
                 .any(|diagnostic| { diagnostic.message.contains(expected) }),
             "{expected:?}: {:#?}",
             report.diagnostics
         );
     }
+}
+
+#[test]
+fn a_log_that_is_not_newest_first_is_a_warning() {
+    let tmp = TempDir::new();
+    tmp.write("a.md", "---\ntype: Note\n---\nBody.\n");
+    tmp.write(
+        "log.md",
+        "# History\n\n## 2026-06-26\n* an entry\n\n## 2026-06-27\n* a newer entry\n",
+    );
+    let report = validate_bundle(&Bundle::load(tmp.path()).unwrap());
+    assert!(report.is_conformant(), "{:#?}", report.diagnostics);
+    assert!(report.of(Severity::Warning).any(|d| {
+        d.message
+            .contains("lists the newest date first: \"2026-06-27\" follows \"2026-06-26\"")
+    }));
 }
 
 #[test]
@@ -779,7 +1217,8 @@ fn valid_log_structure_allows_custom_titles_and_unmarked_prose_entries() {
 }
 
 #[test]
-fn log_with_frontmatter_loads_and_conforms() {
+fn log_with_frontmatter_is_a_conformance_error() {
+    // Earlier versions were silent on this; a log.md now has no frontmatter.
     let tmp = TempDir::new();
     tmp.write("a.md", "---\ntype: Note\n---\nBody.\n");
     tmp.write(
@@ -789,15 +1228,23 @@ fn log_with_frontmatter_loads_and_conforms() {
          ## 2026-07-01\n\
          - **Verified** the full bundle.\n",
     );
-    let report = validate_bundle(&Bundle::load(tmp.path()).unwrap());
+    let bundle = Bundle::load(tmp.path()).unwrap();
+    // It is still not a concept, and its entries still read.
+    assert_eq!(bundle.len(), 1);
+    let report = validate_bundle(&bundle);
 
-    assert!(report.is_conformant(), "{:#?}", report.diagnostics);
+    assert!(!report.is_conformant());
+    let errors: Vec<_> = report.of(Severity::Error).collect();
+    assert_eq!(errors.len(), 1, "{errors:#?}");
+    assert!(errors[0].message.contains("log.md has no frontmatter"));
+    assert!(errors[0].fixable);
 }
 
 #[test]
 fn declared_version_is_reported_never_enforced() {
     for (declared, needle) in [
-        ("0.1", "targets OKF v0.1"),
+        ("0.1", "declares OKF v0.1"),
+        ("0.2", "declares OKF v0.2"),
         ("0.9", "unrecognized `okf_version: 0.9`"),
     ] {
         let tmp = TempDir::new();
@@ -820,6 +1267,24 @@ fn declared_version_is_reported_never_enforced() {
             report.diagnostics
         );
     }
+
+    // The fallbacks for earlier versions apply to a bundle that declares 0.2
+    // or earlier, or declares nothing.
+    for (declared, applies) in [
+        (None, true),
+        (Some("0.1"), true),
+        (Some("0.2"), true),
+        (Some("0.3"), false),
+        (Some("1.0"), false),
+        (Some("0.2.1"), false),
+        (Some("not-a-version"), true),
+    ] {
+        assert_eq!(
+            okf_core::legacy_fallbacks_apply(declared),
+            applies,
+            "{declared:?}"
+        );
+    }
 }
 
 #[test]
@@ -840,10 +1305,14 @@ fn computation_keys_on_another_type_are_noted() {
 #[test]
 fn every_frontmatter_family_round_trips() {
     let doc = Document::parse(REVENUE).unwrap();
-    let reparsed = Document::parse(&doc.serialize()).unwrap();
-    assert_eq!(reparsed.frontmatter, doc.frontmatter);
+    // Nothing was changed, so nothing is re-serialized: the spec's own text
+    // comes back byte for byte, flow mappings and quoted timestamps included.
+    assert_eq!(doc.serialize(), REVENUE);
 
-    // Flow mappings re-emit as block mappings, which is the same value.
+    // The canonical form re-emits flow mappings as block mappings, which is
+    // the same value written differently.
+    let reparsed = Document::parse(&doc.serialize_canonical()).unwrap();
+    assert_eq!(reparsed.frontmatter, doc.frontmatter);
     let contract = reparsed.attested_computation().unwrap();
     assert_eq!(contract.runtime.as_deref(), Some("bigquery"));
     assert_eq!(reparsed.frontmatter.trust_tier(), TrustTier::HumanReviewed);
@@ -852,19 +1321,20 @@ fn every_frontmatter_family_round_trips() {
 }
 
 #[test]
-fn regenerating_indexes_keeps_the_declared_version() {
+fn regenerating_indexes_keeps_the_bundle_metadata() {
     let tmp = finance_bundle();
     okf_core::index::regenerate_indexes(tmp.path()).unwrap();
 
+    // Everything up to the listing is the original frontmatter, untouched.
     let root = tmp.read("index.md");
-    assert!(
-        root.starts_with("---\nokf_version: \"0.2\"\n---\n"),
-        "{root}"
-    );
+    let frontmatter_end = INDEX.find("# Metrics").unwrap();
+    assert!(root.starts_with(&INDEX[..frontmatter_end]), "{root}");
     assert!(root.contains("# Subdirectories"), "{root}");
+    assert!(!root.contains("# Metrics"), "{root}");
 
     let bundle = Bundle::load(tmp.path()).unwrap();
-    assert_eq!(bundle.okf_version(), Some("0.2"));
+    assert_eq!(bundle.okf_version(), Some("0.3"));
+    assert_eq!(bundle.metadata().title.as_deref(), Some("Acme finance"));
 
     // Attested Computations get their own index section, which is how
     // discovery-by-type works from an index.
@@ -873,10 +1343,13 @@ fn regenerating_indexes_keeps_the_declared_version() {
         computations.starts_with("# Attested Computation"),
         "{computations}"
     );
+    // `references/` holds no concepts, so it has nothing to list.
+    assert!(!tmp.path().join("references/index.md").exists());
+    assert!(!root.contains("references"), "{root}");
 }
 
 #[test]
-fn test_validate_warns_when_verified_predates_generated() {
+fn test_validate_notes_when_verified_predates_generated() {
     let tmp = TempDir::new();
     tmp.write("index.md", "# Test\n\n* [Metric](metric.md)\n");
     tmp.write(
@@ -888,15 +1361,19 @@ fn test_validate_warns_when_verified_predates_generated() {
     );
     let bundle = Bundle::load(tmp.path()).unwrap();
     let report = validate_bundle(&bundle);
-    let warnings: Vec<_> = report
-        .of(Severity::Warning)
-        .filter(|d| d.message.contains("predates `generated.at`"))
+    // Content can change without a new confirmation: a permitted state, and
+    // one a producer wants to know about.
+    let notes: Vec<_> = report
+        .of(Severity::Info)
+        .filter(|d| d.message.contains("no verification is current"))
         .collect();
     assert_eq!(
-        warnings.len(),
+        notes.len(),
         1,
-        "expected warning for verified predating generated: {warnings:#?}"
+        "expected a note for verified predating generated: {:#?}",
+        report.diagnostics
     );
+    assert_eq!(bundle.concepts()[0].trust_tier(), TrustTier::Unverified);
 }
 
 #[test]
@@ -978,29 +1455,67 @@ fn test_validate_warns_on_circular_derivation() {
 }
 
 #[test]
-fn test_validate_warns_on_missing_attestation_resource_on_disk() {
+fn test_validate_warns_on_path_fields_that_do_not_resolve() {
     let tmp = TempDir::new();
     tmp.write("index.md", "# Test\n\n* [Calc](comp.md)\n");
+    tmp.write("lib/present.sql", "SELECT 1\n");
     tmp.write(
         "comp.md",
         "---\ntype: Attested Computation\ntitle: Calc\ndescription: d\n\
          generated: { by: ref/x, at: 2026-06-20T22:53:05Z }\n\
          runtime: python\n\
          parameters:\n  - { name: x, type: string }\n\
+         computation: /lib/present.sql\n\
          executor:\n  resource: non_existent_script.py\n  receipt: [res]\n\
-         attester:\n  resource: non_existent_verifier.py\n\
-         ---\n\n# Calc\n\n# Computation\n\n```python\nx = 1\n```\n",
+         attester:\n  resource: https://example.com/verifier.py\n\
+         sources:\n\
+         \x20 - { resource: /policies/missing.md }\n\
+         \x20 - { resource: all queries in project X }\n\
+         resource: acme.sales.orders\n\
+         ---\n\n# Calc\n\nProse.\n",
     );
     let bundle = Bundle::load(tmp.path()).unwrap();
     let report = validate_bundle(&bundle);
-    let warnings: Vec<_> = report
+    let unresolved: Vec<&str> = report
         .of(Severity::Warning)
-        .filter(|d| d.message.contains("which does not exist on disk"))
+        .filter(|d| {
+            d.message
+                .contains("does not resolve to a file in the bundle")
+        })
+        .map(|d| d.message.as_str())
         .collect();
-    assert_eq!(
-        warnings.len(),
-        2,
-        "expected 2 warnings for missing resources on disk: {warnings:#?}"
+    // A URL, a scope descriptor, and an opaque `resource` identifier are not
+    // paths into the bundle; the computation file is there.
+    assert_eq!(unresolved.len(), 2, "{unresolved:#?}");
+    assert!(unresolved.iter().any(|m| m.contains("`executor.resource`")));
+    assert!(
+        unresolved
+            .iter()
+            .any(|m| m.contains("`sources[0].resource`"))
+    );
+    assert!(bundle.is_attestable(&id("comp")));
+
+    // An attester that is not there cannot be run.
+    tmp.write(
+        "comp.md",
+        "---\ntype: Attested Computation\nruntime: python\ncomputation: /lib/present.sql\n\
+         attester:\n  resource: /lib/absent.py\n---\n\nProse.\n",
+    );
+    assert!(!Bundle::load(tmp.path()).unwrap().is_attestable(&id("comp")));
+
+    // A `computation` that names a missing file makes the concept not
+    // attestable.
+    tmp.write(
+        "comp.md",
+        "---\ntype: Attested Computation\nruntime: python\ncomputation: /lib/absent.sql\n\
+         attester:\n  resource: /lib/present.sql\n---\n\nProse.\n",
+    );
+    let bundle = Bundle::load(tmp.path()).unwrap();
+    assert!(!bundle.is_attestable(&id("comp")));
+    assert!(
+        validate_bundle(&bundle)
+            .of(Severity::Warning)
+            .any(|d| d.message.contains("`computation` does not resolve"))
     );
 }
 
@@ -1024,14 +1539,67 @@ fn test_validate_reports_broken_cross_link_info() {
 }
 
 #[test]
+fn a_link_to_an_asset_or_a_non_concept_file_is_not_broken() {
+    let tmp = TempDir::new();
+    tmp.write(
+        "index.md",
+        "---\nokf_version: \"0.3\"\n---\n\n# Metric\n\n* [A](a.md)\n",
+    );
+    tmp.write("README.md", "# Read me\n");
+    tmp.write("img/chart.png", "not really a png");
+    tmp.write("attesters/check.py", "print(1)\n");
+    tmp.write(
+        "a.md",
+        "---\ntype: Metric\ntitle: A\ndescription: d\n\
+         generated: { by: ref/x, at: 2026-06-20T22:53:05Z }\n\
+         ---\n\n# Definition\n\n\
+         See the [chart](img/chart.png), the [attester](/attesters/check.py), the\n\
+         [readme](README.md), the [listing](index.md), and a [ghost](ghost.md).\n",
+    );
+    let bundle = Bundle::load(tmp.path()).unwrap();
+    let kinds: Vec<(&str, LinkTarget)> = bundle
+        .links_from(&id("a"))
+        .iter()
+        .map(|link| (link.raw.as_str(), link.resolution))
+        .collect();
+    assert_eq!(
+        kinds,
+        vec![
+            ("img/chart.png", LinkTarget::File),
+            ("/attesters/check.py", LinkTarget::File),
+            ("README.md", LinkTarget::File),
+            ("index.md", LinkTarget::File),
+            ("ghost.md", LinkTarget::Missing),
+        ]
+    );
+    // Only the last one names nothing.
+    assert_eq!(
+        bundle.broken_links(),
+        vec![(id("a"), "ghost.md".to_string())]
+    );
+    let report = validate_bundle(&bundle);
+    assert_eq!(
+        report
+            .of(Severity::Info)
+            .filter(|d| d.message.contains("link target is not in the bundle"))
+            .count(),
+        1
+    );
+}
+
+#[test]
 fn test_validate_warns_on_link_to_deprecated_concept() {
     let tmp = TempDir::new();
-    tmp.write("index.md", "# Test\n\n* [New](new.md)\n* [Old](old.md)\n");
+    tmp.write(
+        "index.md",
+        "# Test\n\n* [New](new.md)\n* [Old](old.md)\n* [Other](other.md)\n",
+    );
     tmp.write(
         "old.md",
         "---\ntype: Metric\ntitle: Old\ndescription: d\nstatus: deprecated\n\
+         superseded_by: /new.md\n\
          generated: { by: ref/x, at: 2026-06-20T22:53:05Z }\n\
-         ---\n\n# Definition\n\nProse.\n",
+         ---\n\n# Definition\n\nSee [the new one](new.md).\n",
     );
     tmp.write(
         "new.md",
@@ -1039,17 +1607,132 @@ fn test_validate_warns_on_link_to_deprecated_concept() {
          generated: { by: ref/x, at: 2026-06-20T22:53:05Z }\n\
          ---\n\n# Definition\n\nSee [the old one](old.md).\n",
     );
+    tmp.write(
+        "other.md",
+        "---\ntype: Metric\ntitle: Other\ndescription: d\n\
+         generated: { by: ref/x, at: 2026-06-20T22:53:05Z }\n\
+         ---\n\n# Definition\n\nUses [the old one](old.md).\n",
+    );
     let bundle = Bundle::load(tmp.path()).unwrap();
     let report = validate_bundle(&bundle);
-    let warnings: Vec<_> = report
+    let warnings: Vec<&str> = report
         .of(Severity::Warning)
         .filter(|d| d.message.contains("links to deprecated concept `old`"))
+        .map(|d| d.message.as_str())
         .collect();
     assert_eq!(
         warnings.len(),
-        1,
-        "expected warning for linking to deprecated concept: {warnings:#?}"
+        2,
+        "expected warnings for linking to deprecated concept: {warnings:#?}"
     );
+    // A concept that links to a retired one is told where to go instead.
+    assert!(
+        warnings
+            .iter()
+            .any(|w| w.ends_with("it is superseded by `new`"))
+    );
+}
+
+#[test]
+fn superseded_by_leads_from_a_retired_concept_to_its_replacement() {
+    let tmp = TempDir::new();
+    let concept = |status: &str, extra: &str| {
+        format!("---\ntype: Metric\nstatus: {status}\n{extra}---\n\nBody.\n")
+    };
+    tmp.write("metrics/gross-margin.md", &concept("stable", ""));
+    tmp.write(
+        "metrics/gross-margin-legacy.md",
+        &concept("deprecated", "superseded_by: /metrics/gross-margin.md\n"),
+    );
+    // Relative works too, and a chain is followed to its end.
+    tmp.write(
+        "metrics/gm-2019.md",
+        &concept(
+            "deprecated",
+            "superseded_by: gross-margin-legacy.md#definition\n",
+        ),
+    );
+    // The field has a meaning only with `status: deprecated`.
+    tmp.write(
+        "metrics/revenue.md",
+        &concept("stable", "superseded_by: gross-margin.md\n"),
+    );
+    // Retired with no replacement, and a loop.
+    tmp.write("metrics/retired.md", &concept("deprecated", ""));
+    tmp.write(
+        "metrics/a.md",
+        &concept("deprecated", "superseded_by: b.md\n"),
+    );
+    tmp.write(
+        "metrics/b.md",
+        &concept("deprecated", "superseded_by: a.md\n"),
+    );
+    let bundle = Bundle::load(tmp.path()).unwrap();
+
+    let current = id("metrics/gross-margin");
+    let legacy = id("metrics/gross-margin-legacy");
+    assert_eq!(bundle.superseded_by(&legacy), Some(&current));
+    assert_eq!(bundle.superseded_by(&id("metrics/gm-2019")), Some(&legacy));
+    assert_eq!(bundle.superseded_by(&id("metrics/revenue")), None);
+    assert_eq!(bundle.superseded_by(&id("metrics/retired")), None);
+
+    let replacement = |name: &str| {
+        bundle
+            .current_replacement(&id(name))
+            .map(|concept| concept.id.to_string())
+    };
+    assert_eq!(
+        replacement("metrics/gm-2019").as_deref(),
+        Some("metrics/gross-margin")
+    );
+    assert_eq!(
+        replacement("metrics/gross-margin").as_deref(),
+        Some("metrics/gross-margin")
+    );
+    assert_eq!(replacement("metrics/retired"), None);
+    assert_eq!(replacement("metrics/a"), None, "a loop has no current end");
+
+    // The field is an edge of the bundle graph, like a link.
+    assert_eq!(bundle.path_edges_from(&legacy).len(), 1);
+    assert_eq!(bundle.path_edges_from(&legacy)[0].field, "superseded_by");
+    assert!(bundle.referenced_by(&current).contains(&legacy));
+    assert!(bundle.backlinks(&current).is_empty());
+
+    let report = validate_bundle(&bundle);
+    assert!(report.is_conformant());
+    let misuse: Vec<_> = report
+        .of(Severity::Warning)
+        .filter(|d| {
+            d.message
+                .contains("has a meaning only with `status: deprecated`")
+        })
+        .collect();
+    assert_eq!(misuse.len(), 1, "{:#?}", report.diagnostics);
+    assert_eq!(misuse[0].concept, Some(id("metrics/revenue")));
+}
+
+#[test]
+fn path_fields_that_name_concepts_are_graph_edges() {
+    let tmp = finance_bundle();
+    tmp.write(
+        "references/skills/run-on-bq.md",
+        "---\ntype: Skill\ntitle: Run on BigQuery\n---\n\nRun instructions.\n",
+    );
+    let bundle = Bundle::load(tmp.path()).unwrap();
+    let revenue = id("computations/revenue");
+    let skill = id("references/skills/run-on-bq");
+
+    // The executor is now a concept, so the field is an edge. The attester is
+    // an asset, and the sources are URLs: no edges there.
+    let edges = bundle.path_edges_from(&revenue);
+    assert_eq!(edges.len(), 1, "{edges:#?}");
+    assert_eq!(edges[0].field, "executor.resource");
+    assert_eq!(edges[0].target, skill);
+    assert!(!edges[0].is_source());
+    assert_eq!(bundle.referenced_by(&skill), std::slice::from_ref(&revenue));
+    // It is not a derivation edge, and not a link.
+    assert!(bundle.derived_from(&revenue).is_empty());
+    assert!(bundle.backlinks(&skill).is_empty());
 }
 
 #[test]
@@ -1149,7 +1832,7 @@ fn test_validate_warns_on_broken_link_anchors() {
     let tmp = common::TempDir::new();
     tmp.write(
         "index.md",
-        "---\nokf_version: \"0.2\"\n---\n\n# Test\n\n* [Pricing](pricing.md)\n* [Overview](overview.md)\n",
+        "---\nokf_version: \"0.3\"\n---\n\n# Test\n\n* [Pricing](pricing.md)\n* [Overview](overview.md)\n",
     );
     tmp.write(
         "pricing.md",
@@ -1182,7 +1865,7 @@ fn test_validate_accepts_url_encoded_link_anchors() {
     let tmp = common::TempDir::new();
     tmp.write(
         "index.md",
-        "---\nokf_version: \"0.2\"\n---\n\n# Test\n\n* [Pricing](pricing.md)\n* [Overview](overview.md)\n",
+        "---\nokf_version: \"0.3\"\n---\n\n# Test\n\n* [Pricing](pricing.md)\n* [Overview](overview.md)\n",
     );
     tmp.write(
         "pricing.md",
@@ -1213,27 +1896,34 @@ fn test_validate_date_formats_fixable_and_unfixable() {
     let tmp = common::TempDir::new();
     tmp.write(
         "index.md",
-        "---\nokf_version: \"0.2\"\n---\n\n# Test\n\n* [Fixable](fixable.md)\n* [Unfixable](unfixable.md)\n",
+        "---\nokf_version: \"0.3\"\n---\n\n# Test\n\n* [Fixable](fixable.md)\n* [Unfixable](unfixable.md)\n* [Valid](valid.md)\n",
     );
     tmp.write(
         "fixable.md",
-        "---\ntype: Concept\ntitle: Fixable Dates\ndescription: Fixable dates concept.\ngenerated:\n  by: human:alice\n  at: '2026-06-30'\nverified:\n  - by: human:bob\n    at: '2026-07-01 12:00:00'\nstale_after: '2026-12-31'\nusage_window:\n  from: '2026-01-01'\n  to: '2026-06-01'\nsources:\n  - id: '1'\n    resource: https://example.com\n    last_modified: '2026-05-15'\n---\n\n# Fixable Dates\n\nBody.\n",
+        "---\ntype: Concept\ntitle: Fixable Dates\ndescription: Fixable dates concept.\ngenerated:\n  by: human:alice\n  at: '2026-06-30'\nverified:\n  - by: human:bob\n    at: '2026-07-01 12:00:00'\nstale_after: '2026-12-31T00:00:00'\nusage_window:\n  from: '2026-01-01T00:00'\n  to: '2026-06-01 00:00:00+0000'\nsources:\n  - id: '1'\n    resource: https://example.com\n    last_modified: '2026-05-15T10:00:00'\n---\n\n# Fixable Dates\n\nBody.[^1]\n\n[^1]: Example\n",
     );
     tmp.write(
         "unfixable.md",
         "---\ntype: Concept\ntitle: Unfixable Dates\ndescription: Unfixable dates concept.\ngenerated:\n  by: human:alice\n  at: not-a-date\nstale_after: last-tuesday\n---\n\n# Unfixable Dates\n\nBody.\n",
     );
+    // Date-only values are valid where no comparison is made.
+    tmp.write(
+        "valid.md",
+        "---\ntype: Concept\ntitle: Valid Dates\ndescription: Valid dates concept.\ngenerated:\n  by: human:alice\n  at: '2026-06-30T00:00:00Z'\nstale_after: '2026-12-31'\nusage_window:\n  from: '2026-01-01'\n  to: '2026-06-01'\nsources:\n  - id: '1'\n    resource: https://example.com\n    last_modified: '2026-05-15'\n---\n\n# Valid Dates\n\nBody.[^1]\n\n[^1]: Example\n",
+    );
 
     let bundle = Bundle::load(tmp.path()).unwrap();
     let report = validate_bundle(&bundle);
+    let on = |name: &str| -> Vec<&okf_validator::Diagnostic> {
+        report
+            .diagnostics
+            .iter()
+            .filter(|d| d.path.as_ref().is_some_and(|p| p.ends_with(name)))
+            .collect()
+    };
 
-    let fixable_diag: Vec<_> = report
-        .diagnostics
-        .iter()
-        .filter(|d| d.path.as_ref().is_some_and(|p| p.ends_with("fixable.md")))
-        .collect();
-
-    assert!(!fixable_diag.is_empty());
+    let fixable_diag = on("fixable.md");
+    assert_eq!(fixable_diag.len(), 6, "{fixable_diag:#?}");
     for d in &fixable_diag {
         assert!(
             d.fixable,
@@ -1242,12 +1932,7 @@ fn test_validate_date_formats_fixable_and_unfixable() {
         );
     }
 
-    let unfixable_diag: Vec<_> = report
-        .diagnostics
-        .iter()
-        .filter(|d| d.path.as_ref().is_some_and(|p| p.ends_with("unfixable.md")))
-        .collect();
-
+    let unfixable_diag = on("unfixable.md");
     assert!(!unfixable_diag.is_empty());
     for d in &unfixable_diag {
         assert!(
@@ -1256,4 +1941,104 @@ fn test_validate_date_formats_fixable_and_unfixable() {
             d.message
         );
     }
+
+    assert!(on("valid.md").is_empty(), "{:#?}", on("valid.md"));
+}
+
+#[test]
+fn staleness_is_judged_at_an_instant() {
+    use okf_validator::validate_bundle_at_instant;
+    let tmp = TempDir::new();
+    tmp.write(
+        "a.md",
+        "---\ntype: Note\nstale_after: \"2026-07-01T10:00:00Z\"\n---\nBody.\n",
+    );
+    let bundle = Bundle::load(tmp.path()).unwrap();
+    let stale_at = |instant: &str| {
+        validate_bundle_at_instant(&bundle, okf_core::DateTime::parse_rfc3339(instant))
+            .of(Severity::Info)
+            .any(|d| d.message.contains("stale since"))
+    };
+    // Two hours after `stale_after`, on the same day: stale.
+    assert!(stale_at("2026-07-01T12:00:00Z"));
+    assert!(stale_at("2026-07-01T10:00:00Z"));
+    assert!(!stale_at("2026-07-01T09:59:59Z"));
+    // A pinned day is judged at its start.
+    assert!(
+        !validate_bundle_at(&bundle, Date::new(2026, 7, 1))
+            .of(Severity::Info)
+            .any(|d| d.message.contains("stale since"))
+    );
+    assert!(
+        validate_bundle_at(&bundle, Date::new(2026, 7, 2))
+            .of(Severity::Info)
+            .any(|d| d.message.contains("stale since"))
+    );
+}
+
+#[test]
+fn values_of_the_wrong_shape_are_not_read_as_absent() {
+    // A `stale_after` that cannot be parsed is never fresh, whatever its
+    // shape, and a `status` that is not one of the three values is not
+    // stable.
+    let tmp = TempDir::new();
+    tmp.write(
+        "a.md",
+        "---\ntype: Note\nstale_after: [\"2020-01-01\"]\nstatus: [deprecated]\n\
+         verified: { by: \"human:Jane Doe\", at: \"2026-06-25T09:00:00Z\" }\n---\nBody.\n",
+    );
+    let bundle = Bundle::load(tmp.path()).unwrap();
+    let concept = &bundle.concepts()[0];
+    let now = Date::new(2019, 1, 1).unwrap().to_utc_datetime();
+    assert_eq!(concept.freshness_at(now), Freshness::Malformed);
+    assert!(concept.is_stale_at(now));
+    assert!(!concept.is_current());
+    assert!(!concept.status().is_known());
+    // The id of an actor is opaque: a person with a space in the name is a
+    // person, though the spelling is worth a warning.
+    assert_eq!(concept.trust_tier(), TrustTier::HumanReviewed);
+
+    let report = validate_bundle(&bundle);
+    assert!(report.is_conformant());
+    let warnings: Vec<&str> = report
+        .of(Severity::Warning)
+        .map(|d| d.message.as_str())
+        .collect();
+    assert!(
+        warnings
+            .iter()
+            .any(|w| w.contains("`stale_after` does not parse")),
+        "{warnings:#?}"
+    );
+    assert!(
+        warnings
+            .iter()
+            .any(|w| w.contains("unknown `status` value")),
+        "{warnings:#?}"
+    );
+    assert!(
+        warnings
+            .iter()
+            .any(|w| w.contains("`verified[0].by` is not an actor")),
+        "{warnings:#?}"
+    );
+}
+
+#[test]
+fn one_file_in_another_encoding_does_not_stop_the_bundle_from_loading() {
+    let tmp = TempDir::new();
+    tmp.write("a.md", "---\ntype: Note\n---\nBody.\n");
+    std::fs::write(
+        tmp.path().join("latin1.md"),
+        b"---\ntype: Note\ntitle: Caf\xe9\n---\n",
+    )
+    .unwrap();
+    let bundle = Bundle::load(tmp.path()).unwrap();
+    assert_eq!(bundle.len(), 1);
+    let report = validate_bundle(&bundle);
+    assert!(!report.is_conformant());
+    assert!(report.of(Severity::Error).any(|d| {
+        d.path.as_ref().is_some_and(|p| p.ends_with("latin1.md"))
+            && d.message.contains("not valid UTF-8")
+    }));
 }

@@ -1,16 +1,21 @@
 # okf-validator
 
 Conformance validation, multi-language syntax checking, and opinionated linting for [Open Knowledge Format
-(OKF)](https://github.com/GoogleCloudPlatform/open-knowledge-format) v0.2
+(OKF)](https://github.com/open-knowledge-format/open-knowledge-format) v0.3
 bundles, built on [okf-core](https://crates.io/crates/okf-core).
 
 - `validate_bundle` checks conformance with severity-tagged diagnostics:
-  only true spec violations are errors; material data integrity issues,
-  temporal inconsistencies, broken links/references, and syntax errors in an Attested Computation's
-  computation, executor, and attester are surfaced as warnings and infos. Illustrative code blocks
-  elsewhere in a body are documentation and are not syntax-checked.
+  only true spec violations are errors, namely a frontmatter block that does
+  not parse as a YAML mapping with unique keys, and a reserved `index.md` or
+  `log.md` that does not follow its structure. A markdown file without a
+  `type` is not a concept, which is a warning and never a failure. Material
+  data integrity issues, temporal inconsistencies, path fields that do not
+  resolve, and syntax errors in an Attested Computation's computation,
+  executor, and attester are surfaced as warnings and infos. Illustrative code
+  blocks elsewhere in a body are documentation and are not syntax-checked, and
+  neither is a templated computation such as a dbt model.
 - `lint_bundle` evaluates opinionated bundle hygiene and formatting checks,
-  each finding tagged with a stable rule code (`L1`..`L12`) so CI can pin or silence individual rules.
+  each finding tagged with a stable rule code (`L1`..`L13`) so CI can pin or silence individual rules.
 - `check_syntax` provides direct syntax validation for code blocks and scripts across
   Python, JavaScript, TypeScript, Rust, SQL, JSON, YAML, and Bash.
 
@@ -21,7 +26,7 @@ re-exports it alongside okf-core and ships the `okf` command-line tool
 ## Cargo features
 
 Conformance validation and linting need no third-party parser. The four
-language parsers behind the syntax checks (V24, V25) are optional, each
+language parsers behind the two syntax checks are optional, each
 behind a feature of the same name, and all on by default:
 
 | Feature      | Languages              | Parser crate        | Notes |
@@ -42,5 +47,5 @@ copyleft tree:
 
 ```toml
 [dependencies]
-okf-validator = { version = "0.2", default-features = false, features = ["sql"] }
+okf-validator = { version = "0.3", default-features = false, features = ["sql"] }
 ```

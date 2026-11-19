@@ -7,7 +7,7 @@
 //! so the assertions are transcribed rather than the call shapes.
 
 use okf_core::yaml::Value;
-use okf_core::{Date, Document, DocumentError, TrustTier};
+use okf_core::{Date, Document, DocumentError, Freshness, TrustTier};
 
 /// Builds a document from a frontmatter block with an empty body.
 fn with_frontmatter(frontmatter: &str) -> Document {
@@ -164,17 +164,238 @@ fn trust_tiers_derive_from_the_verifying_actors() {
 fn staleness_compares_stale_after_against_a_given_day() {
     let today = Date::new(2026, 9, 23).unwrap();
     let stale = |frontmatter: &str| with_frontmatter(frontmatter).frontmatter.is_stale_on(today);
+    let freshness = |frontmatter: &str| {
+        with_frontmatter(frontmatter)
+            .frontmatter
+            .freshness_at(today.to_utc_datetime())
+    };
 
     assert!(
         stale("type: X\nstale_after: '2026-09-23T00:00:00Z'"),
         "stale on the instant itself"
     );
     assert!(!stale("type: X\nstale_after: '2026-09-24T00:00:00Z'"));
+    assert_eq!(freshness("type: X"), Freshness::Undated);
     assert!(!stale("type: X"));
-    assert!(!stale("type: X\nstale_after: not-a-date"));
-    // Bare dates or datetimes with no offset are ignored
-    assert!(!stale("type: X\nstale_after: 2026-09-23"));
-    assert!(!stale("type: X\nstale_after: '2026-09-23T00:00:00'"));
+    // A null or empty value is the same as an absent key.
+    assert_eq!(freshness("type: X\nstale_after:"), Freshness::Undated);
+    assert_eq!(freshness("type: X\nstale_after: ''"), Freshness::Undated);
+
+    // A date only is the start of that day in UTC, quoted or not.
+    assert!(stale("type: X\nstale_after: 2026-09-23"));
+    assert!(stale("type: X\nstale_after: \"2026-09-23\""));
+    assert_eq!(
+        freshness("type: X\nstale_after: 2026-09-24"),
+        Freshness::Fresh
+    );
+
+    // A value that does not parse is never treated as fresh.
+    for malformed in [
+        "not-a-date",
+        "'2026-09-23T00:00:00'",
+        "'2099-01-01 00:00:00Z'",
+        "20990101",
+    ] {
+        let frontmatter = format!("type: X\nstale_after: {malformed}");
+        assert_eq!(freshness(&frontmatter), Freshness::Malformed, "{malformed}");
+        assert!(stale(&frontmatter), "{malformed}");
+    }
+}
+
+#[test]
+fn trust_tier_counts_only_current_verifications() {
+    let tier = |frontmatter: &str| with_frontmatter(frontmatter).frontmatter.trust_tier();
+    let generated = "generated: { by: reference_agent/x, at: \"2026-06-20T14:00:00Z\" }";
+
+    // Reviewed, then rewritten: the human did not read the new text.
+    let rewritten = with_frontmatter(&format!(
+        "type: X\n{generated}\nverified: {{ by: \"human:ahormati\", at: \"2026-06-01T09:00:00Z\" }}"
+    ));
+    assert_eq!(rewritten.frontmatter.trust_tier(), TrustTier::Unverified);
+    assert!(rewritten.frontmatter.verified_before_change());
+    // The event is still there as history.
+    assert_eq!(rewritten.frontmatter.verified().len(), 1);
+    assert!(rewritten.frontmatter.current_verifications().is_empty());
+    assert!(rewritten.frontmatter.latest_verification().is_some());
+
+    // A later machine check is current; the earlier human review is not.
+    assert_eq!(
+        tier(&format!(
+            "type: X\n{generated}\nverified:\n  - {{ by: \"human:ahormati\", at: \"2026-06-01T09:00:00Z\" }}\n  - {{ by: \"process:nightly\", at: \"2026-06-21T02:00:00+00:00\" }}"
+        )),
+        TrustTier::MachineConfirmed
+    );
+    // Equal instants are current.
+    assert_eq!(
+        tier(&format!(
+            "type: X\n{generated}\nverified: {{ by: \"human:ahormati\", at: \"2026-06-20T16:00:00+02:00\" }}"
+        )),
+        TrustTier::HumanReviewed
+    );
+    // With no `generated`, every valid event is current.
+    let ungenerated =
+        with_frontmatter("type: X\nverified: { by: \"human:ahormati\", at: 2026-06-01 }");
+    assert_eq!(
+        ungenerated.frontmatter.trust_tier(),
+        TrustTier::HumanReviewed
+    );
+    assert!(!ungenerated.frontmatter.verified_before_change());
+    // A legacy v0.1 `timestamp` stands in for `generated.at`.
+    assert_eq!(
+        tier(
+            "type: X\ntimestamp: \"2026-06-20T14:00:00Z\"\nverified: { by: \"human:a\", at: \"2026-06-01T09:00:00Z\" }"
+        ),
+        TrustTier::Unverified
+    );
+    // An event without both keys is ignored.
+    let incomplete =
+        with_frontmatter("type: X\nverified:\n  - { by: \"human:a\" }\n  - { at: 2026-06-01 }");
+    assert!(incomplete.frontmatter.verified().is_empty());
+    assert_eq!(incomplete.frontmatter.trust_tier(), TrustTier::Unverified);
+}
+
+#[test]
+fn absent_empty_and_single_values_read_by_the_consumer_rules() {
+    // A scalar `tags` value is one tag, and is not split at commas.
+    let scalar = with_frontmatter("type: X\ntags: sales, orders");
+    assert_eq!(scalar.frontmatter.tags(), vec!["sales, orders"]);
+    assert_eq!(
+        with_frontmatter("type: X\ntags: [sales, \"\", orders]")
+            .frontmatter
+            .tags(),
+        vec!["sales", "orders"]
+    );
+    // Null, an empty string, and an empty list are the same as an absent key.
+    for blank in ["tags:", "tags: \"\"", "tags: []"] {
+        assert!(
+            with_frontmatter(&format!("type: X\n{blank}"))
+                .frontmatter
+                .tags()
+                .is_empty(),
+            "{blank}"
+        );
+    }
+    let blank = with_frontmatter("type: X\ntitle: \"\"\ndescription:\nresource: ''");
+    assert_eq!(blank.frontmatter.title(), None);
+    assert_eq!(blank.frontmatter.description(), None);
+    assert_eq!(blank.frontmatter.resource(), None);
+
+    // An entry that lacks its required key is ignored.
+    let doc = with_frontmatter(
+        "type: X\nsources:\n  - { id: kept, resource: https://example.com/a }\n  - { id: dropped, title: No resource }\n",
+    );
+    let sources = doc.frontmatter.sources();
+    assert_eq!(sources.len(), 1);
+    assert_eq!(sources[0].id.as_deref(), Some("kept"));
+    // One source is a list with one item.
+    assert_eq!(
+        with_frontmatter("type: X\nsources: { resource: https://example.com/a }")
+            .frontmatter
+            .sources()
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn lifecycle_reads_superseded_by_and_unknown_statuses() {
+    let retired =
+        with_frontmatter("type: X\nstatus: deprecated\nsuperseded_by: /metrics/gross-margin.md");
+    assert!(!retired.frontmatter.is_current());
+    assert_eq!(
+        retired.frontmatter.superseded_by().as_deref(),
+        Some("/metrics/gross-margin.md")
+    );
+    assert!(retired.frontmatter.path_fields().contains(&(
+        "superseded_by".to_string(),
+        "/metrics/gross-margin.md".to_string()
+    )));
+    assert!(
+        !retired
+            .frontmatter
+            .extension_keys()
+            .contains(&"superseded_by")
+    );
+
+    assert!(with_frontmatter("type: X").frontmatter.is_current());
+    assert!(
+        with_frontmatter("type: X\nstatus: draft")
+            .frontmatter
+            .is_current()
+    );
+    // An unknown status is kept and shown, but it is not `stable`.
+    let unknown = with_frontmatter("type: X\nstatus: experimental");
+    assert_eq!(unknown.frontmatter.status().to_string(), "experimental");
+    assert!(!unknown.frontmatter.is_current());
+}
+
+#[test]
+fn a_rewrite_leaves_untouched_frontmatter_as_written() {
+    // Flow style, both quote styles, an unquoted timestamp, a comment, an
+    // extension key, and a nested extension key inside a defined mapping.
+    let src = "\
+---
+type: Metric
+# How it was made.
+generated: { by: reference_agent/gemini-2.5-pro, at: \"2026-06-20T22:53:05Z\", x-acme-run: 42 }
+verified:
+- by: human:ahormati
+  at: 2026-06-30
+stale_after: '2026-12-31T00:00:00Z'
+tags: [finance, revenue]
+x-acme-owner: data-team   # team that owns it
+---
+
+# Revenue
+";
+    let mut doc = Document::parse(src).unwrap();
+    // Nothing changed: the text comes back byte for byte.
+    assert_eq!(doc.serialize(), src);
+
+    // Change one value: only that entry is re-serialized.
+    doc.frontmatter.set("title", Value::from("Revenue"));
+    doc.frontmatter.set("tags", Value::from(vec!["finance"]));
+    let out = doc.serialize();
+    assert!(out.contains("# How it was made.\ngenerated: { by: reference_agent/gemini-2.5-pro, at: \"2026-06-20T22:53:05Z\", x-acme-run: 42 }\n"));
+    assert!(out.contains("verified:\n- by: human:ahormati\n  at: 2026-06-30\n"));
+    assert!(out.contains("stale_after: '2026-12-31T00:00:00Z'\n"));
+    assert!(out.contains("x-acme-owner: data-team   # team that owns it\n"));
+    assert!(out.contains("tags:\n  - finance\n"));
+    assert!(out.ends_with("title: Revenue\n---\n\n# Revenue\n"));
+
+    // Reordering moves the text without rewriting it, and removing a key
+    // takes its comment with it.
+    doc.frontmatter.remove("generated");
+    doc.frontmatter.reorder_preferred();
+    let reordered = doc.serialize();
+    assert!(!reordered.contains("How it was made"));
+    assert!(reordered.starts_with("---\ntype: Metric\ntitle: Revenue\ntags:\n  - finance\nverified:\n- by: human:ahormati\n  at: 2026-06-30\nstale_after: '2026-12-31T00:00:00Z'\n"));
+
+    // The canonical form is still available, and is what `okf fmt` writes.
+    let canonical = Document::parse(src).unwrap().serialize_canonical();
+    assert!(canonical.contains("generated:\n  by: reference_agent/gemini-2.5-pro\n  at: \"2026-06-20T22:53:05Z\"\n  x-acme-run: 42\n"));
+    assert_eq!(
+        Document::parse(&canonical).unwrap().frontmatter,
+        Document::parse(src).unwrap().frontmatter
+    );
+}
+
+#[test]
+fn a_byte_order_mark_and_crlf_do_not_hide_the_frontmatter() {
+    let bom = Document::parse("\u{feff}---\ntype: X\n---\n\nBody.\n").unwrap();
+    assert_eq!(bom.frontmatter.type_().as_deref(), Some("X"));
+    assert_eq!(bom.body, "Body.");
+    assert!(Document::has_frontmatter_block(
+        "\u{feff}---\ntype: X\n---\n"
+    ));
+
+    let crlf = Document::parse("---\r\ntype: X\r\n---\r\n\r\nBody.\r\n").unwrap();
+    assert_eq!(crlf.frontmatter.type_().as_deref(), Some("X"));
+    assert_eq!(crlf.body, "Body.");
+
+    assert!(!Document::has_frontmatter_block("# Just a heading\n"));
+    assert!(Document::parse("---\ntype: X\n---\n").unwrap().is_concept());
+    assert!(!Document::parse("# Just a heading\n").unwrap().is_concept());
 }
 
 #[test]
@@ -362,4 +583,19 @@ fn line_endings_match_the_reference_parser() {
         "serialize must not emit CR: {serialized:?}"
     );
     assert_ne!(serialized, src, "serialize must not round-trip CRLF");
+}
+
+#[test]
+fn an_indented_line_of_dashes_does_not_end_the_frontmatter() {
+    // The closing delimiter is `---` at the start of a line. Inside a block
+    // scalar the same three dashes, indented, are text.
+    let text = "---\ntype: Note\ndescription: |\n  Above the rule.\n  ---\n  Below the rule.\ntitle: Rules\n---\n\nBody.\n";
+    let doc = Document::parse(text).unwrap();
+    assert_eq!(
+        doc.frontmatter.description().as_deref(),
+        Some("Above the rule.\n---\nBelow the rule.\n")
+    );
+    assert_eq!(doc.frontmatter.title().as_deref(), Some("Rules"));
+    assert_eq!(doc.body, "Body.");
+    assert_eq!(doc.serialize(), text);
 }

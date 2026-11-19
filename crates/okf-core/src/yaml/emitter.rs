@@ -101,7 +101,7 @@ fn emit_scalar(value: &Value) -> String {
     }
 }
 
-fn format_float(f: f64) -> String {
+pub(super) fn format_float(f: f64) -> String {
     if f.is_nan() {
         return ".nan".to_string();
     }
@@ -147,7 +147,7 @@ fn is_safe_plain(s: &str) -> bool {
     if s.starts_with(' ') || s.ends_with(' ') {
         return false;
     }
-    if resolves_as_datetime(s) {
+    if resolves_as_datetime(s) || resolves_elsewhere(s) {
         return false;
     }
     let first = s.chars().next().unwrap();
@@ -164,6 +164,72 @@ fn is_safe_plain(s: &str) -> bool {
         }
     }
     true
+}
+
+/// Whether another YAML reader would resolve this plain scalar to something
+/// other than a string, even though this parser keeps it as one.
+///
+/// This parser resolves numbers conservatively, so `007`, `0x1F`, `1e3`, `no`,
+/// and `12:30` all read back as the strings they are. A YAML 1.1 reader such
+/// as `PyYAML`, which the reference implementation uses, reads them as 7, 31,
+/// 1000.0, false, and 750; a YAML 1.2 core-schema reader agrees on some. A
+/// string must stay a string for every reader, so these are quoted. The
+/// specification asks the same of producers: quote values that look like
+/// numbers or booleans.
+///
+/// The forms are those of the YAML 1.1 and 1.2 implicit resolvers: the
+/// boolean and null words, `=` and `<<`, integers in any radix with `_`
+/// separators, floats with or without an exponent, and base-60 numbers.
+fn resolves_elsewhere(s: &str) -> bool {
+    const WORDS: [&str; 28] = [
+        "y", "Y", "yes", "Yes", "YES", "n", "N", "no", "No", "NO", "true", "True", "TRUE", "false",
+        "False", "FALSE", "on", "On", "ON", "off", "Off", "OFF", "~", "null", "Null", "NULL", "=",
+        "<<",
+    ];
+    if WORDS.contains(&s) {
+        return true;
+    }
+    let body = s.strip_prefix(['+', '-']).unwrap_or(s);
+    if matches!(body, ".inf" | ".Inf" | ".INF" | ".nan" | ".NaN" | ".NAN") {
+        return true;
+    }
+    let all = |digits: &str, valid: fn(char) -> bool| {
+        !digits.is_empty() && digits.chars().all(|c| valid(c) || c == '_')
+    };
+    if let Some(hex) = body.strip_prefix("0x") {
+        return all(hex, |c| c.is_ascii_hexdigit());
+    }
+    if let Some(octal) = body.strip_prefix("0o") {
+        return all(octal, |c| ('0'..='7').contains(&c));
+    }
+    if let Some(binary) = body.strip_prefix("0b") {
+        return all(binary, |c| c == '0' || c == '1');
+    }
+
+    let (mantissa, exponent) = body
+        .find(['e', 'E'])
+        .map_or((body, None), |i| (&body[..i], Some(&body[i + 1..])));
+    if let Some(exponent) = exponent {
+        let digits = exponent.strip_prefix(['+', '-']).unwrap_or(exponent);
+        if digits.is_empty() || !digits.chars().all(|c| c.is_ascii_digit()) {
+            return false;
+        }
+    }
+    if !mantissa.starts_with(|c: char| c.is_ascii_digit() || c == '.') {
+        return false;
+    }
+    let mut dots = 0;
+    let mut has_digit = false;
+    for c in mantissa.chars() {
+        match c {
+            '0'..='9' => has_digit = true,
+            '.' => dots += 1,
+            // `_` separates digit groups, and `:` separates base-60 places.
+            '_' | ':' => {}
+            _ => return false,
+        }
+    }
+    has_digit && dots <= 1
 }
 
 /// Whether YAML's implicit resolver would type this plain scalar as a timestamp

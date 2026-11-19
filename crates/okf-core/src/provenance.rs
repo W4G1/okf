@@ -10,10 +10,10 @@
 //!   - id: ga4-schema
 //!     resource: https://developers.google.com/analytics/bigquery/export-schema
 //!     title: GA4 BigQuery Export schema
-//!     author: team:ga4-docs
+//!     author: "team:ga4-docs"
 //!     usage_count: 5000
-//!     last_modified: 2026-05-30T00:00:00Z
-//! usage_window: { from: 2026-06-01T00:00:00Z, to: 2026-06-30T00:00:00Z }
+//!     last_modified: "2026-05-30T00:00:00Z"
+//! usage_window: { from: "2026-06-01T00:00:00Z", to: "2026-06-30T00:00:00Z" }
 //! ```
 //!
 //! Two design points from the spec show up directly in this module's API:
@@ -31,8 +31,16 @@
 use crate::actor::Actor;
 use crate::date::DateTimeField;
 use crate::footnotes;
-use crate::yaml::Value;
+use crate::links::{Link, LinkKind};
+use crate::yaml::{Mapping, Value};
 use std::fmt;
+
+/// Reads a scalar at `key`, treating a null or empty value as absent.
+fn non_blank(map: &Mapping, key: &str) -> Option<String> {
+    map.get(key)
+        .and_then(Value::as_display_string)
+        .filter(|s| !s.trim().is_empty())
+}
 
 /// The date/time range that frames `usage_count`.
 ///
@@ -52,15 +60,15 @@ impl UsageWindow {
     pub fn from_value(value: &Value) -> Option<Self> {
         let map = value.as_mapping()?;
         Some(Self {
-            from: map
-                .get("from")
-                .and_then(Value::as_display_string)
-                .map(DateTimeField::new),
-            to: map
-                .get("to")
-                .and_then(Value::as_display_string)
-                .map(DateTimeField::new),
+            from: non_blank(map, "from").map(DateTimeField::new),
+            to: non_blank(map, "to").map(DateTimeField::new),
         })
+    }
+
+    /// `true` when both ends of the window are given.
+    #[must_use]
+    pub const fn is_complete(&self) -> bool {
+        self.from.is_some() && self.to.is_some()
     }
 }
 
@@ -77,9 +85,11 @@ impl fmt::Display for UsageWindow {
 /// What kind of thing a `sources[].resource` names.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ResourceKind {
-    /// An absolute URL.
+    /// An absolute URL: any value with a URI scheme.
     Url,
-    /// A path a consumer can follow into the bundle (or a `references/` file).
+    /// A path a consumer can follow into the bundle. It resolves like a link:
+    /// from the bundle root when it starts with `/`, otherwise from the
+    /// directory of the file that contains it.
     Path,
     /// A population or scope descriptor a consumer cannot follow, such as
     /// `all queries in BigQuery project X`.
@@ -152,7 +162,7 @@ impl Source {
     /// mapping.
     pub fn from_value(value: &Value) -> Option<Self> {
         let map = value.as_mapping()?;
-        let string = |k: &str| map.get(k).and_then(Value::as_display_string);
+        let string = |k: &str| non_blank(map, k);
         Some(Self {
             id: string("id"),
             resource: string("resource"),
@@ -166,8 +176,11 @@ impl Source {
 
     /// Reads a whole `sources` value into a list of entries.
     ///
-    /// A bare mapping is accepted as a one-element list, mirroring the rule
-    /// the spec states for `verified`; any other shape yields an empty list.
+    /// A bare mapping is accepted as a one-element list; any other shape
+    /// yields an empty list. Every mapping-shaped entry is returned, including
+    /// one without a `resource`, so a validator can report it;
+    /// [`Frontmatter::sources`](crate::Frontmatter::sources) drops the ones a
+    /// consumer ignores.
     pub fn list_from_value(value: &Value) -> Vec<Self> {
         match value {
             Value::Sequence(items) => items.iter().filter_map(Self::from_value).collect(),
@@ -176,18 +189,26 @@ impl Source {
         }
     }
 
+    /// `true` when the entry has the `resource` it requires. A consumer
+    /// ignores an entry without one.
+    #[must_use]
+    pub fn has_resource(&self) -> bool {
+        self.resource_kind() != ResourceKind::Missing
+    }
+
     /// Classifies [`Source::resource`].
     ///
-    /// Distinguishing a path from a scope descriptor is a heuristic (the spec
-    /// gives no syntax for either), so a resource containing whitespace is read
-    /// as a scope descriptor (`all queries in BigQuery project X`) and anything
-    /// else as a path. Consumers that only follow [`ResourceKind::Path`]
-    /// resources therefore never chase prose.
+    /// A resource containing whitespace is a scope descriptor
+    /// (`all queries in BigQuery project X`): a path with a space in it must
+    /// be percent-encoded, so prose is never mistaken for one. Otherwise a
+    /// value with a URI scheme is a URL, and anything else is a path.
+    /// Consumers that only follow [`ResourceKind::Path`] resources therefore
+    /// never chase prose.
     pub fn resource_kind(&self) -> ResourceKind {
         match self.resource.as_deref().map(str::trim) {
             None | Some("") => ResourceKind::Missing,
-            Some(r) if r.contains("://") || r.starts_with("mailto:") => ResourceKind::Url,
             Some(r) if r.chars().any(char::is_whitespace) => ResourceKind::Scope,
+            Some(r) if Link::classify(r) == LinkKind::External => ResourceKind::Url,
             Some(_) => ResourceKind::Path,
         }
     }
@@ -334,6 +355,24 @@ mod tests {
 
         let missing = Source::from_value(&Value::parse("{ id: x }").unwrap()).unwrap();
         assert_eq!(missing.resource_kind(), ResourceKind::Missing);
+        assert!(!missing.has_resource());
+
+        // An empty resource is the same as an absent one.
+        let blank =
+            Source::from_value(&Value::parse("{ id: x, resource: \"\" }").unwrap()).unwrap();
+        assert!(!blank.has_resource());
+
+        // Any URI scheme makes a URL, not only http.
+        let warehouse = Source::from_value(
+            &Value::parse("{ resource: \"bigquery:acme.sales.orders\" }").unwrap(),
+        )
+        .unwrap();
+        assert_eq!(warehouse.resource_kind(), ResourceKind::Url);
+
+        let rooted =
+            Source::from_value(&Value::parse("{ resource: /policies/revenue.md }").unwrap())
+                .unwrap();
+        assert_eq!(rooted.resource_kind(), ResourceKind::Path);
     }
 
     #[test]

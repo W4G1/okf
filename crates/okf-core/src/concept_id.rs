@@ -77,6 +77,16 @@ impl ConceptId {
         &self.segments
     }
 
+    /// The segments of the directory that holds the concept's file: every
+    /// segment but the last. Empty for a concept at the bundle root.
+    ///
+    /// This is what a relative link or path field in the concept resolves
+    /// from.
+    #[must_use]
+    pub fn directory(&self) -> &[String] {
+        &self.segments[..self.segments.len().saturating_sub(1)]
+    }
+
     /// The final segment (the concept's own name, without directories).
     pub fn name(&self) -> &str {
         self.segments.last().map_or("", String::as_str)

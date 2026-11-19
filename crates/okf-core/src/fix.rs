@@ -1,9 +1,9 @@
 //! Automated remediation and migrations for OKF concepts, bundles, and logs.
 //!
 //! Continuous authoring by agents and humans naturally introduces hygiene issues
-//! or leaves documents in older specification versions (such as v0.1 `timestamp`
-//! and body `# Citations`). This module provides deterministic, safe, automated
-//! remediation and migration transformations:
+//! or leaves documents in the form of an older specification version. This
+//! module provides deterministic, safe, automated remediation and migration
+//! transformations:
 //!
 //! - **Frontmatter key ordering** (`L18`): Normalizes frontmatter keys to the
 //!   canonical [`PREFERRED_KEY_ORDER`].
@@ -11,19 +11,34 @@
 //!   structured `generated: { by, at }` block (or removes redundant timestamp).
 //! - **v0.1 `# Citations` migration** (`L6`): Converts legacy body citations to
 //!   frontmatter `sources` entries and turns inline references into footnotes.
+//! - **Root-relative path fields**: Adds the leading `/` to a path field that
+//!   earlier versions wrote from the bundle root without one.
+//! - **Scalar `tags`**: Rewrites a scalar `tags` value as a YAML list, splitting
+//!   a comma-separated string into separate tags.
+//! - **Timestamps**: Repairs a timestamp that is close to valid (a missing
+//!   offset, a space separator) and expands a date-only `generated.at` or
+//!   `verified[].at` to a date-time.
+//! - **Indented computation**: Fences an indented `# Computation` block, which
+//!   is the only form a consumer locates.
+//! - **`log.md` frontmatter**: Removes it; a log has none.
+//! - **`okf_version`**: Quotes an unquoted value (`L13`) and declares the
+//!   version in a bundle-root `index.md` that has none.
 //! - **Missing title** (`L1`): Derives and inserts human-readable `title` from filename stem.
 //! - **Missing generated** (`L3`): Inserts `generated: { by, at }` attribution.
 //! - **Missing top heading** (`L8`): Prepends `# <title>` heading to document body.
 //! - **Computation syntax tagging** (`L26`): Adds language syntax tag to `# Computation` code blocks.
 //! - **Duplicate log dates** (`L27`): Consolidates duplicate `## YYYY-MM-DD` headings in `log.md`.
 //! - **Index sync** (`L16`): Re-indexes all bundle directories.
+//!
+//! A fix rewrites only what it changes. Frontmatter entries it does not touch
+//! are written back exactly as they were, and a markdown file that is not a
+//! concept (no frontmatter, or no `type`) is left alone entirely.
 
 use crate::computation::ATTESTED_COMPUTATION_TYPE;
 use crate::document::Document;
 use crate::frontmatter::{Frontmatter, PREFERRED_KEY_ORDER};
 use crate::index::regenerate_indexes;
 use crate::links::Citation;
-use crate::log::{Log, LogDay};
 use crate::scaffold::{current_iso_timestamp, default_author, title_from_name};
 use crate::yaml::{Mapping, Value};
 use std::collections::HashSet;
@@ -57,6 +72,17 @@ pub enum RemediationKind {
     NormalizedDate(String),
     /// Quoted unquoted `okf_version` in root `index.md` (L13).
     QuotedOkfVersion,
+    /// Declared `okf_version` in a bundle-root `index.md` that had none.
+    DeclaredOkfVersion,
+    /// Added the leading `/` to a path field that was written from the bundle
+    /// root without one. Carries the field name.
+    RootedPath(String),
+    /// Rewrote a scalar `tags` value as a YAML list.
+    ListifiedTags,
+    /// Fenced an indented `# Computation` code block.
+    FencedComputation,
+    /// Removed the frontmatter block from a `log.md`.
+    StrippedLogFrontmatter,
 }
 
 /// A single remediation action applied to a document or file.
@@ -98,6 +124,21 @@ pub struct FixOptions {
     pub regenerate_indexes: bool,
     /// Whether to quote unquoted `okf_version` in root index.md (L13).
     pub quote_okf_version: bool,
+    /// Whether to declare `okf_version` in a bundle-root `index.md` that has
+    /// none. Only done when no path field still depends on the root-relative
+    /// reading of earlier versions, since declaring the current version turns
+    /// that fallback off.
+    pub declare_okf_version: bool,
+    /// Whether to add the leading `/` to path fields that only resolve from
+    /// the bundle root.
+    pub root_legacy_paths: bool,
+    /// Whether to rewrite a scalar `tags` value as a list, splitting it at
+    /// commas.
+    pub listify_tags: bool,
+    /// Whether to fence an indented `# Computation` code block.
+    pub fence_computation: bool,
+    /// Whether to remove the frontmatter block from `log.md` files.
+    pub strip_log_frontmatter: bool,
 }
 
 impl FixOptions {
@@ -118,6 +159,11 @@ impl FixOptions {
             clean_whitespace: false,
             regenerate_indexes: false,
             quote_okf_version: true,
+            declare_okf_version: true,
+            root_legacy_paths: true,
+            listify_tags: true,
+            fence_computation: true,
+            strip_log_frontmatter: true,
         }
     }
 }
@@ -138,6 +184,11 @@ impl Default for FixOptions {
             clean_whitespace: true,
             regenerate_indexes: true,
             quote_okf_version: true,
+            declare_okf_version: true,
+            root_legacy_paths: true,
+            listify_tags: true,
+            fence_computation: true,
+            strip_log_frontmatter: true,
         }
     }
 }
@@ -178,11 +229,14 @@ pub fn remediate_document(
         let raw_ts = new_doc
             .frontmatter
             .get("timestamp")
-            .and_then(Value::as_display_string);
+            .and_then(Value::as_display_string)
+            .filter(|ts| !ts.trim().is_empty());
         new_doc.frontmatter.remove("timestamp");
 
-        if new_doc.frontmatter.get("generated").is_none() {
-            if let Some(ts) = raw_ts {
+        let generated = new_doc.frontmatter.get("generated").cloned();
+        match (generated, raw_ts) {
+            // No `generated` yet: the timestamp becomes its `at`.
+            (None, Some(ts)) => {
                 let author = options.author.clone().unwrap_or_else(default_author);
                 let mut gen_map = Mapping::new();
                 gen_map.insert("by", Value::String(author));
@@ -195,11 +249,25 @@ pub fn remediate_document(
                     description: format!("migrated legacy timestamp `{ts}` to generated block"),
                 });
             }
-        } else {
-            remediations.push(Remediation {
+            // A `generated` that records who but not when: the timestamp is
+            // the one record of when, so it moves there instead of being
+            // dropped.
+            (Some(Value::Mapping(mut gen_map)), Some(ts))
+                if gen_map.get("at").is_none_or(Value::is_blank) =>
+            {
+                gen_map.insert("at", Value::String(ts.clone()));
+                new_doc
+                    .frontmatter
+                    .set("generated", Value::Mapping(gen_map));
+                remediations.push(Remediation {
+                    kind: RemediationKind::MigratedTimestamp,
+                    description: format!("moved legacy timestamp `{ts}` to `generated.at`"),
+                });
+            }
+            _ => remediations.push(Remediation {
                 kind: RemediationKind::MigratedTimestamp,
                 description: "removed redundant legacy timestamp".to_string(),
-            });
+            }),
         }
     }
 
@@ -209,16 +277,28 @@ pub fn remediate_document(
         && new_doc.frontmatter.get("timestamp").is_none()
     {
         let author = options.author.clone().unwrap_or_else(default_author);
-        let at = current_iso_timestamp();
         let mut gen_map = Mapping::new();
         gen_map.insert("by", Value::String(author));
-        gen_map.insert("at", Value::String(at));
+        // `generated.at` is the time of the last meaningful change, and a
+        // verification counts only if it is at or after it. Stamping "now"
+        // on a concept that someone has verified would turn that review into
+        // history without the text having changed, so `at` is left out there.
+        let verified = !new_doc.frontmatter.verified().is_empty();
+        if !verified {
+            gen_map.insert("at", Value::String(current_iso_timestamp()));
+        }
         new_doc
             .frontmatter
             .set("generated", Value::Mapping(gen_map));
         remediations.push(Remediation {
             kind: RemediationKind::AddedGenerated,
-            description: "added missing generated metadata block".to_string(),
+            description: if verified {
+                "added missing generated metadata block (without `at`, so that existing \
+                 verifications stay current)"
+                    .to_string()
+            } else {
+                "added missing generated metadata block".to_string()
+            },
         });
     }
 
@@ -315,6 +395,49 @@ pub fn remediate_document(
         }
     }
 
+    // A scalar `tags` value reads as one tag, commas and all. Write the list
+    // the producer meant.
+    if options.listify_tags
+        && let Some(tags) = new_doc
+            .frontmatter
+            .get("tags")
+            .filter(|value| !value.is_blank())
+            .and_then(Value::as_display_string)
+    {
+        let list: Vec<Value> = tags
+            .split(',')
+            .map(str::trim)
+            .filter(|tag| !tag.is_empty())
+            .map(|tag| Value::String(tag.to_string()))
+            .collect();
+        let count = list.len();
+        new_doc.frontmatter.set("tags", Value::Sequence(list));
+        remediations.push(Remediation {
+            kind: RemediationKind::ListifiedTags,
+            description: format!("rewrote scalar `tags` as a list of {count} tag(s)"),
+        });
+    }
+
+    // An indented block under `# Computation` is not a form a consumer
+    // locates. Fence it.
+    if options.fence_computation
+        && new_doc.frontmatter.is_attested_computation()
+        && new_doc.frontmatter.computation().is_none()
+        && new_doc
+            .inline_computation()
+            .is_some_and(|inline| !inline.fenced)
+        && let Some(fenced_body) = fence_indented_computation(
+            &new_doc.body,
+            new_doc.frontmatter.runtime().as_deref().map(str::trim),
+        )
+    {
+        new_doc.body = fenced_body;
+        remediations.push(Remediation {
+            kind: RemediationKind::FencedComputation,
+            description: "fenced the indented `# Computation` code block".to_string(),
+        });
+    }
+
     if options.normalize_date_formats {
         remediate_date_fields(&mut new_doc.frontmatter, &mut remediations);
     }
@@ -342,30 +465,51 @@ pub fn remediate_document(
     (new_doc, remediations)
 }
 
+/// Describes a timestamp repair. Filling in a missing offset is a guess, and
+/// the description says so.
+fn date_remediation(field_desc: &str, original: &str, repaired: &str) -> Remediation {
+    let assumed_utc = crate::date::DateTime::parse(original)
+        .is_some_and(|dt| dt.has_time && dt.offset_minutes.is_none());
+    let note = if assumed_utc {
+        " (no offset was given; UTC assumed)"
+    } else {
+        ""
+    };
+    Remediation {
+        kind: RemediationKind::NormalizedDate(field_desc.to_string()),
+        description: format!("normalized `{field_desc}` timestamp to `{repaired}`{note}"),
+    }
+}
+
+/// Repairs the timestamp at `key`, leaving a value that is already valid
+/// untouched. With `prefer_datetime`, a date-only value is expanded to the
+/// equivalent date-time.
 fn normalize_mapping_date_key(
     map: &mut Mapping,
     key: &str,
     field_desc: &str,
+    prefer_datetime: bool,
     remediations: &mut Vec<Remediation>,
 ) -> bool {
     if let Some(val) = map.get(key).and_then(Value::as_display_string)
-        && let Some(normalized) = crate::date::normalize_iso_datetime(&val)
-        && normalized != val
+        && let Some(repaired) = crate::date::repair_timestamp(&val, prefer_datetime)
+        && repaired != val
     {
-        map.insert(key, Value::String(normalized.clone()));
-        remediations.push(Remediation {
-            kind: RemediationKind::NormalizedDate(field_desc.to_string()),
-            description: format!("normalized `{field_desc}` datetime to `{normalized}`"),
-        });
+        remediations.push(date_remediation(field_desc, &val, &repaired));
+        map.insert(key, Value::String(repaired));
         return true;
     }
     false
 }
 
+/// Repairs every timestamp key of a concept.
+///
+/// `generated.at` and `verified[].at` are written as date-times, because
+/// consumers compare the two. The other keys keep a date-only value as it is.
 #[allow(clippy::too_many_lines)]
 fn remediate_date_fields(fm: &mut Frontmatter, remediations: &mut Vec<Remediation>) {
     if let Some(Value::Mapping(mut gen_map)) = fm.get("generated").cloned()
-        && normalize_mapping_date_key(&mut gen_map, "at", "generated.at", remediations)
+        && normalize_mapping_date_key(&mut gen_map, "at", "generated.at", true, remediations)
     {
         fm.set("generated", Value::Mapping(gen_map));
     }
@@ -380,6 +524,7 @@ fn remediate_date_fields(fm: &mut Frontmatter, remediations: &mut Vec<Remediatio
                             map,
                             "at",
                             &format!("verified[{i}].at"),
+                            true,
                             remediations,
                         );
                     }
@@ -389,7 +534,7 @@ fn remediate_date_fields(fm: &mut Frontmatter, remediations: &mut Vec<Remediatio
                 }
             }
             Value::Mapping(mut map) => {
-                if normalize_mapping_date_key(&mut map, "at", "verified.at", remediations) {
+                if normalize_mapping_date_key(&mut map, "at", "verified.at", true, remediations) {
                     fm.set("verified", Value::Mapping(map));
                 }
             }
@@ -398,14 +543,11 @@ fn remediate_date_fields(fm: &mut Frontmatter, remediations: &mut Vec<Remediatio
     }
 
     if let Some(stale_val) = fm.get("stale_after").and_then(Value::as_display_string)
-        && let Some(normalized) = crate::date::normalize_iso_datetime(&stale_val)
-        && normalized != stale_val
+        && let Some(repaired) = crate::date::repair_timestamp(&stale_val, false)
+        && repaired != stale_val
     {
-        fm.set("stale_after", Value::String(normalized.clone()));
-        remediations.push(Remediation {
-            kind: RemediationKind::NormalizedDate("stale_after".to_string()),
-            description: format!("normalized `stale_after` datetime to `{normalized}`"),
-        });
+        remediations.push(date_remediation("stale_after", &stale_val, &repaired));
+        fm.set("stale_after", Value::String(repaired));
     }
 
     if let Some(Value::Mapping(mut uw_map)) = fm.get("usage_window").cloned() {
@@ -415,6 +557,7 @@ fn remediate_date_fields(fm: &mut Frontmatter, remediations: &mut Vec<Remediatio
                 &mut uw_map,
                 field,
                 &format!("usage_window.{field}"),
+                false,
                 remediations,
             );
         }
@@ -423,33 +566,41 @@ fn remediate_date_fields(fm: &mut Frontmatter, remediations: &mut Vec<Remediatio
         }
     }
 
+    let normalize_source =
+        |map: &mut Mapping, prefix: &str, remediations: &mut Vec<Remediation>| {
+            let mut changed = normalize_mapping_date_key(
+                map,
+                "last_modified",
+                &format!("{prefix}.last_modified"),
+                false,
+                remediations,
+            );
+            if let Some(Value::Mapping(mut uw_map)) = map.get("usage_window").cloned() {
+                let mut uw_changed = false;
+                for field in ["from", "to"] {
+                    uw_changed |= normalize_mapping_date_key(
+                        &mut uw_map,
+                        field,
+                        &format!("{prefix}.usage_window.{field}"),
+                        false,
+                        remediations,
+                    );
+                }
+                if uw_changed {
+                    map.insert("usage_window", Value::Mapping(uw_map));
+                    changed = true;
+                }
+            }
+            changed
+        };
+
     if let Some(s_val) = fm.get("sources").cloned() {
         match s_val {
             Value::Sequence(mut seq) => {
                 let mut changed = false;
                 for (i, item) in seq.iter_mut().enumerate() {
                     if let Some(map) = item.as_mapping_mut() {
-                        changed |= normalize_mapping_date_key(
-                            map,
-                            "last_modified",
-                            &format!("sources[{i}].last_modified"),
-                            remediations,
-                        );
-                        if let Some(Value::Mapping(mut uw_map)) = map.get("usage_window").cloned() {
-                            let mut uw_changed = false;
-                            for field in ["from", "to"] {
-                                uw_changed |= normalize_mapping_date_key(
-                                    &mut uw_map,
-                                    field,
-                                    &format!("sources[{i}].usage_window.{field}"),
-                                    remediations,
-                                );
-                            }
-                            if uw_changed {
-                                map.insert("usage_window", Value::Mapping(uw_map));
-                                changed = true;
-                            }
-                        }
+                        changed |= normalize_source(map, &format!("sources[{i}]"), remediations);
                     }
                 }
                 if changed {
@@ -457,28 +608,7 @@ fn remediate_date_fields(fm: &mut Frontmatter, remediations: &mut Vec<Remediatio
                 }
             }
             Value::Mapping(mut map) => {
-                let mut changed = normalize_mapping_date_key(
-                    &mut map,
-                    "last_modified",
-                    "sources.last_modified",
-                    remediations,
-                );
-                if let Some(Value::Mapping(mut uw_map)) = map.get("usage_window").cloned() {
-                    let mut uw_changed = false;
-                    for field in ["from", "to"] {
-                        uw_changed |= normalize_mapping_date_key(
-                            &mut uw_map,
-                            field,
-                            &format!("sources.usage_window.{field}"),
-                            remediations,
-                        );
-                    }
-                    if uw_changed {
-                        map.insert("usage_window", Value::Mapping(uw_map));
-                        changed = true;
-                    }
-                }
-                if changed {
+                if normalize_source(&mut map, "sources", remediations) {
                     fm.set("sources", Value::Mapping(map));
                 }
             }
@@ -554,86 +684,86 @@ fn migrate_body_citations(body: &str, citations: &[Citation]) -> String {
 
 /// Replaces `[n]` citation markers with footnote markers `[^n]` in prose lines.
 fn replace_citation_refs_in_line(line: &str, cit_numbers: &[u32]) -> String {
+    let chars: Vec<char> = line.chars().collect();
     let mut out = String::with_capacity(line.len() + 8);
-    let bytes = line.as_bytes();
     let mut i = 0;
 
-    while i < bytes.len() {
-        if bytes[i] == b'[' {
-            // Check if preceded by `^` or `!`
-            let prev_char = if i > 0 { Some(bytes[i - 1]) } else { None };
-            if prev_char == Some(b'^') || prev_char == Some(b'!') {
-                out.push(bytes[i] as char);
-                i += 1;
+    while i < chars.len() {
+        if chars[i] == '['
+            // Already a footnote (`[^1]`) or an image (`![1]`).
+            && !(i > 0 && matches!(chars[i - 1], '^' | '!'))
+            && let Some(close) = (i + 1..chars.len()).find(|&j| chars[j] == ']')
+        {
+            let inside: String = chars[i + 1..close].iter().collect();
+            if let Ok(num) = inside.trim().parse::<u32>()
+                && cit_numbers.contains(&num)
+                // `[1](url)` and `[1][ref]` are links, not citation markers.
+                && !matches!(chars.get(close + 1), Some('(' | '['))
+            {
+                let _ = write!(out, "[^{num}]");
+                i = close + 1;
                 continue;
             }
-
-            if let Some(close_rel) = line[i + 1..].find(']') {
-                let close_idx = i + 1 + close_rel;
-                let inside = &line[i + 1..close_idx].trim();
-                let is_number = inside.parse::<u32>().ok();
-
-                if let Some(num) = is_number
-                    && cit_numbers.contains(&num)
-                {
-                    let next_char = line.as_bytes().get(close_idx + 1).copied();
-                    if next_char != Some(b'(') && next_char != Some(b'[') {
-                        let _ = write!(out, "[^{num}]");
-                        i = close_idx + 1;
-                        continue;
-                    }
-                }
-            }
         }
-        out.push(bytes[i] as char);
+        out.push(chars[i]);
         i += 1;
     }
     out
 }
 
-/// Tags untagged code blocks under `# Computation` with the given runtime.
-fn tag_computation_block(body: &str, runtime: &str) -> (String, bool) {
-    let mut out_lines = Vec::new();
-    let mut in_computation_section = false;
-    let mut changed = false;
-    let mut in_code_block = false;
-
-    for line in body.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("# ") {
-            in_computation_section = trimmed == "# Computation";
-            out_lines.push(line.to_string());
-            continue;
-        }
-
-        if in_computation_section {
-            if trimmed == "```" {
-                if !in_code_block {
-                    // Opening untagged fence
-                    let leading_spaces = line.len() - line.trim_start().len();
-                    let indent = " ".repeat(leading_spaces);
-                    out_lines.push(format!("{indent}```{runtime}"));
-                    changed = true;
-                    in_code_block = true;
-                    continue;
-                }
-                in_code_block = false;
-            } else if trimmed == "~~~" {
-                if !in_code_block {
-                    let leading_spaces = line.len() - line.trim_start().len();
-                    let indent = " ".repeat(leading_spaces);
-                    out_lines.push(format!("{indent}~~~{runtime}"));
-                    changed = true;
-                    in_code_block = true;
-                    continue;
-                }
-                in_code_block = false;
-            }
-        }
-        out_lines.push(line.to_string());
+/// Rewrites the indented code block that stands in for the computation as a
+/// fenced block, tagged with `language` when one is known. Returns `None` when
+/// the `Computation` section has no such block.
+///
+/// The block is located by the same scanner that reads the computation, so a
+/// `# Computation` line inside some other fenced block is never mistaken for
+/// the heading.
+fn fence_indented_computation(body: &str, language: Option<&str>) -> Option<String> {
+    let (start, end) = crate::computation::indented_computation_lines(body)?;
+    let lines: Vec<&str> = body.lines().collect();
+    let fence = if lines[start..end].iter().any(|line| line.contains("```")) {
+        "~~~"
+    } else {
+        "```"
+    };
+    let mut out: Vec<String> = lines[..start].iter().map(ToString::to_string).collect();
+    out.push(format!("{fence}{}", language.unwrap_or_default()));
+    for line in &lines[start..end] {
+        out.push(
+            line.strip_prefix("    ")
+                .or_else(|| line.strip_prefix('\t'))
+                .unwrap_or_else(|| line.trim_start())
+                .to_string(),
+        );
     }
+    out.push(fence.to_string());
+    out.extend(lines[end..].iter().map(ToString::to_string));
+    let mut result = out.join("\n");
+    if body.ends_with('\n') {
+        result.push('\n');
+    }
+    Some(result)
+}
 
-    (out_lines.join("\n"), changed)
+/// Tags the computation's opening fence with the given runtime, when it has
+/// no language tag of its own.
+///
+/// Only that one line changes. A fence that already names a language is left
+/// alone: `runtime: bigquery` above a `sql` block is exactly how the
+/// specification writes it.
+fn tag_computation_block(body: &str, runtime: &str) -> (String, bool) {
+    let Some(fence) = crate::computation::computation_fence(body).filter(|f| !f.has_info) else {
+        return (body.to_string(), false);
+    };
+    let mut lines: Vec<String> = body.lines().map(ToString::to_string).collect();
+    let line = &lines[fence.line];
+    let indent = &line[..line.len() - line.trim_start().len()];
+    lines[fence.line] = format!("{indent}{}{runtime}", fence.marker);
+    let mut result = lines.join("\n");
+    if body.ends_with('\n') {
+        result.push('\n');
+    }
+    (result, true)
 }
 
 /// Strips trailing whitespace on each line and collapses excess consecutive blank lines in markdown body.
@@ -678,42 +808,76 @@ fn clean_body_whitespace(body: &str) -> (String, bool) {
     (result, changed)
 }
 
-/// Remediates a parsed `log.md` file (consolidating duplicate date headings).
+/// Remediates a `log.md` file: removes a frontmatter block, which a log does
+/// not have, and consolidates duplicate date headings.
+///
+/// The text is returned unchanged when neither applies.
 #[must_use]
 pub fn remediate_log(text: &str, options: &FixOptions) -> (String, Vec<Remediation>) {
-    let log = Log::parse(text);
+    let mut out = text.to_string();
     let mut remediations = Vec::new();
 
-    if !options.fix_log_duplicates {
-        return (text.to_string(), remediations);
+    // Both fixes edit the text in place. The log is never re-rendered from
+    // its parsed form, which keeps only the entries it recognizes and would
+    // drop wrapped lines, nested bullets, and prose.
+    if options.strip_log_frontmatter
+        && Document::has_frontmatter_block(&out)
+        && Document::parse(&out).is_ok()
+    {
+        out = strip_frontmatter_block(&out);
+        remediations.push(Remediation {
+            kind: RemediationKind::StrippedLogFrontmatter,
+            description: "removed the frontmatter block; a log.md has none".to_string(),
+        });
     }
 
-    let mut consolidated_days: Vec<LogDay> = Vec::new();
-    let mut seen_dates: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-
-    for day in log.days {
-        if let Some(&existing_idx) = seen_dates.get(&day.date) {
-            consolidated_days[existing_idx].entries.extend(day.entries);
+    if options.fix_log_duplicates
+        && let Some((merged, dates)) = crate::log::consolidate_duplicate_dates(&out)
+    {
+        out = merged;
+        for date in dates {
             remediations.push(Remediation {
-                kind: RemediationKind::ConsolidatedLogDates(day.date.clone()),
-                description: format!("consolidated duplicate date headings for `## {}`", day.date),
+                description: format!("consolidated duplicate date headings for `## {date}`"),
+                kind: RemediationKind::ConsolidatedLogDates(date),
             });
-        } else {
-            seen_dates.insert(day.date.clone(), consolidated_days.len());
-            consolidated_days.push(day);
         }
     }
 
-    if remediations.is_empty() {
-        (text.to_string(), remediations)
-    } else {
-        let new_log = Log {
-            frontmatter: log.frontmatter,
-            title: log.title,
-            days: consolidated_days,
-        };
-        (new_log.to_markdown(), remediations)
+    (out, remediations)
+}
+
+/// Returns `text` without its leading frontmatter block and the blank lines
+/// that follow it.
+fn strip_frontmatter_block(text: &str) -> String {
+    let body = text.strip_prefix('\u{feff}').unwrap_or(text);
+    let mut lines = body.lines();
+    if lines
+        .next()
+        .is_none_or(|line| !crate::document::is_delimiter(line))
+    {
+        return text.to_string();
     }
+    let mut closed = false;
+    let mut rest: Vec<&str> = Vec::new();
+    for line in lines {
+        if closed {
+            rest.push(line);
+        } else if crate::document::is_delimiter(line) {
+            closed = true;
+        }
+    }
+    if !closed {
+        return text.to_string();
+    }
+    let first_content = rest
+        .iter()
+        .position(|line| !line.trim().is_empty())
+        .unwrap_or(rest.len());
+    let mut out = rest[first_content..].join("\n");
+    if !out.is_empty() {
+        out.push('\n');
+    }
+    out
 }
 
 /// Remediation report for a single file.
@@ -846,10 +1010,27 @@ pub fn remediate_file(path: impl AsRef<Path>, options: &FixOptions) -> io::Resul
             format!("could not parse {}: {e}", path.display()),
         )
     })?;
+    // A markdown file without frontmatter, or without `type`, is not a
+    // concept. It may be a README or a skill file: leave it as it is.
+    if !doc.is_concept() {
+        return Ok(FileFixReport {
+            path,
+            remediations: Vec::new(),
+            remediated_content: original.clone(),
+            original_content: original,
+            changed: false,
+        });
+    }
     let stem = path.file_stem().and_then(|s| s.to_str());
     let (remediated_doc, remediations) = remediate_document(&doc, stem, options);
-    let remediated_content = remediated_doc.serialize();
-    let changed = remediated_content != original || !remediations.is_empty();
+    // Nothing to fix means nothing to write: the file is not re-serialized
+    // just to normalize it.
+    let remediated_content = if remediations.is_empty() {
+        original.clone()
+    } else {
+        remediated_doc.serialize()
+    };
+    let changed = remediated_content != original;
 
     Ok(FileFixReport {
         path,
@@ -895,6 +1076,13 @@ pub fn remediate_bundle(
         }
     }
 
+    if options.root_legacy_paths {
+        root_legacy_paths(&bundle_root, &mut files);
+    }
+    if options.declare_okf_version {
+        declare_okf_version(&bundle_root, &mut files);
+    }
+
     let mut index_files_to_regenerate = Vec::new();
     if options.regenerate_indexes {
         let any_file_changed = files.iter().any(|f| f.changed);
@@ -930,19 +1118,142 @@ pub fn remediate_bundle(
     })
 }
 
-fn collect_md_files(dir: &Path, out: &mut Vec<PathBuf>) -> io::Result<()> {
-    for entry in fs::read_dir(dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.is_dir() {
-            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            if !name.starts_with('.') && name != "target" && name != "node_modules" {
-                collect_md_files(&path, out)?;
-            }
-        } else if path.extension().and_then(|e| e.to_str()) == Some("md") {
-            out.push(path);
+/// Adds the leading `/` to every path field that only resolves when read from
+/// the bundle root, updating the reports of the files concerned.
+///
+/// This is the one fix that needs the whole bundle: whether a path resolves
+/// depends on what else is on disk.
+fn root_legacy_paths(bundle_root: &Path, files: &mut [FileFixReport]) {
+    let Ok(bundle) = crate::bundle::Bundle::load(bundle_root) else {
+        return;
+    };
+    for (concept, field, raw, rooted) in bundle.legacy_path_fields() {
+        let path = concept.to_path(bundle_root);
+        let Some(report) = files.iter_mut().find(|f| f.path == path) else {
+            continue;
+        };
+        let Ok(mut doc) = Document::parse(&report.remediated_content) else {
+            continue;
+        };
+        if !doc.frontmatter.set_path_field(&field, &rooted) {
+            continue;
         }
+        report.remediated_content = doc.serialize();
+        report.changed = report.remediated_content != report.original_content;
+        report.remediations.push(Remediation {
+            kind: RemediationKind::RootedPath(field.clone()),
+            description: format!(
+                "rewrote `{field}` from `{raw}` to `{rooted}` so that it resolves from the bundle root"
+            ),
+        });
     }
+}
+
+/// Declares `okf_version` in a bundle-root `index.md` that has none, keeping
+/// the rest of the file as it is.
+///
+/// Skipped while a path field still depends on the root-relative reading of
+/// earlier versions and is not being fixed in this run: declaring the current
+/// version would stop it from resolving.
+fn declare_okf_version(bundle_root: &Path, files: &mut Vec<FileFixReport>) {
+    let index_path = bundle_root.join("index.md");
+    let existing = files.iter().position(|f| f.path == index_path);
+    let current = match existing {
+        Some(i) => files[i].remediated_content.clone(),
+        None => match fs::read_to_string(&index_path) {
+            Ok(text) => text,
+            Err(_) => return,
+        },
+    };
+    let Ok(doc) = Document::parse(&current) else {
+        return;
+    };
+    if doc
+        .frontmatter
+        .get("okf_version")
+        .is_some_and(|value| !value.is_blank())
+    {
+        return;
+    }
+    let unresolved_legacy = crate::bundle::Bundle::load(bundle_root).is_ok_and(|bundle| {
+        bundle
+            .legacy_path_fields()
+            .iter()
+            .any(|(concept, field, _, _)| {
+                let path = concept.to_path(bundle_root);
+                !files.iter().any(|f| {
+                    f.path == path
+                        && f.remediations
+                            .iter()
+                            .any(|r| r.kind == RemediationKind::RootedPath(field.clone()))
+                })
+            })
+    });
+    if unresolved_legacy {
+        return;
+    }
+
+    let declaration = format!("okf_version: \"{}\"\n", crate::OKF_VERSION);
+    let stripped = current.strip_prefix('\u{feff}').unwrap_or(&current);
+    let remediated_content = if doc.frontmatter.contains_key("okf_version") {
+        // The key is there with an empty value: fill it in where it stands.
+        let mut doc = doc;
+        doc.frontmatter
+            .set("okf_version", Value::String(crate::OKF_VERSION.to_string()));
+        doc.serialize()
+    } else if Document::has_frontmatter_block(&current) {
+        // Insert the key as the first line of the existing block, leaving
+        // every other line as written.
+        stripped.split_once('\n').map_or_else(
+            || format!("---\n{declaration}---\n"),
+            |(open, rest)| format!("{open}\n{declaration}{rest}"),
+        )
+    } else {
+        format!("---\n{declaration}---\n\n{stripped}")
+    };
+    let remediation = Remediation {
+        kind: RemediationKind::DeclaredOkfVersion,
+        description: format!(
+            "declared `okf_version: \"{}\"` in the bundle-root index.md",
+            crate::OKF_VERSION
+        ),
+    };
+    match existing {
+        Some(i) => {
+            files[i].remediated_content = remediated_content;
+            files[i].changed = files[i].remediated_content != files[i].original_content;
+            files[i].remediations.push(remediation);
+        }
+        None => files.push(FileFixReport {
+            path: index_path,
+            remediations: vec![remediation],
+            original_content: current,
+            remediated_content,
+            changed: true,
+        }),
+    }
+}
+
+/// The markdown files a fix may rewrite: those that are part of the bundle.
+///
+/// The bundle's own walk is used, so that a dot-path is skipped and a
+/// symbolic link that leads out of the bundle root is not followed: a fix
+/// must never write to a file outside the bundle. Build output and installed
+/// packages are left out as well, for a bundle that sits at the root of a
+/// code repository.
+fn collect_md_files(dir: &Path, out: &mut Vec<PathBuf>) -> io::Result<()> {
+    let skipped = |path: &Path| {
+        path.strip_prefix(dir).is_ok_and(|relative| {
+            relative
+                .components()
+                .any(|c| matches!(c.as_os_str().to_str(), Some("target" | "node_modules")))
+        })
+    };
+    out.extend(
+        crate::bundle::markdown_files(dir)?
+            .into_iter()
+            .filter(|path| !skipped(path)),
+    );
     Ok(())
 }
 

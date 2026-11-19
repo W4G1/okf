@@ -114,8 +114,8 @@ impl LayoutEngine {
             if count > 0 {
                 let jitter = 0.05 + f64::from(u32::try_from(hash % 100).unwrap_or(0)) / 1000.0;
                 pos = (
-                    cx / f64::from(count) + jitter * angle.cos(),
-                    cy / f64::from(count) + jitter * angle.sin(),
+                    f64::mul_add(jitter, angle.cos(), cx / f64::from(count)),
+                    f64::mul_add(jitter, angle.sin(), cy / f64::from(count)),
                 );
             }
             self.positions.insert(node.key.clone(), pos);

@@ -167,7 +167,13 @@ the executive revenue dashboard.[^exec-rev-dash]
 
     #[test]
     fn markdown_links_are_not_footnotes() {
-        assert!(extract_refs("See [customers](/tables/customers.md).").is_empty());
-        assert!(extract_definitions("[label]: https://example.com").is_empty());
+        assert_eq!(
+            extract_refs("See [customers](/tables/customers.md)."),
+            Vec::<FootnoteRef>::new()
+        );
+        assert_eq!(
+            extract_definitions("[label]: https://example.com"),
+            Vec::<FootnoteDef>::new()
+        );
     }
 }

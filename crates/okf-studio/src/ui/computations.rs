@@ -143,6 +143,22 @@ fn draw_detail(frame: &mut Frame, app: &App, area: Rect) {
             Span::raw(executor.receipt.join(", ")),
         ]));
     }
+    // A value may be shown as attested only when the concept has a runtime,
+    // an attester, and a computation that can be found.
+    lines.push(Line::from(if info.attestable {
+        vec![
+            Span::styled("  attestable ".to_string(), theme.dim()),
+            Span::styled(format!("yes {GLYPH_OK}"), theme.ok()),
+        ]
+    } else {
+        vec![
+            Span::styled("  attestable ".to_string(), theme.dim()),
+            Span::styled(
+                "no: needs a runtime, an attester, and a computation".to_string(),
+                theme.warn(),
+            ),
+        ]
+    }));
     for issue in &info.issues {
         lines.push(Line::from(Span::styled(
             format!("  {GLYPH_BROKEN} {issue}"),

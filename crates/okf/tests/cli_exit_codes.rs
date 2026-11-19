@@ -27,7 +27,7 @@ fn code(status: ExitStatus) -> i32 {
 /// concept, so `validate` and `lint` both succeed.
 fn good_bundle() -> TempDir {
     let tmp = TempDir::new();
-    tmp.write("index.md", "---\nokf_version: \"0.2\"\n---\n\n# Mini\n");
+    tmp.write("index.md", "---\nokf_version: \"0.3\"\n---\n\n# Mini\n");
     tmp.write(
         "metrics/revenue.md",
         "---\ntype: Metric\ntitle: Revenue\ngenerated:\n  at: 2026-01-01T00:00:00Z\n---\n\nRevenue is money.\n",
@@ -77,17 +77,38 @@ fn validate_conformant_bundle_succeeds() {
 #[test]
 fn validate_nonconformant_bundle_is_data_error() {
     let tmp = TempDir::new();
-    tmp.write("index.md", "---\nokf_version: \"0.2\"\n---\n\n# Mini\n");
-    // A concept with no `type` fails conformance.
+    tmp.write("index.md", "---\nokf_version: \"0.3\"\n---\n\n# Mini\n");
+    // A frontmatter block that does not parse as a YAML mapping fails
+    // conformance.
     tmp.write(
         "metrics/revenue.md",
-        "---\ntitle: Revenue\n---\n\nRevenue is money.\n",
+        "---\ntags: [finance, revenue\n---\n\nRevenue is money.\n",
     );
     let status = okf()
         .args(["validate", tmp.path().to_str().unwrap()])
         .status()
         .unwrap();
     assert_eq!(code(status), EX_DATAERR);
+}
+
+#[test]
+fn validate_accepts_markdown_files_that_are_not_concepts() {
+    let tmp = good_bundle();
+    // A file with no `type`, and one with no frontmatter at all, are not
+    // concepts. They are warned about, and the bundle stays conformant.
+    tmp.write(
+        "metrics/notes.md",
+        "---\ntitle: Scratch notes\n---\n\nNot knowledge yet.\n",
+    );
+    tmp.write("README.md", "# About this bundle\n");
+    let output = okf()
+        .args(["validate", tmp.path().to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert_eq!(code(output.status), 0);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(stdout.matches("not a concept").count(), 2, "{stdout}");
+    assert!(stdout.contains("conformant with OKF v0.3"), "{stdout}");
 }
 
 #[test]
@@ -144,7 +165,10 @@ fn validate_output_omits_spec_section_references() {
         .unwrap();
     let stdout = String::from_utf8(output.stdout).unwrap();
 
-    assert!(stdout.contains("no tags are read from it"), "{stdout}");
+    assert!(
+        stdout.contains("consumers read it as the single tag \"one, two\""),
+        "{stdout}"
+    );
     assert!(stdout.contains("matches no `sources[].id`"), "{stdout}");
     assert!(!stdout.contains('§'), "{stdout}");
 }

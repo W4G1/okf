@@ -549,15 +549,12 @@ fn parse_inline(
                 line: usize::MAX,
                 kind: FocusKind::Link {
                     text: ltext.clone(),
-                    target: target.clone(),
+                    target,
                     kind,
                 },
             });
             let (mut style, rendered) = if kind == LinkKind::External {
-                (
-                    theme.accent().add_modifier(Modifier::UNDERLINED),
-                    ltext.clone(),
-                )
+                (theme.accent().add_modifier(Modifier::UNDERLINED), ltext)
             } else {
                 (base.add_modifier(Modifier::UNDERLINED), format!("→{ltext}"))
             };

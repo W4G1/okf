@@ -103,7 +103,9 @@ impl GraphModel {
                             kind: EdgeKind::Link,
                         });
                     }
-                } else {
+                } else if link.is_broken() {
+                    // A link to an asset or to a file that is not a concept
+                    // is valid, and has no place in the concept graph.
                     let key = format!("✗{}", link.target);
                     let to = *index.entry(key.clone()).or_insert_with(|| {
                         nodes.push(GraphNode {
@@ -119,6 +121,19 @@ impl GraphModel {
                         from,
                         to,
                         kind: EdgeKind::Broken,
+                    });
+                }
+            }
+            // Path fields other than sources that name a concept (an
+            // executor, `superseded_by`) are edges of the bundle graph too.
+            for edge in bundle.path_edges_from(&concept.id) {
+                if !edge.is_source()
+                    && let Some(&to) = index.get(&edge.target.to_string())
+                {
+                    edges.push(GraphEdge {
+                        from,
+                        to,
+                        kind: EdgeKind::Link,
                     });
                 }
             }

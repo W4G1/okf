@@ -1,15 +1,19 @@
 //! # okf-validator: conformance checking and linting for OKF bundles
 //!
 //! Companion to [`okf-core`](https://docs.rs/okf-core), the pure-Rust
-//! implementation of the [Open Knowledge Format (OKF) v0.2][spec]. This crate
+//! implementation of the [Open Knowledge Format (OKF) v0.3][spec]. This crate
 //! judges bundles; okf-core models them.
 //!
 //! - [`validate`] checks conformance: [`validate_bundle`] reports true spec
 //!   violations as [`Severity::Error`], and material data integrity issues,
 //!   temporal checks, broken references, contract discrepancies, and script syntax
-//!   errors as [`Severity::Warning`] or [`Severity::Info`].
-//! - [`lint`] is the opinionated companion: [`lint_bundle`] evaluates 12
-//!   bundle formatting, structure, and authoring hygiene rules, each finding tagged with a stable rule code (`L1`..`L12`).
+//!   errors as [`Severity::Warning`] or [`Severity::Info`]. Only two things are
+//!   errors: a frontmatter block that does not parse as a YAML mapping with
+//!   unique keys, and a reserved `index.md` or `log.md` that does not follow
+//!   its structure. A markdown file without a `type` is not a concept, which
+//!   is a warning, not a failure.
+//! - [`lint`] is the opinionated companion: [`lint_bundle`] evaluates 13
+//!   bundle formatting, structure, and authoring hygiene rules, each finding tagged with a stable rule code (`L1`..`L13`).
 //! - [`syntax`] provides in-process syntax checking for Python,
 //!   JavaScript, TypeScript, Rust, SQL, JSON, YAML, and Bash.
 //!
@@ -40,12 +44,12 @@
 //! let bundle = Bundle::load("./my_bundle")?;
 //! let report = validate_bundle(&bundle);
 //! if report.is_conformant() {
-//!     println!("conformant OKF v0.2 bundle");
+//!     println!("conformant OKF v0.3 bundle");
 //! }
 //! # Ok::<(), okf_core::BundleError>(())
 //! ```
 //!
-//! [spec]: https://github.com/GoogleCloudPlatform/open-knowledge-format/blob/main/SPEC.md
+//! [spec]: https://github.com/open-knowledge-format/open-knowledge-format/blob/main/SPEC.md
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
@@ -62,9 +66,10 @@ pub mod validate;
 pub use lint::{lint_bundle, lint_bundle_at};
 #[doc(inline)]
 pub use syntax::{
-    FencedCodeBlock, Language, SyntaxError, check_syntax, extract_fenced_code_blocks,
+    FencedCodeBlock, Language, SyntaxError, check_syntax, extract_fenced_code_blocks, is_templated,
 };
 #[doc(inline)]
 pub use validate::{
     Diagnostic, ParseSeverityError, Report, Severity, validate_bundle, validate_bundle_at,
+    validate_bundle_at_instant,
 };

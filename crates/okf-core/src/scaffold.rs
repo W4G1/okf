@@ -17,8 +17,17 @@ use std::path::{Path, PathBuf};
 /// Options for initializing a new OKF bundle.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BundleInitOptions {
-    /// Bundle title for the root index.
+    /// Display name of the bundle, written as `title` in the bundle metadata
+    /// of the root `index.md`.
     pub title: String,
+    /// One sentence about the scope of the bundle and when to use it, written
+    /// as `description` in the bundle metadata. An agent with access to many
+    /// bundles reads it to select one.
+    pub description: Option<String>,
+    /// The license of the bundle content, written as `license` in the bundle
+    /// metadata: an SPDX expression such as `CC-BY-4.0`, or a path to a
+    /// license file in the bundle.
+    pub license: Option<String>,
     /// Whether to create a sample concept (e.g. `overview.md`).
     pub create_sample: bool,
     /// The name/id of the sample concept (default "overview").
@@ -33,6 +42,8 @@ impl Default for BundleInitOptions {
     fn default() -> Self {
         Self {
             title: "OKF Bundle".to_string(),
+            description: None,
+            license: None,
             create_sample: true,
             sample_name: "overview".to_string(),
             author: None,
@@ -193,10 +204,12 @@ pub fn build_concept_document(options: &ConceptOptions, title: &str) -> Document
             Value::Sequence(vec![Value::Mapping(param_map)]),
         );
 
+        // Path fields start with `/` so that they resolve from the bundle
+        // root wherever the concept is created.
         let mut exec_map = Mapping::new();
         exec_map.insert(
             "resource",
-            Value::String("references/skills/run.md".to_string()),
+            Value::String("/references/skills/run.md".to_string()),
         );
         exec_map.insert(
             "receipt",
@@ -207,7 +220,7 @@ pub fn build_concept_document(options: &ConceptOptions, title: &str) -> Document
         let mut att_map = Mapping::new();
         att_map.insert(
             "resource",
-            Value::String("references/attesters/verify.py".to_string()),
+            Value::String("/references/attesters/verify.py".to_string()),
         );
         fm.set("attester", Value::Mapping(att_map));
 
@@ -344,20 +357,39 @@ pub fn init_bundle(
         None
     };
 
-    // Build index.md
-    let index_text = if let Some((title, link, desc)) = sample_rel {
-        format!(
-            "---\nokf_version: \"{}\"\n---\n\n# Concept\n\n* [{title}]({link}) - {desc}\n",
-            crate::OKF_VERSION
-        )
-    } else {
-        format!(
-            "---\nokf_version: \"{}\"\n---\n\n# {}\n",
-            crate::OKF_VERSION,
-            options.title
-        )
-    };
-    fs::write(&index_path, index_text)?;
+    // Build index.md. The bundle-root index carries the bundle metadata:
+    // the OKF version, and what the bundle is and when to use it.
+    let mut metadata = Mapping::new();
+    metadata.insert("okf_version", Value::String(crate::OKF_VERSION.to_string()));
+    let bundle_title = options.title.trim();
+    if !bundle_title.is_empty() {
+        metadata.insert("title", Value::String(bundle_title.to_string()));
+    }
+    for (key, value) in [
+        ("description", &options.description),
+        ("license", &options.license),
+    ] {
+        if let Some(value) = value.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+            metadata.insert(key, Value::String(value.to_string()));
+        }
+    }
+    // With no concept to list yet, the body is a placeholder section that the
+    // first `okf index` replaces.
+    let listing = sample_rel.map_or_else(
+        || {
+            format!(
+                "# {}\n",
+                if bundle_title.is_empty() {
+                    "Concepts"
+                } else {
+                    bundle_title
+                }
+            )
+        },
+        |(title, link, desc)| format!("# Concept\n\n* [{title}]({link}) - {desc}\n"),
+    );
+    let index = Document::new(Frontmatter::from_mapping(metadata), listing);
+    fs::write(&index_path, index.serialize())?;
     created.push(index_path);
 
     // Build log.md

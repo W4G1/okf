@@ -45,7 +45,7 @@
 //! which is how both the specification and the reference write `stale_after`,
 //! `last_modified`, and `usage_window`.
 //!
-//! [spec]: https://github.com/GoogleCloudPlatform/open-knowledge-format/blob/main/SPEC.md
+//! [spec]: https://github.com/open-knowledge-format/open-knowledge-format/blob/main/SPEC.md
 
 mod emitter;
 mod parser;
@@ -53,6 +53,7 @@ mod parser;
 use std::fmt;
 
 pub use parser::YamlError;
+pub(crate) use parser::{Layout, parse_with_layout};
 
 /// An ordered YAML mapping (preserves insertion / source order, like the
 /// reference implementation which dumps with `sort_keys=False`).
@@ -163,6 +164,30 @@ impl Mapping {
     pub fn entries(&self) -> &[(Value, Value)] {
         &self.entries
     }
+
+    /// The string keys that occur more than once in this mapping, each listed
+    /// once, in order of first repetition.
+    ///
+    /// A producer must not write duplicate keys. The parser keeps every
+    /// occurrence so that a file survives a round trip unchanged, and the
+    /// accessors read the first one; this is how a validator finds out.
+    /// Only this mapping is inspected; see [`Value::duplicate_key_paths`] to
+    /// search nested values too.
+    #[must_use]
+    pub fn duplicate_keys(&self) -> Vec<&str> {
+        let mut seen: Vec<&str> = Vec::new();
+        let mut duplicates: Vec<&str> = Vec::new();
+        for key in self.keys() {
+            if seen.contains(&key) {
+                if !duplicates.contains(&key) {
+                    duplicates.push(key);
+                }
+            } else {
+                seen.push(key);
+            }
+        }
+        duplicates
+    }
 }
 
 /// A parsed YAML value.
@@ -199,6 +224,13 @@ impl Value {
     #[must_use]
     pub fn to_yaml_string(&self) -> String {
         emitter::emit(self)
+    }
+
+    /// Emits one `key: value` mapping entry as block-style YAML text.
+    pub(crate) fn entry_to_yaml_string(key: &Self, value: &Self) -> String {
+        let mut single = Mapping::new();
+        single.push_raw(key.clone(), value.clone());
+        emitter::emit(&Self::Mapping(single))
     }
 
     /// Returns the string contents if this is a [`Value::String`].
@@ -285,6 +317,64 @@ impl Value {
         }
     }
 
+    /// True for the three values the specification reads as an absent key: a
+    /// null, an empty string, and an empty list.
+    ///
+    /// Narrower than [`is_empty_value`](Self::is_empty_value), which also
+    /// counts `false`, `0`, and an empty mapping. Use this one to decide
+    /// whether an optional field was given.
+    #[must_use]
+    pub const fn is_blank(&self) -> bool {
+        match self {
+            Self::Null => true,
+            Self::String(s) => s.is_empty(),
+            Self::Sequence(s) => s.is_empty(),
+            _ => false,
+        }
+    }
+
+    /// Reads a field that is a list, accepting one item as a list with one
+    /// item: a sequence yields its elements, a blank value yields nothing, and
+    /// any other value yields itself.
+    #[must_use]
+    pub fn as_list(&self) -> Vec<&Self> {
+        match self {
+            Self::Sequence(items) => items.iter().collect(),
+            other if other.is_blank() => Vec::new(),
+            other => vec![other],
+        }
+    }
+
+    /// Every repeated mapping key in this value, at any depth, as a dotted
+    /// path (`generated.by`, `sources[1].id`).
+    #[must_use]
+    pub fn duplicate_key_paths(&self) -> Vec<String> {
+        fn walk(value: &Value, prefix: &str, out: &mut Vec<String>) {
+            match value {
+                Value::Mapping(map) => {
+                    for key in map.duplicate_keys() {
+                        out.push(format!("{prefix}{key}"));
+                    }
+                    for (key, child) in map.iter() {
+                        if let Some(key) = key.as_str() {
+                            walk(child, &format!("{prefix}{key}."), out);
+                        }
+                    }
+                }
+                Value::Sequence(items) => {
+                    let base = prefix.strip_suffix('.').unwrap_or(prefix);
+                    for (i, child) in items.iter().enumerate() {
+                        walk(child, &format!("{base}[{i}]."), out);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut out = Vec::new();
+        walk(self, "", &mut out);
+        out
+    }
+
     /// Renders a scalar as a plain display string (used for typed frontmatter
     /// accessors that coerce scalars to text, matching the reference's
     /// `str(fm.get(...))`).
@@ -294,7 +384,9 @@ impl Value {
             Self::String(s) => Some(s.clone()),
             Self::Bool(b) => Some(b.to_string()),
             Self::Int(i) => Some(i.to_string()),
-            Self::Float(f) => Some(format!("{f}")),
+            // The shortest form that still reads as a float, so that `1.0`
+            // stays `1.0` and is not mistaken for the integer `1`.
+            Self::Float(f) => Some(emitter::format_float(*f)),
             _ => None,
         }
     }
@@ -314,7 +406,7 @@ impl Value {
             Self::String(s) => Some(std::borrow::Cow::Borrowed(s)),
             Self::Bool(b) => Some(std::borrow::Cow::Owned(b.to_string())),
             Self::Int(i) => Some(std::borrow::Cow::Owned(i.to_string())),
-            Self::Float(f) => Some(std::borrow::Cow::Owned(format!("{f}"))),
+            Self::Float(f) => Some(std::borrow::Cow::Owned(emitter::format_float(*f))),
             _ => None,
         }
     }

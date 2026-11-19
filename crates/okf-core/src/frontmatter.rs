@@ -6,31 +6,52 @@
 //! [`Mapping`] verbatim and layers typed accessors on top, rather than
 //! deserializing into a fixed struct that would drop unknown keys.
 //!
-//! v0.2 adds four families of well-known keys on top of the v0.1 core, all of
-//! them optional:
-//!
-//! | Family                    | Keys                                                     |
-//! |---------------------------|----------------------------------------------------------|
-//! | Core                      | `type`, `title`, `description`, `resource`, `tags`         |
-//! | Provenance                | `sources`, `usage_window`                                  |
-//! | Trust                     | `generated`, `verified`                                    |
-//! | Lifecycle                 | `status`, `stale_after`                                    |
+//! | Family                    | Keys                                                           |
+//! |---------------------------|----------------------------------------------------------------|
+//! | Core                      | `type`, `title`, `description`, `resource`, `tags`             |
+//! | Provenance                | `sources`, `usage_window`                                      |
+//! | Trust                     | `generated`, `verified`                                        |
+//! | Lifecycle                 | `status`, `superseded_by`, `stale_after`                       |
 //! | Computation               | `runtime`, `parameters`, `computation`, `executor`, `attester` |
 //!
 //! Absence is meaningful but never fatal: [`Frontmatter::status`] defaults to
 //! `stable`, [`Frontmatter::trust_tier`] to `unverified`, and a concept
 //! carrying nothing but `type` is fully conformant.
 //!
-//! [spec]: https://github.com/GoogleCloudPlatform/open-knowledge-format/blob/main/SPEC.md
+//! ## Reading values that are absent, empty, or oddly shaped
+//!
+//! The accessors apply the specification's consumer rules, so callers do not
+//! have to:
+//!
+//! - A null, an empty string, and an empty list are the same as an absent key.
+//! - Where a field is a list (`tags`, `sources`, `verified`, `parameters`),
+//!   one item is read as a list with one item. A scalar `tags` value is one
+//!   tag and is never split at commas.
+//! - An entry of a family that lacks its REQUIRED key is ignored: a `sources`
+//!   entry without `resource`, a `verified` event without both `by` and `at`,
+//!   a `parameters` entry without `name` and `type`. The validator reports
+//!   them; read the raw [`Value`] with [`Frontmatter::get`] to see them.
+//!
+//! ## Rewriting without re-serializing
+//!
+//! A producer that modifies a file should not re-serialize the values it did
+//! not change. A frontmatter block that was parsed from text remembers how
+//! each top-level entry was written, and [`Frontmatter::to_yaml_preserving`]
+//! writes untouched entries back byte for byte: quoting, flow or block style,
+//! and comments all survive. Only entries whose value actually changed are
+//! emitted afresh.
+//!
+//! [spec]: https://github.com/open-knowledge-format/open-knowledge-format/blob/main/SPEC.md
 
 use crate::computation::{ATTESTED_COMPUTATION_TYPE, Attester, Executor, Parameter};
 use crate::date::{Date, DateTime, DateTimeField};
 use crate::error::DocumentError;
 use crate::provenance::{Source, UsageWindow};
-use crate::trust::{self, Generated, Status, TrustTier, Verification};
-use crate::yaml::{Mapping, Value};
+use crate::trust::{self, Freshness, Generated, Status, TrustTier, Verification};
+use crate::yaml::{Layout, Mapping, Value};
 use std::borrow::Cow;
 use std::fmt;
+use std::sync::Arc;
 
 /// The only frontmatter key OKF always requires: a concept carrying
 /// nothing but `type` is fully conformant.
@@ -38,7 +59,9 @@ use std::fmt;
 /// This is what [`Document::validate`](crate::Document::validate) enforces, and
 /// it matches the reference implementation's `REQUIRED_FRONTMATTER_KEYS`. v0.1
 /// required four keys; v0.2 narrowed the requirement to this one and demoted
-/// the rest to recommendations ([`RECOMMENDED_FRONTMATTER_KEYS`]).
+/// the rest to recommendations ([`RECOMMENDED_FRONTMATTER_KEYS`]). It is also
+/// what makes a markdown file a concept at all: a file with no `type` is not
+/// one.
 pub const REQUIRED_FRONTMATTER_KEYS: [&str; 1] = ["type"];
 
 /// Keys a producer should fill in before publishing, in the order
@@ -58,9 +81,17 @@ pub const RECOMMENDED_FRONTMATTER_KEYS: [&str; 3] = ["title", "description", "ge
 /// `timestamp` is superseded by `generated.at`.
 pub const LEGACY_FRONTMATTER_KEYS: [&str; 1] = ["timestamp"];
 
+/// The prefix the specification reserves for producer-defined keys: future
+/// OKF versions will not define a key that starts with it. Producers should
+/// name their own keys `x-<producer>-<name>`.
+pub const EXTENSION_KEY_PREFIX: &str = "x-";
+
+/// The keys a bundle-root `index.md` may carry as bundle metadata.
+pub const BUNDLE_METADATA_KEYS: [&str; 4] = ["okf_version", "title", "description", "license"];
+
 /// Every frontmatter key the specification gives a meaning to, across all
 /// families. Anything else is a producer extension.
-pub const KNOWN_FRONTMATTER_KEYS: [&str; 17] = [
+pub const KNOWN_FRONTMATTER_KEYS: [&str; 18] = [
     // Core.
     "type",
     "title",
@@ -75,6 +106,7 @@ pub const KNOWN_FRONTMATTER_KEYS: [&str; 17] = [
     "verified",
     // Lifecycle.
     "status",
+    "superseded_by",
     "stale_after",
     // Attested Computation.
     "runtime",
@@ -86,19 +118,21 @@ pub const KNOWN_FRONTMATTER_KEYS: [&str; 17] = [
     "timestamp",
 ];
 
-/// The key order the reference implementation writes documents in (its
-/// `_PREFERRED_KEY_ORDER`): identity first, then lifecycle, trust, and
-/// provenance.
+/// The key order the reference implementation writes documents in.
+///
+/// That is its `_PREFERRED_KEY_ORDER`: identity first, then lifecycle, trust,
+/// and provenance. `superseded_by` is placed beside the `status` it qualifies.
 ///
 /// Presentational only. Frontmatter has no required key order, and a
 /// consumer must not depend on one; see [`Frontmatter::reorder_preferred`].
-pub const PREFERRED_KEY_ORDER: [&str; 11] = [
+pub const PREFERRED_KEY_ORDER: [&str; 12] = [
     "type",
     "resource",
     "title",
     "description",
     "tags",
     "status",
+    "superseded_by",
     "generated",
     "verified",
     "stale_after",
@@ -108,9 +142,39 @@ pub const PREFERRED_KEY_ORDER: [&str; 11] = [
 
 /// A concept's frontmatter: an ordered key/value mapping with typed accessors
 /// for the well-known OKF fields.
-#[derive(Clone, Debug, Default, PartialEq)]
+///
+/// Two frontmatter blocks are equal when their mappings are equal; how the
+/// text was originally laid out is not part of the comparison.
+#[derive(Clone, Default)]
 pub struct Frontmatter {
     map: Mapping,
+    /// How the block was written, when it was parsed from text. See
+    /// [`Frontmatter::to_yaml_preserving`].
+    source: Option<Arc<SourceText>>,
+}
+
+/// The original text of a parsed frontmatter block, entry by entry, with the
+/// values those entries parsed to.
+#[derive(Debug)]
+struct SourceText {
+    layout: Layout,
+    values: Vec<(Value, Value)>,
+}
+
+impl PartialEq for Frontmatter {
+    fn eq(&self, other: &Self) -> bool {
+        self.map == other.map
+    }
+}
+
+impl fmt::Debug for Frontmatter {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // The remembered source text is how the block was laid out, not what
+        // it says, so it is left out.
+        f.debug_struct("Frontmatter")
+            .field("map", &self.map)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Frontmatter {
@@ -119,13 +183,104 @@ impl Frontmatter {
     pub const fn new() -> Self {
         Self {
             map: Mapping::new(),
+            source: None,
         }
     }
 
     /// Wraps an existing mapping.
     #[must_use]
     pub const fn from_mapping(map: Mapping) -> Self {
-        Self { map }
+        Self { map, source: None }
+    }
+
+    /// Parses the text of a frontmatter block (without its `---` delimiters),
+    /// remembering how each top-level entry was written so that
+    /// [`Frontmatter::to_yaml_preserving`] can write unchanged entries back
+    /// verbatim.
+    ///
+    /// An empty block parses to an empty frontmatter.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DocumentError::InvalidYaml`] if the text is not valid YAML,
+    /// and [`DocumentError::FrontmatterNotMapping`] if it parses to a scalar
+    /// or sequence rather than a mapping.
+    pub fn parse(text: &str) -> Result<Self, DocumentError> {
+        let (value, layout) = crate::yaml::parse_with_layout(text)?;
+        match value {
+            Value::Null => Ok(Self::new()),
+            Value::Mapping(map) => {
+                let source = layout.map(|layout| {
+                    Arc::new(SourceText {
+                        layout,
+                        values: map.entries().to_vec(),
+                    })
+                });
+                Ok(Self { map, source })
+            }
+            _ => Err(DocumentError::FrontmatterNotMapping),
+        }
+    }
+
+    /// Serializes the block as YAML, writing every top-level entry whose value
+    /// is unchanged since parsing exactly as it was written.
+    ///
+    /// Quoting, flow or block style, and comments of untouched entries
+    /// survive. An entry that was added, or whose value changed, is emitted in
+    /// the canonical block style; the comment lines that preceded a changed
+    /// entry are kept, and those of a removed entry go with it. Entries follow
+    /// the current key order, so reordering keys moves their text without
+    /// rewriting it.
+    ///
+    /// A block that was built in code rather than parsed has no original
+    /// text, and this is then the same as [`Frontmatter::to_yaml_canonical`].
+    #[must_use]
+    pub fn to_yaml_preserving(&self) -> String {
+        let Some(source) = &self.source else {
+            return self.to_yaml_canonical();
+        };
+        let mut used = vec![false; source.values.len()];
+        let mut out = String::new();
+        for (key, value) in self.map.entries() {
+            let original = source
+                .values
+                .iter()
+                .enumerate()
+                .find(|(i, (k, _))| !used[*i] && k == key);
+            match original {
+                Some((i, (_, original_value))) => {
+                    used[i] = true;
+                    let entry = &source.layout.entries[i];
+                    out.push_str(&entry.leading);
+                    if original_value == value {
+                        out.push_str(&entry.text);
+                    } else {
+                        out.push_str(&Value::entry_to_yaml_string(key, value));
+                    }
+                }
+                None => out.push_str(&Value::entry_to_yaml_string(key, value)),
+            }
+        }
+        out.push_str(&source.layout.trailing);
+        out
+    }
+
+    /// Serializes the block as YAML in the canonical block style, ignoring how
+    /// it was originally written. This is what `okf fmt` produces.
+    #[must_use]
+    pub fn to_yaml_canonical(&self) -> String {
+        if self.map.is_empty() {
+            return String::new();
+        }
+        Value::Mapping(self.map.clone()).to_yaml_string()
+    }
+
+    /// `true` when [`Frontmatter::to_yaml_preserving`] would reproduce text
+    /// that differs from the canonical style, i.e. the block is not laid out
+    /// the way `okf fmt` would write it.
+    #[must_use]
+    pub fn is_canonical(&self) -> bool {
+        self.to_yaml_preserving() == self.to_yaml_canonical()
     }
 
     /// Borrows the underlying ordered mapping.
@@ -256,22 +411,34 @@ impl Frontmatter {
     }
 
     /// The optional `tags` list. Non-string elements are coerced to their
-    /// display form; a non-sequence `tags` value yields an empty vector.
+    /// display form, and empty ones are dropped.
+    ///
+    /// A scalar `tags` value is one tag. It is not split at commas, so
+    /// `tags: sales, orders` reads as the single tag `sales, orders`; the
+    /// validator reports that shape so the producer can write a list.
     pub fn tags(&self) -> Vec<String> {
-        match self.map.get("tags") {
-            Some(Value::Sequence(items)) => {
-                items.iter().filter_map(Value::as_display_string).collect()
-            }
-            _ => Vec::new(),
-        }
+        self.map.get("tags").map_or_else(Vec::new, |value| {
+            value
+                .as_list()
+                .into_iter()
+                .filter_map(Value::as_display_string)
+                .filter(|tag| !tag.trim().is_empty())
+                .collect()
+        })
     }
 
     /// The `sources` entries: the materials this concept derives from.
+    ///
+    /// An entry without the required `resource` is ignored, as the
+    /// specification asks of consumers. Use [`Source::list_from_value`] on the
+    /// raw value to see such entries too.
     pub fn sources(&self) -> Vec<Source> {
         self.map
             .get("sources")
-            .map(Source::list_from_value)
-            .unwrap_or_default()
+            .map_or_else(Vec::new, Source::list_from_value)
+            .into_iter()
+            .filter(Source::has_resource)
+            .collect()
     }
 
     /// The shared `usage_window` that frames every `sources[].usage_count`.
@@ -289,25 +456,74 @@ impl Frontmatter {
     /// The `verified` events: who or what has confirmed this content.
     ///
     /// A bare `{ by, at }` mapping is returned as a one-element list, as the
-    /// spec requires.
+    /// spec requires. An event without both `by` and `at` is ignored. Events
+    /// older than `generated.at` are included: they are history a consumer may
+    /// show. Use [`Frontmatter::current_verifications`] for the ones that
+    /// count toward the trust tier, and [`Verification::list_from_value`] on
+    /// the raw value to see incomplete events too.
     pub fn verified(&self) -> Vec<Verification> {
         self.map
             .get("verified")
-            .map(Verification::list_from_value)
-            .unwrap_or_default()
+            .map_or_else(Vec::new, Verification::list_from_value)
+            .into_iter()
+            .filter(Verification::is_complete)
+            .collect()
     }
 
-    /// The verification with the latest parseable `at`.
+    /// The verification events that are **current**: at or after
+    /// `generated.at`, or all valid events when the concept records no such
+    /// time.
+    #[must_use]
+    pub fn current_verifications(&self) -> Vec<Verification> {
+        let changed_at = self.trust_baseline();
+        self.verified()
+            .into_iter()
+            .filter(|event| event.is_current(changed_at.as_ref()))
+            .collect()
+    }
+
+    /// `true` when the concept has valid verification events but none of them
+    /// is current, so its content changed after the last check.
+    ///
+    /// A consumer may show such a concept as "verified before the last
+    /// change". Its trust tier is `unverified`.
+    #[must_use]
+    pub fn verified_before_change(&self) -> bool {
+        let changed_at = self.trust_baseline();
+        let events = self.verified();
+        events.iter().any(Verification::is_valid)
+            && !events
+                .iter()
+                .any(|event| event.is_current(changed_at.as_ref()))
+    }
+
+    /// The verification with the latest parseable `at`, current or not.
     #[must_use]
     pub fn latest_verification(&self) -> Option<Verification> {
         let events = self.verified();
         trust::latest_verification(&events).cloned()
     }
 
-    /// The trust tier derived from `verified`.
+    /// The trust tier, derived from the current verification events.
     #[must_use]
     pub fn trust_tier(&self) -> TrustTier {
-        TrustTier::derive(&self.verified())
+        TrustTier::derive(&self.verified(), self.trust_baseline().as_ref())
+    }
+
+    /// The timestamp verification events are compared against to decide
+    /// whether they are current.
+    ///
+    /// That is `generated.at`. When `generated` is absent, a legacy v0.1
+    /// `timestamp` stands in for it if it parses; one that does not is not
+    /// used, since the fallback is optional and should not cost a concept its
+    /// tier.
+    fn trust_baseline(&self) -> Option<DateTimeField> {
+        if let Some(generated) = self.generated() {
+            return generated.at;
+        }
+        self.timestamp()
+            .map(|raw| DateTimeField::new(raw.into_owned()))
+            .filter(DateTimeField::is_valid)
     }
 
     /// When the content last meaningfully changed: `generated.at`,
@@ -332,31 +548,54 @@ impl Frontmatter {
     /// The lifecycle `status`. An absent key is [`Status::Stable`].
     #[must_use]
     pub fn status(&self) -> Status {
-        Status::parse(self.display_str("status").as_deref())
+        Status::parse(self.scalar_or_shape("status").as_deref())
+    }
+
+    /// `true` when the concept counts as current knowledge: its `status` is
+    /// `stable` (or absent) or `draft`. See [`Status::is_current`].
+    #[must_use]
+    pub fn is_current(&self) -> bool {
+        self.status().is_current()
+    }
+
+    /// The `superseded_by` path: the concept that replaces this one.
+    ///
+    /// It has a meaning only with `status: deprecated`, and this returns the
+    /// value whatever the status so that a validator can report the mismatch.
+    /// Resolve it with
+    /// [`Bundle::superseded_by`](crate::Bundle::superseded_by), which applies
+    /// that condition.
+    #[must_use]
+    pub fn superseded_by(&self) -> Option<Cow<'_, str>> {
+        self.display_str("superseded_by")
     }
 
     /// The `stale_after` timestamp, on and after which the content is stale.
+    /// A null or empty value is the same as an absent key.
     #[must_use]
     pub fn stale_after(&self) -> Option<DateTimeField> {
-        self.display_str("stale_after")
+        self.scalar_or_shape("stale_after")
             .map(|s| DateTimeField::new(s.into_owned()))
     }
 
-    /// Whether the concept is stale at `now`: `now >= stale_after`.
-    /// A concept with no (or an unreadable / offset-less) `stale_after` is never stale.
+    /// Whether the concept is within its review window at `now`.
+    ///
+    /// A `stale_after` that does not parse is [`Freshness::Malformed`], which
+    /// a consumer must not treat as fresh.
     #[must_use]
-    pub fn is_stale_at(&self, now: DateTime) -> bool {
-        let Some(stale_after) = self.stale_after() else {
-            return false;
-        };
-        if !stale_after.is_valid() {
-            return false;
-        }
-        trust::is_stale_at(stale_after.datetime, now)
+    pub fn freshness_at(&self, now: DateTime) -> Freshness {
+        trust::freshness_at(self.stale_after().as_ref(), now)
     }
 
-    /// Whether the concept is stale on `today`: `today >= stale_after`.
-    /// Evaluates staleness at midnight UTC on `today`.
+    /// Whether the concept must not be presented as fresh at `now`:
+    /// `now >= stale_after`, or `stale_after` is malformed. A concept with no
+    /// `stale_after` is never stale.
+    #[must_use]
+    pub fn is_stale_at(&self, now: DateTime) -> bool {
+        self.freshness_at(now).is_stale()
+    }
+
+    /// Whether the concept is stale on `today`, evaluated at midnight UTC.
     #[must_use]
     pub fn is_stale_on(&self, today: Date) -> bool {
         self.is_stale_at(today.to_utc_datetime())
@@ -376,11 +615,16 @@ impl Frontmatter {
     }
 
     /// The declared `parameters` an agent may fill.
+    ///
+    /// An entry without both `name` and `type` is ignored. Use
+    /// [`Parameter::list_from_value`] on the raw value to see such entries.
     pub fn parameters(&self) -> Vec<Parameter> {
         self.map
             .get("parameters")
-            .map(Parameter::list_from_value)
-            .unwrap_or_default()
+            .map_or_else(Vec::new, Parameter::list_from_value)
+            .into_iter()
+            .filter(Parameter::is_complete)
+            .collect()
     }
 
     /// The `computation` path, when the computation lives in a file rather than
@@ -400,29 +644,23 @@ impl Frontmatter {
         self.map.get("attester").and_then(Attester::from_value)
     }
 
-    /// The path-valued frontmatter fields present, as
-    /// `(field name, raw value)`.
+    /// The path fields present, as `(field name, raw value)`.
     ///
-    /// `sources[].resource` is deliberately excluded: it may be a scope
-    /// descriptor rather than a path. Use
-    /// [`Source::resource_kind`](crate::provenance::Source::resource_kind) to
-    /// filter those yourself.
+    /// These are the fields whose value is a path or a URI: `resource`,
+    /// `computation`, `executor.resource`, `attester.resource`,
+    /// `superseded_by`, and each `sources[N].resource` that is not a scope
+    /// descriptor. They all resolve with the same rules as a link; see
+    /// [`Bundle::resolve_path_field`](crate::Bundle::resolve_path_field).
     #[must_use]
-    pub fn path_fields(&self) -> Vec<(&'static str, String)> {
+    pub fn path_fields(&self) -> Vec<(String, String)> {
         let mut out = Vec::new();
-        let mut push = |name: &'static str, value: Option<String>| {
+        let mut push = |name: &str, value: Option<String>| {
             if let Some(v) = value.filter(|v| !v.trim().is_empty()) {
-                out.push((name, v));
+                out.push((name.to_string(), v));
             }
         };
-        push(
-            "resource",
-            self.resource().map(std::borrow::Cow::into_owned),
-        );
-        push(
-            "computation",
-            self.computation().map(std::borrow::Cow::into_owned),
-        );
+        push("resource", self.resource().map(Cow::into_owned));
+        push("computation", self.computation().map(Cow::into_owned));
         push(
             "executor.resource",
             self.executor().and_then(|e| e.resource),
@@ -431,7 +669,70 @@ impl Frontmatter {
             "attester.resource",
             self.attester().and_then(|a| a.resource),
         );
+        push("superseded_by", self.superseded_by().map(Cow::into_owned));
+        if let Some(value) = self.map.get("sources") {
+            // `N` is the position in the list as written, so that it names
+            // the same entry a reader of the file would count to.
+            for (i, item) in value.as_list().into_iter().enumerate() {
+                if let Some(source) = Source::from_value(item)
+                    && source.resource_kind() == crate::provenance::ResourceKind::Path
+                {
+                    push(&format!("sources[{i}].resource"), source.resource);
+                }
+            }
+        }
         out
+    }
+
+    /// Sets the value of a path field named as [`Frontmatter::path_fields`]
+    /// names it (`resource`, `computation`, `superseded_by`,
+    /// `executor.resource`, `attester.resource`, or `sources[N].resource`).
+    ///
+    /// Only the one scalar is replaced: every other key of the surrounding
+    /// mapping, extension keys included, is kept. Returns `false` when the
+    /// field is not present, in which case nothing changes.
+    pub fn set_path_field(&mut self, field: &str, value: &str) -> bool {
+        let new = Value::String(value.to_string());
+        match field {
+            "resource" | "computation" | "superseded_by" => {
+                if self.map.contains_key(field) {
+                    self.map.insert(field, new);
+                    return true;
+                }
+                false
+            }
+            "executor.resource" | "attester.resource" => {
+                let key = field.trim_end_matches(".resource");
+                match self.map.get_mut(key).and_then(Value::as_mapping_mut) {
+                    Some(map) if map.contains_key("resource") => {
+                        map.insert("resource", new);
+                        true
+                    }
+                    _ => false,
+                }
+            }
+            _ => {
+                let Some(index) = field
+                    .strip_prefix("sources[")
+                    .and_then(|rest| rest.strip_suffix("].resource"))
+                    .and_then(|n| n.parse::<usize>().ok())
+                else {
+                    return false;
+                };
+                let entry = match self.map.get_mut("sources") {
+                    Some(Value::Sequence(items)) => items.get_mut(index),
+                    Some(single @ Value::Mapping(_)) if index == 0 => Some(single),
+                    _ => None,
+                };
+                match entry.and_then(Value::as_mapping_mut) {
+                    Some(map) if map.contains_key("resource") => {
+                        map.insert("resource", new);
+                        true
+                    }
+                    _ => false,
+                }
+            }
+        }
     }
 
     /// Returns the keys present that are not well-known OKF fields, i.e. the
@@ -444,6 +745,16 @@ impl Frontmatter {
             .collect()
     }
 
+    /// Returns the extension keys that do not start with the reserved `x-`
+    /// prefix, and so could collide with a key a future OKF version defines.
+    #[must_use]
+    pub fn unprefixed_extension_keys(&self) -> Vec<&str> {
+        self.extension_keys()
+            .into_iter()
+            .filter(|key| !key.starts_with(EXTENSION_KEY_PREFIX))
+            .collect()
+    }
+
     /// Returns the legacy v0.1 keys present that v0.2 supersedes.
     #[must_use]
     pub fn legacy_keys(&self) -> Vec<&str> {
@@ -453,19 +764,44 @@ impl Frontmatter {
             .collect()
     }
 
+    /// As [`Frontmatter::display_str`], but a value of the wrong shape (a list
+    /// or a mapping where a scalar belongs) is returned as its YAML text
+    /// instead of being read as absent.
+    ///
+    /// For `status` and `stale_after`, absence has a meaning of its own
+    /// (stable, and no review date). A value that is present but unreadable
+    /// must not be mistaken for that: it is an unknown status, and a
+    /// `stale_after` that does not parse.
+    fn scalar_or_shape(&self, key: &str) -> Option<Cow<'_, str>> {
+        let value = self.map.get(key).filter(|value| !value.is_blank())?;
+        value.as_display_str().map_or_else(
+            || {
+                let text = value.to_yaml_string();
+                Some(Cow::Owned(
+                    text.split_whitespace().collect::<Vec<_>>().join(" "),
+                ))
+            },
+            |text| (!text.trim().is_empty()).then_some(text),
+        )
+    }
+
     /// Borrows the scalar at `key` as a display string, coercing non-string
     /// scalars (a `type: 42` deviation yields `Some("42")`) the way the
-    /// reference's `str(fm.get(...))` does. Returns `None` for absent keys
-    /// and non-scalar values. The common YAML-string case borrows without
-    /// allocation; only the coerced case owns.
+    /// reference's `str(fm.get(...))` does. Returns `None` for absent keys,
+    /// non-scalar values, and an empty string, which reads as an absent key.
+    /// The common YAML-string case borrows without allocation; only the
+    /// coerced case owns.
     fn display_str(&self, key: &str) -> Option<Cow<'_, str>> {
-        self.map.get(key).and_then(Value::as_display_str)
+        self.map
+            .get(key)
+            .and_then(Value::as_display_str)
+            .filter(|s| !s.trim().is_empty())
     }
 }
 
 impl From<Mapping> for Frontmatter {
     fn from(map: Mapping) -> Self {
-        Self { map }
+        Self::from_mapping(map)
     }
 }
 
@@ -484,12 +820,7 @@ impl fmt::Display for Frontmatter {
 impl std::str::FromStr for Frontmatter {
     type Err = DocumentError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let value = Value::parse(s)?;
-        match value {
-            Value::Null => Ok(Self::new()),
-            Value::Mapping(m) => Ok(Self::from_mapping(m)),
-            _ => Err(DocumentError::FrontmatterNotMapping),
-        }
+        Self::parse(s)
     }
 }
 

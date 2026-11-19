@@ -125,7 +125,7 @@ fn cli_links_inspects_internal_and_broken_links() {
 
     tmp.write(
         "links_bundle/index.md",
-        "---\nokf_version: \"0.2\"\n---\n\n# Index\n\n* [A](a.md)\n* [B](b.md)\n",
+        "---\nokf_version: \"0.3\"\n---\n\n# Index\n\n* [A](a.md)\n* [B](b.md)\n",
     );
     tmp.write(
         "links_bundle/a.md",
@@ -191,7 +191,7 @@ fn cli_links_short_flags_work() {
 
     tmp.write(
         "links_short/index.md",
-        "---\nokf_version: \"0.2\"\n---\n\n# Index\n\n* [A](a.md)\n",
+        "---\nokf_version: \"0.3\"\n---\n\n# Index\n\n* [A](a.md)\n",
     );
     tmp.write(
         "links_short/a.md",
@@ -278,7 +278,7 @@ fn cli_fmt_and_parse_accept_concept_id_without_md() {
         .unwrap();
     assert_eq!(parse_output.status.code(), Some(0));
     let parse_json = String::from_utf8_lossy(&parse_output.stdout);
-    assert!(parse_json.contains("\"okf_version\": \"0.2\""));
+    assert!(parse_json.contains("\"okf_version\": \"0.3\""));
     assert!(parse_json.contains("\"conformant\": true"));
 
     let fmt_output = okf()
@@ -287,7 +287,7 @@ fn cli_fmt_and_parse_accept_concept_id_without_md() {
         .unwrap();
     assert_eq!(fmt_output.status.code(), Some(0));
     let fmt_json = String::from_utf8_lossy(&fmt_output.stdout);
-    assert!(fmt_json.contains("\"okf_version\": \"0.2\""));
+    assert!(fmt_json.contains("\"okf_version\": \"0.3\""));
     assert!(fmt_json.contains("\"clean\": true"));
 }
 
@@ -296,7 +296,7 @@ fn cli_validate_and_lint_default_to_current_directory() {
     let tmp = TempDir::new();
     tmp.write(
         "index.md",
-        "---\nokf_version: \"0.2\"\n---\n\n# Root Bundle\n\n* [Overview](overview.md)\n",
+        "---\nokf_version: \"0.3\"\n---\n\n# Root Bundle\n\n* [Overview](overview.md)\n",
     );
     tmp.write(
         "overview.md",
@@ -332,4 +332,59 @@ fn cli_validate_and_lint_default_to_current_directory() {
         .output()
         .unwrap();
     assert_eq!(fmt_check_output.status.code(), Some(0));
+}
+
+#[test]
+fn cli_init_writes_the_bundle_metadata() {
+    let tmp = TempDir::new();
+    let bundle_path = tmp.path().join("described_bundle");
+    let status = okf()
+        .args([
+            "init",
+            bundle_path.to_str().unwrap(),
+            "--title",
+            "Acme: retail analytics",
+            "--description",
+            "Tables and metrics for Acme retail. Use it for sales questions.",
+            "--license",
+            "CC-BY-4.0",
+        ])
+        .status()
+        .unwrap();
+    assert_eq!(code(status), 0);
+
+    // The title needs quoting to stay a string, and the version always does.
+    let index = std::fs::read_to_string(bundle_path.join("index.md")).unwrap();
+    assert!(
+        index.starts_with(
+            "---\nokf_version: \"0.3\"\ntitle: \"Acme: retail analytics\"\ndescription: Tables and metrics for Acme retail. Use it for sales questions.\nlicense: CC-BY-4.0\n---\n\n# Concept\n"
+        ),
+        "{index}"
+    );
+
+    let info = okf()
+        .args(["info", bundle_path.to_str().unwrap(), "--json"])
+        .output()
+        .unwrap();
+    let info: serde_json::Value = serde_json::from_slice(&info.stdout).unwrap();
+    assert_eq!(info["okf_version"], "0.3");
+    assert_eq!(info["title"], "Acme: retail analytics");
+    assert_eq!(info["license"], "CC-BY-4.0");
+
+    // Regenerating the indexes keeps the metadata exactly as written.
+    let frontmatter_end = index.find("# Concept").unwrap();
+    assert_eq!(
+        code(
+            okf()
+                .args(["index", bundle_path.to_str().unwrap()])
+                .status()
+                .unwrap()
+        ),
+        0
+    );
+    let reindexed = std::fs::read_to_string(bundle_path.join("index.md")).unwrap();
+    assert!(
+        reindexed.starts_with(&index[..frontmatter_end]),
+        "{reindexed}"
+    );
 }

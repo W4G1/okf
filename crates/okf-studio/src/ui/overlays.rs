@@ -230,8 +230,7 @@ fn draw_diagnostics(frame: &mut Frame, app: &App, body: Rect, state: &Diagnostic
             || {
                 row.path.as_ref().map_or_else(String::new, |p| {
                     p.file_name()
-                        .map(|n| n.to_string_lossy().into_owned())
-                        .unwrap_or_default()
+                        .map_or_else(String::new, |n| n.to_string_lossy().into_owned())
                 })
             },
             ToString::to_string,
@@ -437,8 +436,7 @@ fn draw_outline(frame: &mut Frame, app: &App, body: Rect, state: &crate::app::Ou
         .snapshot
         .as_ref()
         .and_then(|s| s.meta(&state.id))
-        .map(|m| m.headings.clone())
-        .unwrap_or_default();
+        .map_or_else(Vec::new, |m| m.headings.clone());
     let height = u16::try_from(headings.len().min(16)).unwrap_or(0) + 2;
     let area = centered(body, 54, height.max(4));
     let block = Block::new()

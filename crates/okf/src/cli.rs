@@ -2,19 +2,19 @@
 //!
 //! Subcommands:
 //! ```text
-//!   init         [dir]      Initialize a new OKF bundle (--title, --bare, --json).
+//!   init         [dir]      Initialize a new OKF bundle (--title, --description, --license, --bare, --json).
 //!   new          <path>     Create a new concept document (--type, --title, --attested, --json).
-//!   mv           <a> <b>    Move or rename a concept and rewrite links across the bundle (--dry-run, --json).
+//!   mv           <a> <b>    Move or rename a concept and rewrite links across the bundle (--dry-run, --leave-stub, --json).
 //!   rm           <target>   Remove a concept from the bundle with link safety checks (--redirect-to, --unlink, --force, --json).
 //!   split        <a> <b>    Extract a section from a concept into a new concept and link to it (--section, --title, --json).
 //!   merge        <a> <b>    Consolidate one concept into another, merging sources and redirecting links (--json).
-//!   validate     [bundle]   Check a bundle against OKF v0.2 conformance (--fix, --json).
+//!   validate     [bundle]   Check a bundle against OKF v0.3 conformance (--fix, --json).
 //!   lint         [bundle]   Opinionated bundle health checks (--fix, --json).
-//!   fmt          [path]     Normalize document(s) by parse + re-serialize (-w writes, --check verifies).
+//!   fmt          [path]     Normalize document(s) into the canonical style (-w writes, --check verifies).
 //!   info         [bundle]   Print a summary of a bundle (--json).
 //!   trust        [bundle]   Report trust tier, status, and staleness per concept (--json).
 //!   links        [bundle]   Inspect internal, broken, and external cross-links (--json).
-//!   graph        [bundle]   Print the cross-link graph (--format text|mermaid|json, --json).
+//!   graph        [bundle]   Print the bundle graph (--format text|mermaid|json, --sources, --fields, --json).
 //!   computations [bundle]   List Attested Computation contracts (--json).
 //!   diff         <a> <b>    OKF-semantics diff between two bundles (--json).
 //!   index        [bundle]   (Re)generate every index.md in a bundle (--json).
@@ -25,11 +25,11 @@
 #![warn(clippy::pedantic, clippy::nursery)]
 
 use crate::{
-    Bundle, BundleInitOptions, ConceptId, ConceptOptions, Date, Document, DocumentError,
-    FixOptions, Link, MergeOptions, MoveOptions, RemoveOptions, RenameSectionOptions, Report,
-    Severity, SplitOptions, TrustTier, Value, bundle_diff, create_concept, init_bundle,
+    Bundle, BundleInitOptions, ConceptId, ConceptOptions, Date, DateTime, Document, DocumentError,
+    FixOptions, Freshness, Link, MergeOptions, MoveOptions, RemoveOptions, RenameSectionOptions,
+    Report, Severity, SplitOptions, TrustTier, Value, bundle_diff, create_concept, init_bundle,
     lint_bundle_at, merge_concepts, move_concept, remediate_bundle, remediate_file, remove_concept,
-    rename_section, split_concept, validate_bundle_at,
+    rename_section, split_concept, validate_bundle_at_instant,
 };
 use clap::builder::styling::Styles;
 use clap::{Args, Parser, Subcommand};
@@ -99,6 +99,49 @@ fn install_broken_pipe_hook() {
     });
 }
 
+/// The instant freshness is judged at: the start of the day given with
+/// `--today`, or now when no day was given.
+///
+/// A concept is stale when `now >= stale_after`, so without a pinned day the
+/// comparison uses the actual time. Pinning a day keeps a CI run
+/// reproducible.
+fn evaluation_time(today: Option<Date>) -> Option<DateTime> {
+    today
+        .map(|day| day.to_utc_datetime())
+        .or_else(DateTime::now_utc)
+}
+
+/// Finds the root of the bundle that holds `start`, a directory inside it.
+///
+/// A bundle-root `index.md` with frontmatter (the bundle metadata) identifies
+/// the root, so the nearest ancestor that has one wins. A bundle without
+/// metadata is recognized by its listings instead: the root is then the
+/// outermost directory of the unbroken run of ancestors that each have an
+/// `index.md`. Taking the nearest such directory would stop at a
+/// subdirectory's own listing and cut the rest of the bundle off.
+///
+/// The search runs on the absolute path, so that it reaches above the working
+/// directory, and the root comes back absolute.
+fn find_bundle_root(start: &Path) -> Option<PathBuf> {
+    let start = std::path::absolute(start).ok()?;
+    let has_index = |dir: &Path| dir.join("index.md").is_file();
+    let declares_root = |dir: &Path| {
+        std::fs::read_to_string(dir.join("index.md"))
+            .is_ok_and(|text| Document::has_frontmatter_block(&text))
+    };
+
+    let ancestors: Vec<&Path> = start.ancestors().collect();
+    if let Some(root) = ancestors.iter().find(|dir| declares_root(dir)) {
+        return Some(root.to_path_buf());
+    }
+    let nearest = ancestors.iter().position(|dir| has_index(dir))?;
+    ancestors[nearest..]
+        .iter()
+        .take_while(|dir| has_index(dir))
+        .last()
+        .map(|dir| dir.to_path_buf())
+}
+
 fn parse_date(raw: &str) -> Result<Date, String> {
     Date::parse(raw).ok_or_else(|| format!("--today is not a YYYY-MM-DD date: {raw}"))
 }
@@ -127,14 +170,14 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
-    /// Initialize a new OKF bundle (--title, --bare, --json)
+    /// Initialize a new OKF bundle (--title, --description, --license, --bare, --json)
     Init(InitArgs),
     /// Create a new concept document (--type, --title, --attested, --json)
     New(NewArgs),
-    /// Move or rename a concept and rewrite links across the bundle (--dry-run, --json)
+    /// Move or rename a concept and rewrite links and path fields across the bundle (--dry-run, --leave-stub, --json)
     #[command(visible_alias = "rename")]
     Mv(MvArgs),
-    /// Remove a concept from the bundle with link safety checks (--redirect-to, --unlink, --force, --json)
+    /// Remove a concept from the bundle with link and path-field safety checks (--redirect-to, --unlink, --force, --json)
     #[command(visible_aliases = ["delete", "remove"])]
     Rm(RmArgs),
     /// Extract a section from a concept into a new concept and link to it (--section, --title, --json)
@@ -142,11 +185,11 @@ pub enum Commands {
     /// Consolidate one concept into another, merging sources and redirecting links (--json)
     #[command(visible_alias = "merge-concepts")]
     Merge(MergeArgs),
-    /// Check a bundle against OKF v0.2 conformance (--fix, --json)
+    /// Check a bundle against OKF v0.3 conformance (--fix, --json)
     Validate(ValidateArgs),
     /// Opinionated bundle health checks (--fix, --json)
     Lint(LintArgs),
-    /// Normalize document(s) by parse + re-serialize (-w writes, --check verifies)
+    /// Normalize document(s) into the canonical style (-w writes, --check verifies)
     Fmt(FmtArgs),
     /// Summarize a bundle (concepts, types, trust, links, --json)
     Info(InfoArgs),
@@ -154,13 +197,13 @@ pub enum Commands {
     Trust(TrustArgs),
     /// Inspect internal, broken, and external cross-links (--json)
     Links(LinksArgs),
-    /// Print the cross-link graph (--format text|mermaid|json, --json)
+    /// Print the bundle graph (--format text|mermaid|json, --sources, --fields, --json)
     Graph(GraphArgs),
     /// List Attested Computation contracts (--json)
     Computations(ComputationsArgs),
     /// OKF-semantics diff between two bundles (--json)
     Diff(DiffArgs),
-    /// (Re)generate every index.md in the bundle (--json)
+    /// (Re)generate every index.md in the bundle, keeping the root bundle metadata (--json)
     Index(IndexArgs),
     /// Parse one concept document and print its structure (--json)
     Parse(ParseArgs),
@@ -175,9 +218,19 @@ pub struct InitArgs {
     #[arg(default_value = ".")]
     pub dir: PathBuf,
 
-    /// Title of the OKF bundle
+    /// Display name of the bundle, written to the bundle metadata
     #[arg(long, default_value = "OKF Bundle")]
     pub title: String,
+
+    /// One sentence about the scope of the bundle and when to use it;
+    /// agents read it to choose between bundles
+    #[arg(long)]
+    pub description: Option<String>,
+
+    /// License of the bundle content: an SPDX expression such as CC-BY-4.0,
+    /// or a path to a license file in the bundle
+    #[arg(long)]
+    pub license: Option<String>,
 
     /// Do not create a sample concept
     #[arg(long, visible_alias = "no-sample")]
@@ -388,6 +441,11 @@ pub struct GraphArgs {
     #[arg(long)]
     pub sources: bool,
 
+    /// Include every path field that names a concept (`superseded_by`,
+    /// `executor.resource`, `sources`, ...), not only links
+    #[arg(long, visible_alias = "path-fields")]
+    pub fields: bool,
+
     /// Output results as JSON (shorthand for --format json)
     #[arg(short, long)]
     pub json: bool,
@@ -506,6 +564,11 @@ pub struct MvArgs {
     /// Do not record the move in log.md
     #[arg(long)]
     pub no_log: bool,
+
+    /// Keep a short deprecated concept at the old path, with `superseded_by`
+    /// set to the new one, so stored references to the old path keep working
+    #[arg(long, visible_alias = "leave-redirect")]
+    pub leave_stub: bool,
 
     /// Author attribution for the log entry
     #[arg(long)]
@@ -700,7 +763,6 @@ pub struct StudioArgs {
 ///
 /// This is the whole CLI: the `okf` binary and the `cargo okf` subcommand
 /// (the `cargo-okf` crate) are both thin wrappers around it.
-#[must_use]
 pub fn run(args: &[String]) -> ExitCode {
     install_broken_pipe_hook();
 
@@ -800,19 +862,29 @@ fn load_target(raw_path: &Path) -> Result<LoadedTarget, CliError> {
     }
 
     if resolved_path.is_file() {
-        let mut cur = resolved_path.parent();
-        let mut enclosing_root = None;
-        while let Some(dir) = cur {
-            if dir.join("index.md").exists() {
-                enclosing_root = Some(dir.to_path_buf());
-                break;
-            }
-            cur = dir.parent();
-        }
+        let absolute =
+            std::path::absolute(&resolved_path).unwrap_or_else(|_| resolved_path.clone());
+        let enclosing_root = absolute.parent().and_then(find_bundle_root);
 
         if let Some(root) = enclosing_root {
-            let bundle = Bundle::load(&root).map_err(|e| CliError::no_input(e.to_string()))?;
-            let target_id = ConceptId::from_path(&root, &resolved_path).ok();
+            // Load from a path relative to the working directory when there
+            // is one, so that reported paths read the way they were given.
+            let shown_root = std::env::current_dir()
+                .ok()
+                .and_then(|cwd| root.strip_prefix(cwd).ok().map(Path::to_path_buf))
+                .map_or_else(
+                    || root.clone(),
+                    |relative| {
+                        if relative.as_os_str().is_empty() {
+                            PathBuf::from(".")
+                        } else {
+                            relative
+                        }
+                    },
+                );
+            let bundle =
+                Bundle::load(&shown_root).map_err(|e| CliError::no_input(e.to_string()))?;
+            let target_id = ConceptId::from_path(&root, &absolute).ok();
             let is_concept = target_id.as_ref().is_some_and(|id| bundle.contains(id));
             let concept_count = usize::from(is_concept);
             Ok(LoadedTarget {
@@ -898,8 +970,7 @@ fn cmd_validate(args: &ValidateArgs) -> Result<ExitCode, CliError> {
         target_id,
         concept_count,
     } = load_target(raw_path)?;
-    let today_date = args.today.or_else(Date::today_utc);
-    let full_report = validate_bundle_at(&bundle, today_date);
+    let full_report = validate_bundle_at_instant(&bundle, evaluation_time(args.today));
 
     let report = if let Some(target_file) = &target_path {
         let target_canon = target_file.canonicalize().ok();
@@ -1102,23 +1173,40 @@ fn cmd_lint(args: &LintArgs) -> Result<ExitCode, CliError> {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn cmd_info(args: &InfoArgs) -> Result<ExitCode, CliError> {
     let path = &args.bundle;
     let bundle = load(path)?;
-    let today_date = args.today.or_else(Date::today_utc);
+    let now = evaluation_time(args.today);
     let json = args.json || args.format.as_deref() == Some("json");
 
     if json {
-        print_info_json(&bundle, today_date);
+        print_info_json(&bundle, now);
         return Ok(ExitCode::SUCCESS);
     }
 
     println!("bundle:      {}", bundle.root().display());
+    let metadata = bundle.metadata();
+    if let Some(title) = &metadata.title {
+        println!("title:       {title}");
+    }
+    if let Some(description) = &metadata.description {
+        println!("description: {description}");
+    }
+    if let Some(license) = &metadata.license {
+        println!("license:     {license}");
+    }
     println!(
         "okf_version: {}",
         bundle.okf_version().unwrap_or("(undeclared)")
     );
     println!("concepts:    {}", bundle.len());
+    if !bundle.non_concepts().is_empty() {
+        println!(
+            "other .md:   {} (no frontmatter or no `type`; not concepts)",
+            bundle.non_concepts().len()
+        );
+    }
     println!("index.md:    {}", bundle.index_files().len());
     println!("log.md:      {}", bundle.log_files().len());
 
@@ -1148,10 +1236,26 @@ fn cmd_info(args: &InfoArgs) -> Result<ExitCode, CliError> {
     for (status, n) in &by_status {
         println!("  {n:>4}  {status}");
     }
+    let not_current = bundle.concepts().iter().filter(|c| !c.is_current()).count();
+    if not_current > 0 {
+        println!("  {not_current:>4}  not current (deprecated or unknown status)");
+    }
 
-    if let Some(today) = today_date {
-        let stale = bundle.stale_on(today);
-        println!("\nstale on {today}: {} concept(s)", stale.len());
+    if let Some(now) = now {
+        let stale = bundle.stale_at(now);
+        let today = now.utc_date();
+        let malformed = stale
+            .iter()
+            .filter(|c| c.freshness_at(now) == Freshness::Malformed)
+            .count();
+        if malformed > 0 {
+            println!(
+                "\nstale on {today}: {} concept(s) ({malformed} with a malformed `stale_after`)",
+                stale.len()
+            );
+        } else {
+            println!("\nstale on {today}: {} concept(s)", stale.len());
+        }
     }
 
     let with_sources = bundle
@@ -1168,7 +1272,14 @@ fn cmd_info(args: &InfoArgs) -> Result<ExitCode, CliError> {
         "\nsources:     {with_sources} concept(s) record provenance; \
          {derivation_edges} derivation edge(s) inside the bundle"
     );
-    println!("computations: {}", bundle.attested_computations().count());
+    let attestable = bundle
+        .attested_computations()
+        .filter(|c| bundle.is_attestable(&c.id))
+        .count();
+    println!(
+        "computations: {} ({attestable} attestable)",
+        bundle.attested_computations().count()
+    );
 
     let broken = bundle.broken_links();
     let total_links: usize = bundle
@@ -1198,27 +1309,40 @@ fn cmd_info(args: &InfoArgs) -> Result<ExitCode, CliError> {
 fn cmd_trust(args: &TrustArgs) -> Result<ExitCode, CliError> {
     let path = &args.bundle;
     let bundle = load(path)?;
-    let today_date = args.today.or_else(Date::today_utc);
+    let now = evaluation_time(args.today);
     let json = args.json || args.format.as_deref() == Some("json");
 
     if json {
-        print_trust_json(&bundle, today_date);
+        print_trust_json(&bundle, now);
         return Ok(ExitCode::SUCCESS);
     }
 
     for c in bundle.concepts() {
         let fm = &c.document.frontmatter;
-        let stale = match today_date {
-            Some(t) if c.is_stale_on(t) => " STALE",
+        let freshness = now.map(|now| c.freshness_at(now));
+        let stale = match freshness {
+            Some(Freshness::Stale) => " STALE",
+            Some(Freshness::Malformed) => " STALE (malformed stale_after)",
             _ => "",
         };
         println!("{} [{}] {}{stale}", c.id, c.status(), c.trust_tier());
 
+        if let Some(replacement) = bundle.superseded_by(&c.id) {
+            println!("  superseded_by: {replacement}");
+        }
         if let Some(generated) = fm.generated() {
             println!("  generated: {generated}");
         }
+        // Only a verification at or after the last change counts toward the
+        // tier. An earlier one is history.
+        let changed_at = fm.generated().and_then(|generated| generated.at);
         for verification in fm.verified() {
-            println!("  verified:  {verification}");
+            let note = if verification.is_current(changed_at.as_ref()) {
+                ""
+            } else {
+                " (before the last change)"
+            };
+            println!("  verified:  {verification}{note}");
         }
         if let Some(stale_after) = fm.stale_after() {
             println!("  stale_after: {stale_after}");
@@ -1265,6 +1389,14 @@ fn cmd_computations(args: &ComputationsArgs) -> Result<ExitCode, CliError> {
             contract.runtime.as_deref().unwrap_or("(missing)")
         );
         println!("  computation: {}", contract.computation);
+        println!(
+            "  attestable:  {}",
+            if bundle.is_attestable(&c.id) {
+                "yes"
+            } else {
+                "no (needs a runtime, an attester, and a computation that can be found)"
+            }
+        );
         if !contract.parameters.is_empty() {
             let params: Vec<String> = contract
                 .parameters
@@ -1354,15 +1486,56 @@ fn cmd_graph(args: &GraphArgs) -> Result<ExitCode, CliError> {
     } else {
         GraphFormat::Text
     };
-    let sources = args.sources;
+    let edges = if args.fields {
+        FieldEdges::All
+    } else if args.sources {
+        FieldEdges::Sources
+    } else {
+        FieldEdges::None
+    };
     let bundle = load(path)?;
 
     match format {
-        GraphFormat::Text => print_graph_text(&bundle, sources),
-        GraphFormat::Mermaid => print_graph_mermaid(&bundle, sources),
-        GraphFormat::Json => print_graph_json(&bundle, sources),
+        GraphFormat::Text => print_graph_text(&bundle, edges),
+        GraphFormat::Mermaid => print_graph_mermaid(&bundle, edges),
+        GraphFormat::Json => print_graph_json(&bundle, edges),
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// Which path-field edges a graph includes beside the links.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FieldEdges {
+    /// Links only.
+    None,
+    /// `sources[].resource` fields: the derivation graph.
+    Sources,
+    /// Every path field that names a concept.
+    All,
+}
+
+impl FieldEdges {
+    /// The path-field edges of a concept this selection includes, as
+    /// `(label, target)`.
+    fn of<'a>(self, bundle: &'a Bundle, id: &ConceptId) -> Vec<(&'a str, &'a ConceptId)> {
+        bundle
+            .path_edges_from(id)
+            .iter()
+            .filter(|edge| match self {
+                Self::None => false,
+                Self::Sources => edge.is_source(),
+                Self::All => true,
+            })
+            .map(|edge| {
+                let label = if edge.is_source() {
+                    "source"
+                } else {
+                    edge.field.as_str()
+                };
+                (label, &edge.target)
+            })
+            .collect()
+    }
 }
 
 fn cmd_parse(args: &ParseArgs) -> Result<ExitCode, CliError> {
@@ -1377,10 +1550,10 @@ fn cmd_parse(args: &ParseArgs) -> Result<ExitCode, CliError> {
     let text = std::fs::read_to_string(path).map_err(|e| CliError::no_input(e.to_string()))?;
     let doc = Document::parse(&text).map_err(|e| CliError::data(e.to_string()))?;
     let json = args.json || args.format.as_deref() == Some("json");
-    let today_date = args.today.or_else(Date::today_utc);
+    let now = evaluation_time(args.today);
 
     if json {
-        print_parse_json(&doc, &path.to_string_lossy(), today_date);
+        print_parse_json(&doc, &path.to_string_lossy(), now);
         return Ok(ExitCode::SUCCESS);
     }
 
@@ -1395,7 +1568,7 @@ fn cmd_parse(args: &ParseArgs) -> Result<ExitCode, CliError> {
     if !missing.is_empty() {
         println!("\nmissing recommended keys: {}", missing.join(", "));
     }
-    print_parse_trust(fm);
+    print_parse_trust(fm, now);
     print_parse_sources(fm);
     print_parse_attributions(&doc);
     print_parse_computation(&doc);
@@ -1552,6 +1725,8 @@ fn cmd_init(args: &InitArgs) -> Result<ExitCode, CliError> {
 
     let options = BundleInitOptions {
         title: title.clone(),
+        description: args.description.clone(),
+        license: args.license.clone(),
         create_sample: !bare,
         sample_name: sample_name.clone(),
         author,
@@ -1867,7 +2042,7 @@ fn section_reference_end(chars: &[char], start: usize) -> Option<usize> {
     Some(i)
 }
 
-fn print_info_json(bundle: &Bundle, today_date: Option<Date>) {
+fn print_info_json(bundle: &Bundle, now: Option<DateTime>) {
     let mut by_type: BTreeMap<String, usize> = BTreeMap::new();
     for c in bundle.concepts() {
         let t = c.type_().as_deref().unwrap_or("(none)").to_string();
@@ -1881,10 +2056,10 @@ fn print_info_json(bundle: &Bundle, today_date: Option<Date>) {
         *by_status.entry(c.status().to_string()).or_default() += 1;
     }
 
-    let (stale_count, stale_concepts) = today_date.map_or_else(
+    let (stale_count, stale_concepts) = now.map_or_else(
         || (0, Vec::new()),
-        |today| {
-            let stale = bundle.stale_on(today);
+        |now| {
+            let stale = bundle.stale_at(now);
             let ids: Vec<String> = stale.iter().map(|c| c.id.to_string()).collect();
             (stale.len(), ids)
         },
@@ -1919,10 +2094,27 @@ fn print_info_json(bundle: &Bundle, today_date: Option<Date>) {
         })
         .collect();
 
+    let metadata = bundle.metadata();
+    let non_concepts: Vec<serde_json::Value> = bundle
+        .non_concepts()
+        .iter()
+        .map(|file| {
+            serde_json::json!({
+                "path": file.path.to_string_lossy(),
+                "reason": file.reason.to_string(),
+            })
+        })
+        .collect();
+
     let val = serde_json::json!({
         "bundle": bundle.root().to_string_lossy(),
         "okf_version": bundle.okf_version(),
+        "title": metadata.title,
+        "description": metadata.description,
+        "license": metadata.license,
         "concepts_count": bundle.len(),
+        "not_current_count": bundle.concepts().iter().filter(|c| !c.is_current()).count(),
+        "non_concepts": non_concepts,
         "index_files": bundle.index_files().iter().map(|p| p.to_string_lossy()).collect::<Vec<_>>(),
         "log_files": bundle.log_files().iter().map(|p| p.to_string_lossy()).collect::<Vec<_>>(),
         "types": by_type,
@@ -1933,6 +2125,10 @@ fn print_info_json(bundle: &Bundle, today_date: Option<Date>) {
         "sources_count": with_sources,
         "derivation_edges_count": derivation_edges,
         "computations_count": bundle.attested_computations().count(),
+        "attestable_count": bundle
+            .attested_computations()
+            .filter(|c| bundle.is_attestable(&c.id))
+            .count(),
         "links": {
             "internal": total_links,
             "broken": broken.len(),
@@ -1944,7 +2140,7 @@ fn print_info_json(bundle: &Bundle, today_date: Option<Date>) {
     println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());
 }
 
-fn print_trust_json(bundle: &Bundle, today_date: Option<Date>) {
+fn print_trust_json(bundle: &Bundle, now: Option<DateTime>) {
     let mut counts: BTreeMap<String, usize> = BTreeMap::new();
     for c in bundle.concepts() {
         *counts.entry(c.trust_tier().to_string()).or_default() += 1;
@@ -1955,13 +2151,15 @@ fn print_trust_json(bundle: &Bundle, today_date: Option<Date>) {
         .iter()
         .map(|c| {
             let fm = &c.document.frontmatter;
-            let is_stale = today_date.is_some_and(|t| c.is_stale_on(t));
+            let is_stale = now.is_some_and(|now| c.is_stale_at(now));
+            let freshness = now.map(|now| c.freshness_at(now).to_string());
             let generated = fm.generated().map(|g| {
                 serde_json::json!({
                     "by": g.by.as_ref().map(ToString::to_string),
                     "at": g.at.as_ref().map(ToString::to_string),
                 })
             });
+            let changed_at = fm.generated().and_then(|g| g.at);
             let verified: Vec<serde_json::Value> = fm
                 .verified()
                 .iter()
@@ -1969,6 +2167,7 @@ fn print_trust_json(bundle: &Bundle, today_date: Option<Date>) {
                     serde_json::json!({
                         "by": v.by.as_ref().map(ToString::to_string),
                         "at": v.at.as_ref().map(ToString::to_string),
+                        "current": v.is_current(changed_at.as_ref()),
                     })
                 })
                 .collect();
@@ -1987,8 +2186,12 @@ fn print_trust_json(bundle: &Bundle, today_date: Option<Date>) {
             serde_json::json!({
                 "id": c.id.to_string(),
                 "status": c.status().to_string(),
+                "current": c.is_current(),
+                "superseded_by": bundle.superseded_by(&c.id).map(ToString::to_string),
                 "trust_tier": c.trust_tier().to_string(),
+                "verified_before_change": fm.verified_before_change(),
                 "stale": is_stale,
+                "freshness": freshness,
                 "stale_after": fm.stale_after().map(|d| d.to_string()),
                 "generated": generated,
                 "verified": verified,
@@ -2020,7 +2223,7 @@ fn print_computations_json(bundle: &Bundle) {
                     serde_json::json!({
                         "name": p.name,
                         "type": p.type_,
-                        "required": p.required,
+                        "required": p.is_required(),
                     })
                 })
                 .collect();
@@ -2046,6 +2249,7 @@ fn print_computations_json(bundle: &Bundle) {
                 "title": c.display_title(),
                 "runtime": contract.runtime,
                 "computation": contract.computation.to_string(),
+                "attestable": bundle.is_attestable(&c.id),
                 "parameters": parameters,
                 "executor": executor,
                 "attester": attester,
@@ -2064,15 +2268,17 @@ fn print_computations_json(bundle: &Bundle) {
     println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());
 }
 
-fn print_graph_text(bundle: &Bundle, sources: bool) {
+fn print_graph_text(bundle: &Bundle, edges: FieldEdges) {
     for c in bundle.concepts() {
-        let links = bundle.links_from(&c.id);
-        let derived: Vec<&crate::ConceptId> = if sources {
-            bundle.derived_from(&c.id)
-        } else {
-            Vec::new()
-        };
-        if links.is_empty() && derived.is_empty() {
+        // A link to an asset or to a file that is not a concept is valid,
+        // but it is not an edge between concepts.
+        let links: Vec<&crate::ResolvedLink> = bundle
+            .links_from(&c.id)
+            .iter()
+            .filter(|link| link.resolution != crate::LinkTarget::File)
+            .collect();
+        let fields = edges.of(bundle, &c.id);
+        if links.is_empty() && fields.is_empty() {
             continue;
         }
         println!("{}", c.id);
@@ -2080,22 +2286,30 @@ fn print_graph_text(bundle: &Bundle, sources: bool) {
             let mark = if link.exists { "->" } else { "-x" };
             println!("  {mark} {}", link.target);
         }
-        for target in derived {
-            println!("  ~> {target} (source)");
+        for (label, target) in fields {
+            println!("  ~> {target} ({label})");
         }
     }
 }
 
-fn print_graph_mermaid(bundle: &Bundle, sources: bool) {
+fn print_graph_mermaid(bundle: &Bundle, edges: FieldEdges) {
     println!("flowchart LR");
 
     let mut node_id: BTreeMap<String, String> = BTreeMap::new();
     let mut order: Vec<String> = Vec::new();
     let mut next: usize = 0;
 
+    let concept_links = |id: &ConceptId| -> Vec<&crate::ResolvedLink> {
+        bundle
+            .links_from(id)
+            .iter()
+            .filter(|link| link.resolution != crate::LinkTarget::File)
+            .collect()
+    };
+
     for c in bundle.concepts() {
         intern(&c.id.to_string(), &mut node_id, &mut order, &mut next);
-        for link in bundle.links_from(&c.id) {
+        for link in concept_links(&c.id) {
             intern(
                 &link.target.to_string(),
                 &mut node_id,
@@ -2111,7 +2325,7 @@ fn print_graph_mermaid(bundle: &Bundle, sources: bool) {
 
     for c in bundle.concepts() {
         let from = c.id.to_string();
-        for link in bundle.links_from(&c.id) {
+        for link in concept_links(&c.id) {
             let target = link.target.to_string();
             if link.exists {
                 println!("  {} --> {}", node_id[&from], node_id[&target]);
@@ -2119,11 +2333,9 @@ fn print_graph_mermaid(bundle: &Bundle, sources: bool) {
                 println!("  {} -.->|broken| {}", node_id[&from], node_id[&target]);
             }
         }
-        if sources {
-            for target in bundle.derived_from(&c.id) {
-                let target = target.to_string();
-                println!("  {} -.->|source| {}", node_id[&from], node_id[&target]);
-            }
+        for (label, target) in edges.of(bundle, &c.id) {
+            let target = target.to_string();
+            println!("  {} -.->|{label}| {}", node_id[&from], node_id[&target]);
         }
     }
 }
@@ -2153,7 +2365,7 @@ fn mermaid_label(s: &str) -> String {
         .replace(']', "&#93;")
 }
 
-fn print_graph_json(bundle: &Bundle, sources: bool) {
+fn print_graph_json(bundle: &Bundle, edges: FieldEdges) {
     let concepts: Vec<serde_json::Value> = bundle
         .concepts()
         .iter()
@@ -2165,16 +2377,32 @@ fn print_graph_json(bundle: &Bundle, sources: bool) {
                     serde_json::json!({
                         "target": l.target.to_string(),
                         "exists": l.exists,
+                        "resolution": link_resolution(l.resolution),
                         "text": l.text,
                         "raw": l.raw,
                     })
                 })
                 .collect();
-            let source_targets: Vec<String> = if sources {
+            let source_targets: Vec<String> = if edges == FieldEdges::None {
+                Vec::new()
+            } else {
                 bundle
                     .derived_from(&c.id)
                     .iter()
                     .map(ToString::to_string)
+                    .collect()
+            };
+            let fields: Vec<serde_json::Value> = if edges == FieldEdges::All {
+                bundle
+                    .path_edges_from(&c.id)
+                    .iter()
+                    .map(|edge| {
+                        serde_json::json!({
+                            "field": edge.field,
+                            "target": edge.target.to_string(),
+                            "raw": edge.raw,
+                        })
+                    })
                     .collect()
             } else {
                 Vec::new()
@@ -2184,6 +2412,7 @@ fn print_graph_json(bundle: &Bundle, sources: bool) {
                 "id": c.id.to_string(),
                 "links": links,
                 "sources": source_targets,
+                "path_fields": fields,
             })
         })
         .collect();
@@ -2196,9 +2425,18 @@ fn print_graph_json(bundle: &Bundle, sources: bool) {
     println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());
 }
 
-fn print_parse_json(doc: &Document, path: &str, today_date: Option<Date>) {
+/// The name of a link resolution in JSON output.
+const fn link_resolution(resolution: crate::LinkTarget) -> &'static str {
+    match resolution {
+        crate::LinkTarget::Concept => "concept",
+        crate::LinkTarget::File => "file",
+        crate::LinkTarget::Missing => "missing",
+    }
+}
+
+fn print_parse_json(doc: &Document, path: &str, now: Option<DateTime>) {
     let fm = &doc.frontmatter;
-    let is_stale = today_date.is_some_and(|t| fm.is_stale_on(t));
+    let is_stale = now.is_some_and(|now| fm.is_stale_at(now));
     let generated = fm.generated().map(|g| {
         serde_json::json!({
             "by": g.by.as_ref().map(ToString::to_string),
@@ -2245,6 +2483,9 @@ fn print_parse_json(doc: &Document, path: &str, today_date: Option<Date>) {
         serde_json::json!({
             "runtime": comp.runtime,
             "computation": comp.computation.to_string(),
+            // Whether a `computation` file exists is a question for the
+            // bundle; this is what the document alone can tell.
+            "attestable": comp.is_attestable(),
         })
     });
     let links: Vec<serde_json::Value> = doc
@@ -2263,14 +2504,19 @@ fn print_parse_json(doc: &Document, path: &str, today_date: Option<Date>) {
         "okf_version": crate::OKF_VERSION,
         "file": path,
         "conformant": doc.validate().is_ok(),
+        "is_concept": doc.is_concept(),
         "missing_recommended": doc.missing_recommended(),
         "type": fm.type_(),
         "title": fm.title(),
         "description": fm.description(),
         "tags": fm.tags(),
         "status": fm.status().to_string(),
+        "current": fm.is_current(),
+        "superseded_by": fm.superseded_by(),
         "trust_tier": fm.trust_tier().to_string(),
+        "verified_before_change": fm.verified_before_change(),
         "stale": is_stale,
+        "freshness": now.map(|now| fm.freshness_at(now).to_string()),
         "stale_after": fm.stale_after().map(|d| d.to_string()),
         "generated": generated,
         "verified": verified,
@@ -2285,19 +2531,29 @@ fn print_parse_json(doc: &Document, path: &str, today_date: Option<Date>) {
 }
 
 /// The `generated` and `verified` blocks, trust tier, and status.
-fn print_parse_trust(fm: &crate::Frontmatter) {
+fn print_parse_trust(fm: &crate::Frontmatter, now: Option<DateTime>) {
     println!("\ntrust:");
     println!("  tier:      {}", fm.trust_tier());
     println!("  status:    {}", fm.status());
+    if let Some(superseded_by) = fm.superseded_by() {
+        println!("  superseded_by: {superseded_by}");
+    }
     if let Some(generated) = fm.generated() {
         println!("  generated: {generated}");
     }
+    let changed_at = fm.generated().and_then(|generated| generated.at);
     for verification in fm.verified() {
-        println!("  verified:  {verification}");
+        let note = if verification.is_current(changed_at.as_ref()) {
+            ""
+        } else {
+            " (before the last change)"
+        };
+        println!("  verified:  {verification}{note}");
     }
     if let Some(stale_after) = fm.stale_after() {
-        let note = match Date::today_utc() {
-            Some(t) if fm.is_stale_on(t) => " (stale)",
+        let note = match now.map(|now| fm.freshness_at(now)) {
+            Some(Freshness::Stale) => " (stale)",
+            Some(Freshness::Malformed) => " (malformed: never treated as fresh)",
             _ => "",
         };
         println!("  stale_after: {stale_after}{note}");
@@ -2319,8 +2575,7 @@ fn print_parse_sources(fm: &crate::Frontmatter) {
         if let Some(count) = source.usage_count {
             let window = source
                 .effective_usage_window(fm.usage_window().as_ref())
-                .map(|w| format!(" over {w}"))
-                .unwrap_or_default();
+                .map_or_else(String::new, |w| format!(" over {w}"));
             println!("    usage_count: {count}{window}");
         }
         if let Some(last_modified) = &source.last_modified {
@@ -2397,7 +2652,7 @@ fn print_parse_links(doc: &Document) {
 
 /// Prints a frontmatter block one key per line.
 ///
-/// v0.2 frontmatter nests (`generated`, `sources`, `executor`), so collection
+/// Frontmatter nests (`generated`, `sources`, `executor`), so collection
 /// values are printed as an indented block under their key rather than run
 /// together on the key's line.
 fn print_frontmatter(fm: &crate::Frontmatter) {
@@ -2421,13 +2676,25 @@ fn scalar(value: &Value) -> String {
     value.to_yaml_string().trim_end().to_string()
 }
 
+/// Formats one markdown file of a bundle into the canonical style.
+///
+/// A concept and an `index.md` have their frontmatter re-emitted in block
+/// style. A `log.md`, and a markdown file that is not a concept (no
+/// frontmatter, or no `type`), are returned unchanged: a README or a skill
+/// file is not knowledge the bundle carries, and its layout is its author's.
 fn format_markdown_file(file_path: &Path, text: &str) -> Result<String, DocumentError> {
-    if file_path.file_name().and_then(|n| n.to_str()) == Some("log.md") {
-        Ok(crate::log::Log::parse(text).to_markdown())
-    } else {
-        let doc = Document::parse(text)?;
-        Ok(doc.serialize())
+    let name = file_path.file_name().and_then(|n| n.to_str());
+    // A log is prose under date headings. It has no canonical layout to
+    // normalize to, and re-rendering it from its parsed entries would drop
+    // whatever is not a plain one-line entry.
+    if name == Some("log.md") {
+        return Ok(text.to_string());
     }
+    let doc = Document::parse(text)?;
+    if name != Some("index.md") && !doc.is_concept() {
+        return Ok(text.to_string());
+    }
+    Ok(doc.serialize_canonical())
 }
 
 #[allow(clippy::too_many_lines)]
@@ -2529,20 +2796,22 @@ fn cmd_fmt_check(target_path: &Path, path_str: &str, json: bool) -> Result<ExitC
     }
 }
 
+/// The markdown files of the bundle under `dir`, for `okf fmt`.
+///
+/// The bundle's own walk is used: dot-paths are skipped, and a symbolic link
+/// that leads out of the bundle root is not followed, so `fmt -w` never
+/// writes to a file outside the bundle. Build output and installed packages
+/// are left out too.
 fn collect_markdown_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), CliError> {
-    let entries = std::fs::read_dir(dir).map_err(|e| CliError::no_input(e.to_string()))?;
-    for entry in entries {
-        let entry = entry.map_err(|e| CliError::no_input(e.to_string()))?;
-        let path = entry.path();
-        if path.is_dir() {
-            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            if !name.starts_with('.') && name != "target" && name != "node_modules" {
-                collect_markdown_files(&path, files)?;
-            }
-        } else if path.extension().and_then(|e| e.to_str()) == Some("md") {
-            files.push(path);
-        }
-    }
+    let found =
+        crate::bundle::markdown_files(dir).map_err(|e| CliError::no_input(e.to_string()))?;
+    files.extend(found.into_iter().filter(|path| {
+        !path.strip_prefix(dir).is_ok_and(|relative| {
+            relative
+                .components()
+                .any(|c| matches!(c.as_os_str().to_str(), Some("target" | "node_modules")))
+        })
+    }));
     Ok(())
 }
 
@@ -2591,10 +2860,13 @@ fn print_links_text(
         println!("{}", c.id);
         for link in links {
             total_internal += 1;
-            if link.exists {
-                println!("  -> {} [ok]", link.target);
-            } else {
-                println!("  -x {} [broken: {}]", link.target, link.raw);
+            match link.resolution {
+                crate::LinkTarget::Concept => println!("  -> {} [ok]", link.target),
+                // Valid, but not a concept: an asset, an index, a README.
+                crate::LinkTarget::File => println!("  -> {} [file]", link.raw),
+                crate::LinkTarget::Missing => {
+                    println!("  -x {} [broken: {}]", link.target, link.raw);
+                }
             }
         }
         if show_external {
@@ -2644,18 +2916,19 @@ fn print_links_json(
         .iter()
         .filter_map(|c| {
             let links = bundle.links_from(&c.id);
-            if broken_only && !links.iter().any(|l| !l.exists) {
+            if broken_only && !links.iter().any(crate::ResolvedLink::is_broken) {
                 return None;
             }
 
             let mut link_values: Vec<serde_json::Value> = links
                 .iter()
-                .filter(|l| !broken_only || !l.exists)
+                .filter(|l| !broken_only || l.is_broken())
                 .map(|l| {
                     serde_json::json!({
                         "target": l.target.to_string(),
                         "raw": l.raw,
                         "exists": l.exists,
+                        "resolution": link_resolution(l.resolution),
                         "kind": "internal",
                         "text": l.text,
                     })
@@ -2821,19 +3094,17 @@ fn load_refactor_bundle(bundle_arg: &Path, source_arg: &str) -> Result<Bundle, C
     {
         return Ok(b);
     }
+    // No bundle at `--bundle`: the source may be given as a path into one.
     let p = Path::new(source_arg);
-    let mut cur = if p.is_file() || p.extension().is_some() {
+    let start = if p.is_file() || p.extension().is_some() {
         p.parent()
     } else {
         Some(p)
     };
-    while let Some(dir) = cur {
-        if dir.join("index.md").exists()
-            && let Ok(b) = Bundle::load(dir)
-        {
-            return Ok(b);
-        }
-        cur = dir.parent();
+    if let Some(root) = start.and_then(find_bundle_root)
+        && let Ok(b) = Bundle::load(root)
+    {
+        return Ok(b);
     }
     Bundle::load(bundle_arg).map_err(|e| CliError::no_input(e.to_string()))
 }
@@ -2952,6 +3223,7 @@ fn cmd_mv(args: &MvArgs) -> Result<ExitCode, CliError> {
         update_index: !args.no_index,
         update_log: !args.no_log,
         author: args.author.clone(),
+        leave_stub: args.leave_stub,
     };
 
     let report = move_concept(&bundle, &source, &target, &options)
@@ -2974,6 +3246,7 @@ fn cmd_mv(args: &MvArgs) -> Result<ExitCode, CliError> {
             "rewritten_incoming_links": report.rewritten_incoming_links,
             "rebased_outgoing_links": report.rebased_outgoing_links,
             "rebased_frontmatter_paths": report.rebased_frontmatter_paths,
+            "left_stub": report.left_stub,
             "affected_files": affected,
         });
         println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());

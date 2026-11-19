@@ -12,7 +12,7 @@ fn test_move_concept_preserves_all_section_hashtag_formats() {
     let tmp = TempDir::new();
     tmp.write(
         "index.md",
-        "---\nokf_version: \"0.2\"\n---\n\n# Test Bundle\n",
+        "---\nokf_version: \"0.3\"\n---\n\n# Test Bundle\n",
     );
     tmp.write(
         "auth/token.md",
@@ -55,7 +55,7 @@ fn test_move_concept_preserves_all_section_hashtag_formats() {
 #[test]
 fn test_in_document_anchors_inside_moved_concept_are_unmodified() {
     let tmp = TempDir::new();
-    tmp.write("index.md", "---\nokf_version: \"0.2\"\n---\n\n# Bundle\n");
+    tmp.write("index.md", "---\nokf_version: \"0.3\"\n---\n\n# Bundle\n");
     tmp.write(
         "auth/token.md",
         "---\ntype: Concept\ntitle: Auth Token\n---\n\n# Auth Token\n\nSee [Internal Expiration](#expiration) within this document.\n\n## Expiration\nDetails.\n",

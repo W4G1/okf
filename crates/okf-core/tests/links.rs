@@ -133,25 +133,95 @@ fn any_uri_scheme_is_external() {
 }
 
 #[test]
-fn field_paths_try_both_readings_of_a_relative_target() {
-    // One reading resolves a relative path against the concept; the `references/`
-    // convention is written from the bundle root. Both are offered, in that
-    // order.
+fn path_fields_resolve_like_links() {
+    use okf_core::links::{field_path_candidates, legacy_root_path_candidates, path_candidates_in};
+
+    // A value without a leading `/` resolves from the directory of its file.
     let from = ConceptId::parse("computations/revenue").unwrap();
     assert_eq!(
-        okf_core::links::field_path_candidates("references/skills/run-on-bq.md", &from),
-        vec![
-            "computations/references/skills/run-on-bq.md".to_string(),
-            "references/skills/run-on-bq.md".to_string(),
-        ]
+        field_path_candidates("references/skills/run-on-bq.md", &from),
+        vec!["computations/references/skills/run-on-bq.md".to_string()]
     );
-    // An absolute path has exactly one reading.
     assert_eq!(
-        okf_core::links::field_path_candidates("/references/x.py", &from),
+        field_path_candidates("../references/x.py", &from),
         vec!["references/x.py".to_string()]
     );
-    // A URI has none.
-    assert!(okf_core::links::field_path_candidates("https://example.com/x", &from).is_empty());
+    // A value that starts with `/` resolves from the bundle root.
+    assert_eq!(
+        field_path_candidates("/references/x.py", &from),
+        vec!["references/x.py".to_string()]
+    );
+    // A URL has nothing in the bundle to resolve, and neither does a path
+    // that leaves the bundle root: it is external.
+    assert!(field_path_candidates("https://example.com/x", &from).is_empty());
+    assert!(field_path_candidates("bigquery:acme.sales.orders", &from).is_empty());
+    assert!(field_path_candidates("../../etc/passwd", &from).is_empty());
+    assert!(field_path_candidates("/../outside.md", &from).is_empty());
+
+    // Values are URI references: the fragment and query are not part of the
+    // path, and a percent-encoded value is offered decoded as well.
+    assert_eq!(
+        field_path_candidates("/metrics/gross-margin.md#definition", &from),
+        vec!["metrics/gross-margin.md".to_string()]
+    );
+    assert_eq!(
+        field_path_candidates("/a/b.md?plain=1#x", &from),
+        vec!["a/b.md".to_string()]
+    );
+    assert_eq!(
+        field_path_candidates("/tables/my%20notes.md", &from),
+        vec![
+            "tables/my%20notes.md".to_string(),
+            "tables/my notes.md".to_string()
+        ]
+    );
+
+    // A value in a file that is not a concept resolves from that file's
+    // directory, which is the bundle root for the root index.md.
+    assert_eq!(
+        path_candidates_in("LICENSE.md", &[]),
+        vec!["LICENSE.md".to_string()]
+    );
+
+    // The reading earlier versions used: a bare path from the bundle root.
+    // It is a fallback for older bundles only, and never for a rooted path
+    // or a URL.
+    assert_eq!(
+        legacy_root_path_candidates("references/skills/run-on-bq.md"),
+        vec!["references/skills/run-on-bq.md".to_string()]
+    );
+    assert!(legacy_root_path_candidates("/references/x.py").is_empty());
+    assert!(legacy_root_path_candidates("https://example.com/x").is_empty());
+    assert!(legacy_root_path_candidates("../x.py").is_empty());
+}
+
+#[test]
+fn reference_style_links_are_links() {
+    let body = "\
+See the [customers table][customers], the [orders] table, and [Returns][].
+A [missing] label is plain text, [[wikilinks]] are not links, and neither is
+the footnote[^note].
+
+[customers]: /tables/customers.md \"Customers\"
+[Orders]: ../tables/orders.md
+[returns]: <../tables/customer returns.md>
+[^note]: Not a link definition.
+";
+    let links = okf_core::links::extract_links(body);
+    let found: Vec<(&str, &str)> = links
+        .iter()
+        .map(|link| (link.text.as_str(), link.target.as_str()))
+        .collect();
+    assert_eq!(
+        found,
+        vec![
+            ("customers table", "/tables/customers.md"),
+            ("orders", "../tables/orders.md"),
+            ("Returns", "../tables/customer returns.md"),
+        ]
+    );
+    assert_eq!(links[0].kind, LinkKind::Absolute);
+    assert_eq!(links[1].kind, LinkKind::Relative);
 }
 
 #[test]
@@ -282,4 +352,16 @@ fn a_target_with_no_escapes_has_a_single_reading() {
     // A stray `%` is not an escape.
     let link = extract_links("[x](/tables/100%.md)").remove(0);
     assert_eq!(link.resolve_all(&source).len(), 1);
+}
+
+#[test]
+fn a_reference_definition_is_read_as_written() {
+    // Inline code is blanked before links are scanned, so that a link shown
+    // as code is not a link. A definition line is read from the original
+    // text: its title may hold backticks, and its target must not be blanked.
+    let body = "See [the table][t] and [the query][q].\n\n\
+                [t]: /tables/orders.md \"The `orders` table\"\n\
+                [q]: </queries/top customers.md> 'Uses `orders`'\n";
+    let targets: Vec<String> = extract_links(body).into_iter().map(|l| l.target).collect();
+    assert_eq!(targets, ["/tables/orders.md", "/queries/top customers.md"]);
 }

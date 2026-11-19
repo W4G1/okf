@@ -213,7 +213,7 @@ description: Monthly recurring revenue.
 status: stable
 generated:
   by: human:alice
-  at: '2026-01-01T00:00:00Z'
+  at: \"2026-01-01T00:00:00Z\"
 ---
 
 # MRR
@@ -357,6 +357,16 @@ Legacy concept content with footnote [^1].
         .output()
         .unwrap();
     assert!(lint_fix.status.success());
+
+    // A fix rewrites only what it fixes: the valid `stale_after: '2026-12-31'`
+    // above keeps its quotes. Normalizing the layout is what `okf fmt` is for.
+    let fixed = std::fs::read_to_string(&messy_path).unwrap();
+    assert!(fixed.contains("stale_after: '2026-12-31'\n"), "{fixed}");
+    let fmt = okf()
+        .args(["fmt", bundle_path.to_str().unwrap(), "-w"])
+        .output()
+        .unwrap();
+    assert!(fmt.status.success());
 
     // Re-index bundle
     okf()

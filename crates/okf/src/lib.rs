@@ -1,7 +1,7 @@
 //! # okf: the Open Knowledge Format, in pure Rust
 //!
 //! A pure Rust implementation of the [Open Knowledge Format (OKF)
-//! v0.2][spec], Google's open, human- and agent-friendly format for
+//! v0.3][spec], an open, human- and agent-friendly format for
 //! representing knowledge as a directory of markdown files with YAML
 //! frontmatter.
 //!
@@ -18,7 +18,7 @@
 //!
 //! let report = validate_bundle(&bundle);
 //! if report.is_conformant() {
-//!     println!("conformant OKF v0.2 bundle");
+//!     println!("conformant OKF v0.3 bundle");
 //! }
 //! # Ok::<(), okf::BundleError>(())
 //! ```
@@ -28,7 +28,7 @@
 //! [`validate_bundle`] conformance checker, and [`lint_bundle`] multi-language
 //! syntax and hygiene checks.
 //!
-//! [spec]: https://github.com/GoogleCloudPlatform/open-knowledge-format/blob/main/SPEC.md
+//! [spec]: https://github.com/open-knowledge-format/open-knowledge-format/blob/main/SPEC.md
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]

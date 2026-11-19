@@ -24,6 +24,20 @@
 
 use std::fmt;
 
+/// `true` when source text is a template rather than plain source: it holds
+/// `{{ ... }}` or `{% ... %}` markers, as a dbt model or a Looker query does.
+///
+/// A template is expanded by its runtime before anything parses it, so the
+/// text is not valid in the language its fence names, and checking it against
+/// that grammar would report a perfectly good dbt computation as broken. The
+/// attester compares the *compiled* artifact, which is where a real mistake
+/// shows up. Callers skip [`check_syntax`] for such text.
+#[must_use]
+pub fn is_templated(source: &str) -> bool {
+    (source.contains("{{") && source.contains("}}"))
+        || (source.contains("{%") && source.contains("%}"))
+}
+
 /// Supported languages for static syntax checking.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Language {

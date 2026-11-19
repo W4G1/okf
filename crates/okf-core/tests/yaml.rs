@@ -120,7 +120,7 @@ fn flow_mapping() {
 
 #[test]
 fn colons_inside_flow_scalars_are_content() {
-    // OKF v0.2 frontmatter depends on this: `human:walter` and an ISO-8601
+    // OKF frontmatter depends on this: `human:walter` and an ISO-8601
     // time both carry colons that do not separate a key from a value.
     let v =
         roundtrip("generated: { by: reference_agent/gemini-2.5-pro, at: 2026-06-20T22:53:05Z }\n");
@@ -430,5 +430,194 @@ fn iso_datetimes_emit_quoted_but_bare_dates_stay_plain() {
     assert_eq!(
         back.get("stale_after").unwrap().as_str(),
         Some("2026-12-31")
+    );
+}
+
+// ---------------------------------------------------------------------------
+// YAML that PyYAML's `safe_dump` writes, and so that reference-produced
+// bundles contain. A conformance check that cannot read it would call a valid
+// bundle non-conformant.
+// ---------------------------------------------------------------------------
+
+fn map(yaml: &str) -> Value {
+    Value::parse(yaml).unwrap_or_else(|e| panic!("{e}\n---\n{yaml}"))
+}
+
+fn get<'a>(value: &'a Value, key: &str) -> &'a Value {
+    value.as_mapping().unwrap().get(key).unwrap()
+}
+
+#[test]
+fn a_wrapped_plain_scalar_may_continue_with_a_dash() {
+    // The wrap happened to fall before " - ". Under a scalar nothing can
+    // nest, so the line is text.
+    let value = map(
+        "description: recognized revenue for the group\n  - per the policy of record\ntitle: Revenue\n",
+    );
+    assert_eq!(
+        get(&value, "description").as_str(),
+        Some("recognized revenue for the group - per the policy of record")
+    );
+    assert_eq!(get(&value, "title").as_str(), Some("Revenue"));
+    // A sequence under a key with no value of its own is still a sequence.
+    let value = map("tags:\n  - a\n  - b\n");
+    assert_eq!(get(&value, "tags").as_sequence().unwrap().len(), 2);
+}
+
+#[test]
+fn a_blank_line_inside_a_quoted_scalar_is_a_newline() {
+    // How `safe_dump` writes any string that contains a line break.
+    let value = map("description: 'Recognized revenue.\n\n  See the finance policy.'\nnext: 1\n");
+    assert_eq!(
+        get(&value, "description").as_str(),
+        Some("Recognized revenue.\nSee the finance policy.")
+    );
+    assert_eq!(get(&value, "next").as_int(), Some(1));
+    let value = map("d: \"one\n\n\n  two\n  three\"\n");
+    assert_eq!(get(&value, "d").as_str(), Some("one\n\ntwo three"));
+}
+
+#[test]
+fn a_backslash_escapes_the_line_break_in_a_double_quoted_scalar() {
+    let value = map(
+        "description: \"Recognized revenue.\\tPer the finance definition, booked\\\n  \\ rows only.\"\ntitle: T\n",
+    );
+    assert_eq!(
+        get(&value, "description").as_str(),
+        Some("Recognized revenue.\tPer the finance definition, booked rows only.")
+    );
+    // The rest of the escapes YAML defines.
+    let value = map(r#"e: "\x41\u00e9\U0001F600\e\a\v\_\N\ ""#);
+    assert_eq!(
+        get(&value, "e").as_str(),
+        Some("A\u{e9}\u{1F600}\u{1b}\u{7}\u{b}\u{a0}\u{85} ")
+    );
+}
+
+#[test]
+fn flow_collections_may_span_lines_and_sequences_may_nest_inline() {
+    let value = map(
+        "tags: [finance,\n  revenue,\n  \"a ] b\"]\ngenerated: {\n  by: human:alice,\n  at: 2026-06-20T14:00:00Z\n}\nlast: x\n",
+    );
+    let tags = get(&value, "tags").as_sequence().unwrap();
+    assert_eq!(tags.len(), 3);
+    assert_eq!(tags[2].as_str(), Some("a ] b"));
+    assert_eq!(
+        get(get(&value, "generated"), "by").as_str(),
+        Some("human:alice")
+    );
+    assert_eq!(get(&value, "last").as_str(), Some("x"));
+
+    // What the emitter writes for a list of lists reads back.
+    let nested = Value::parse("x: [[0, 10], [20, 30], [solo]]").unwrap();
+    let emitted = nested.to_yaml_string();
+    assert_eq!(Value::parse(&emitted).unwrap(), nested, "{emitted}");
+    let value = map("x:\n  - - 0\n    - 10\n  - - a: 1\n      b: 2\n");
+    let rows = get(&value, "x").as_sequence().unwrap();
+    assert_eq!(rows[0].as_sequence().unwrap().len(), 2);
+    assert_eq!(
+        rows[1].as_sequence().unwrap()[0]
+            .as_mapping()
+            .unwrap()
+            .len(),
+        2
+    );
+}
+
+#[test]
+fn text_that_is_not_yaml_is_an_error_not_a_guess() {
+    // `: ` inside a plain scalar starts a mapping in YAML. Other readers
+    // refuse the document, so reading it as text would hide that.
+    for invalid in [
+        "title: Incident response: data freshness alert",
+        "title: Notes:",
+        // A block scalar header takes indicators only. Reading this as an
+        // empty block would lose the text.
+        "description: >90% of orders ship in two days",
+        "description: |text",
+        // Anchors, aliases, and tags are not implemented.
+        "title: *emphasis* first",
+        "title: &copy 2026",
+        "title: !important",
+        "tags: [*a, b]",
+    ] {
+        assert!(Value::parse(invalid).is_err(), "accepted: {invalid}");
+    }
+    // The same text, quoted, is fine. So is a colon that is not followed by
+    // a space, and a real block scalar with its indicators.
+    let value = map(
+        "title: \"Incident response: data freshness alert\"\nat: 2026-06-20T14:00:00Z\nby: human:alice\nresource: bigquery:acme.sales\nd: >-\n  folded\n  text\ne: |2\n    kept indent\n",
+    );
+    assert_eq!(get(&value, "by").as_str(), Some("human:alice"));
+    assert_eq!(get(&value, "d").as_str(), Some("folded text"));
+    assert_eq!(get(&value, "e").as_str(), Some("  kept indent\n"));
+}
+
+#[test]
+fn a_block_scalar_line_indented_less_than_the_block_is_an_error_not_a_panic() {
+    // The second line starts left of the block's indentation, and the cut
+    // would land inside a multi-byte character.
+    let result = Value::parse("description: >\n    Orders table.\n  — see the playbook\n");
+    assert!(result.is_err());
+}
+
+#[test]
+fn strings_that_other_readers_would_retype_are_quoted() {
+    // This parser keeps all of these as strings. A YAML 1.1 reader (PyYAML,
+    // which the reference implementation uses) would read 7, 31, false,
+    // true, 750, 1000.0, and so on, so the emitter must not unquote them.
+    for text in [
+        "007",
+        "0x1F",
+        "0o17",
+        "0b101",
+        "1_000",
+        "1e3",
+        "12:30",
+        "190:20:30.15",
+        ".5",
+        "no",
+        "No",
+        "on",
+        "OFF",
+        "y",
+        "N",
+        "yes",
+        "=",
+        "<<",
+        "+12",
+        "-.inf",
+        "~",
+    ] {
+        let value = Value::String(text.to_string());
+        let emitted = value.to_yaml_string();
+        assert_eq!(emitted.trim_end(), format!("\"{text}\""), "{text}");
+        assert_eq!(Value::parse(&emitted).unwrap(), value, "{text}");
+    }
+    // Ordinary text is left plain, and so is a date, which the specification
+    // lets a reader take either way.
+    for text in [
+        "1.2.3",
+        "555-1234",
+        "192.168.1.1",
+        "v0.3",
+        "e3",
+        "2026-12-31",
+        "note",
+        "x-acme",
+    ] {
+        assert_eq!(
+            Value::String(text.to_string()).to_yaml_string().trim_end(),
+            text
+        );
+    }
+    // A float keeps its point when it is read as text, as for `okf_version`.
+    assert_eq!(
+        Value::parse("1.0").unwrap().as_display_string().as_deref(),
+        Some("1.0")
+    );
+    assert_eq!(
+        Value::parse("0.3").unwrap().as_display_string().as_deref(),
+        Some("0.3")
     );
 }
