@@ -66,6 +66,7 @@ pub fn parse_with_layout(text: &str) -> Result<(Value, Option<Layout>), YamlErro
         lines,
         pos: 0,
         spans: None,
+        keep_scalar_end: 0,
     };
     p.skip_blank_and_comments();
     if p.pos >= p.lines.len() {
@@ -118,6 +119,10 @@ struct Parser {
     /// span of each of its entries. `None` when the layout is not wanted, or
     /// once a nested mapping is being parsed.
     spans: Option<Vec<(usize, usize)>>,
+    /// Blank lines consumed by the most recent keep-style block scalar,
+    /// including one inside a nested collection, belong to that value. Layout
+    /// spans must not move them to another entry when keys are reordered.
+    keep_scalar_end: usize,
 }
 
 impl Parser {
@@ -212,7 +217,7 @@ impl Parser {
                 // indented `#` line is kept: inside a block scalar it is
                 // content, not a comment.
                 let mut end = self.pos;
-                while end > entry_line + 1 {
+                while end > entry_line + 1 && end > self.keep_scalar_end {
                     let line = &self.lines[end - 1];
                     if line.trim().is_empty() || line.starts_with('#') {
                         end -= 1;
@@ -492,6 +497,7 @@ impl Parser {
         match chomp {
             Some('-') => {} // strip: no trailing newline
             Some('+') => {
+                self.keep_scalar_end = self.pos;
                 // keep: restore all trailing blank lines + one newline for content
                 text.push('\n');
                 for _ in 0..trailing_blanks {

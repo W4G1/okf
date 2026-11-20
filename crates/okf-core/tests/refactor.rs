@@ -11,6 +11,138 @@ use okf_core::refactor::{
 };
 
 #[test]
+fn refactors_preserve_hand_written_indexes() {
+    for operation in ["move", "remove", "split", "merge"] {
+        let tmp = TempDir::new();
+        let root_index =
+            "---\nokf_version: \"0.3\"\n---\n\n# Welcome\n\nHand-written introduction.\n";
+        let child_index = "# Curated concepts\n\nKeep this explanation.\n\n* [Source](source.md)\n";
+        tmp.write("index.md", root_index);
+        tmp.write("manual/index.md", child_index);
+        tmp.write(
+            "manual/source.md",
+            "---\ntype: Concept\n---\n\n# Source\n\nIntro.\n\n## Details\n\nDetails to extract.\n",
+        );
+        tmp.write("manual/other.md", "---\ntype: Concept\n---\n\n# Other\n");
+        let bundle = Bundle::load(tmp.path()).unwrap();
+        let source = ConceptId::parse("manual/source").unwrap();
+        let target = ConceptId::parse("new/target").unwrap();
+        match operation {
+            "move" => {
+                move_concept(&bundle, &source, &target, &MoveOptions::default()).unwrap();
+            }
+            "remove" => {
+                remove_concept(&bundle, &source, &RemoveOptions::default()).unwrap();
+            }
+            "split" => {
+                split_concept(
+                    &bundle,
+                    &source,
+                    &target,
+                    &SplitOptions::new("Details".to_string()),
+                )
+                .unwrap();
+            }
+            "merge" => {
+                merge_concepts(
+                    &bundle,
+                    &source,
+                    &ConceptId::parse("manual/other").unwrap(),
+                    &MergeOptions::default(),
+                )
+                .unwrap();
+            }
+            _ => unreachable!(),
+        }
+        assert_eq!(tmp.read("index.md"), root_index, "{operation}");
+        assert_eq!(tmp.read("manual/index.md"), child_index, "{operation}");
+    }
+}
+
+#[test]
+fn moving_updates_generated_indexes_including_an_emptied_directory() {
+    let tmp = TempDir::new();
+    tmp.write(
+        "old/source.md",
+        "---\ntype: Concept\ntitle: Source\n---\n\n# Source\n",
+    );
+    tmp.write("other/kept.md", "---\ntype: Concept\n---\n\n# Kept\n");
+    okf_core::index::regenerate_indexes(tmp.path()).unwrap();
+    let other_index = tmp.path().join("other/index.md");
+    let timestamp =
+        std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+    std::fs::File::options()
+        .write(true)
+        .open(&other_index)
+        .unwrap()
+        .set_modified(timestamp)
+        .unwrap();
+    let before_modified = std::fs::metadata(&other_index).unwrap().modified().unwrap();
+    let bundle = Bundle::load(tmp.path()).unwrap();
+    move_concept(
+        &bundle,
+        &ConceptId::parse("old/source").unwrap(),
+        &ConceptId::parse("new/target").unwrap(),
+        &MoveOptions::default(),
+    )
+    .unwrap();
+    assert!(!tmp.read("old/index.md").contains("source.md"));
+    assert!(tmp.read("new/index.md").contains("target.md"));
+    assert!(tmp.read("index.md").contains("new/index.md"));
+    assert_eq!(
+        std::fs::metadata(other_index).unwrap().modified().unwrap(),
+        before_modified
+    );
+}
+
+#[test]
+fn removing_the_last_concept_clears_the_generated_root_listing() {
+    let tmp = TempDir::new();
+    tmp.write("only.md", "---\ntype: Concept\n---\n\n# Only\n");
+    okf_core::index::regenerate_indexes(tmp.path()).unwrap();
+    let bundle = Bundle::load(tmp.path()).unwrap();
+    remove_concept(
+        &bundle,
+        &ConceptId::parse("only").unwrap(),
+        &RemoveOptions::default(),
+    )
+    .unwrap();
+    let index = tmp.read("index.md");
+    assert!(!index.contains("only.md"), "{index}");
+    assert_eq!(
+        okf_core::Document::parse(&index)
+            .unwrap()
+            .frontmatter
+            .get("okf_version")
+            .unwrap()
+            .as_str(),
+        Some(okf_core::OKF_VERSION)
+    );
+}
+
+#[test]
+fn refactors_do_not_remove_subdirectory_frontmatter() {
+    let tmp = TempDir::new();
+    tmp.write("child/source.md", "---\ntype: Concept\n---\n\n# Source\n");
+    okf_core::index::regenerate_indexes(tmp.path()).unwrap();
+    // This is a conformance error, but a refactor must not silently erase it.
+    let custom = format!(
+        "---\nx-owner: Keep me\n---\n\n{}",
+        tmp.read("child/index.md")
+    );
+    tmp.write("child/index.md", &custom);
+    let bundle = Bundle::load(tmp.path()).unwrap();
+    move_concept(
+        &bundle,
+        &ConceptId::parse("child/source").unwrap(),
+        &ConceptId::parse("child/target").unwrap(),
+        &MoveOptions::default(),
+    )
+    .unwrap();
+    assert_eq!(tmp.read("child/index.md"), custom);
+}
+
+#[test]
 fn test_move_concept_rewrites_incoming_and_rebases_outgoing() {
     let tmp = TempDir::new();
     tmp.write("index.md", "---\nokf_version: \"0.3\"\n---\n\n# Bundle\n");

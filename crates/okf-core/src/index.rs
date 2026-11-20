@@ -215,10 +215,22 @@ pub fn regenerate_indexes_with(
     bundle_root: impl AsRef<Path>,
     synthesize: &Synthesize,
 ) -> io::Result<Vec<PathBuf>> {
-    let bundle_root = bundle_root.as_ref();
-    let mut written = Vec::new();
+    let indexes = plan_indexes(bundle_root.as_ref(), synthesize)?;
+    let mut written = Vec::with_capacity(indexes.len());
+    for (path, text) in indexes {
+        fs::write(&path, text)?;
+        written.push(path);
+    }
+    Ok(written)
+}
+
+/// Computes the generated text without writing it. Refactors use the same
+/// generator before and after editing to distinguish generated listings from
+/// hand-written indexes.
+fn plan_indexes(bundle_root: &Path, synthesize: &Synthesize) -> io::Result<Vec<(PathBuf, String)>> {
+    let mut planned = Vec::new();
     if !bundle_root.exists() {
-        return Ok(written);
+        return Ok(planned);
     }
 
     // The markdown files that are part of the bundle. A dot-path, or a
@@ -308,7 +320,10 @@ pub fn regenerate_indexes_with(
         if crate::bundle::leads_outside(bundle_root, &directory.join(INDEX_FILE)) {
             continue;
         }
-        written.push(write_index(directory, bundle_root, &entries)?);
+        planned.push((
+            directory.join(INDEX_FILE),
+            index_text(directory, bundle_root, &entries),
+        ));
         indexed.insert(directory.clone());
 
         if directory == bundle_root {
@@ -332,7 +347,97 @@ pub fn regenerate_indexes_with(
         dir_descriptions.insert(directory.clone(), desc);
     }
 
-    Ok(written)
+    Ok(planned)
+}
+
+/// Index ownership captured before a refactor. Only exact generated bodies
+/// are considered safe to replace; ambiguous or customized listings are kept.
+/// New indexes may be created, and unchanged generated indexes are not written.
+pub(crate) struct RefactorIndexes {
+    protected: HashSet<PathBuf>,
+    generated: HashSet<PathBuf>,
+}
+
+impl RefactorIndexes {
+    pub(crate) fn capture(bundle_root: &Path) -> io::Result<Self> {
+        let expected: HashMap<PathBuf, String> = plan_indexes(bundle_root, &default_synthesize)?
+            .into_iter()
+            .collect();
+        let mut protected = HashSet::new();
+        let mut generated = HashSet::new();
+        let root_index = bundle_root.join(INDEX_FILE);
+        for path in crate::bundle::markdown_files(bundle_root)? {
+            if path.file_name() != Some(OsStr::new(INDEX_FILE)) {
+                continue;
+            }
+            let existing = fs::read_to_string(&path)?;
+            let expected_text = expected.get(&path).map_or("\n", String::as_str);
+            // Only a root index may carry frontmatter. Treat a subdirectory
+            // block as custom too, even if its body looks generated: removing
+            // invalid metadata is not part of a concept refactor.
+            let matches = if path == root_index {
+                index_body(&existing) == index_body(expected_text)
+            } else {
+                existing == expected_text
+            };
+            if matches {
+                generated.insert(path);
+            } else {
+                protected.insert(path);
+            }
+        }
+        Ok(Self {
+            protected,
+            generated,
+        })
+    }
+
+    pub(crate) fn apply(self, bundle_root: &Path) -> io::Result<()> {
+        let mut planned = plan_indexes(bundle_root, &default_synthesize)?;
+        let planned_paths: HashSet<PathBuf> =
+            planned.iter().map(|(path, _)| path.clone()).collect();
+        // The normal generator skips empty directories. A generated listing
+        // that just lost its last concept must instead have stale rows cleared.
+        for path in self.generated.difference(&planned_paths) {
+            let directory = path.parent().unwrap_or(bundle_root);
+            if directory.is_dir() && !crate::bundle::leads_outside(bundle_root, path) {
+                planned.push((path.clone(), index_text(directory, bundle_root, &[])));
+            }
+        }
+        for (path, text) in planned {
+            if !self.protected.contains(&path) {
+                match fs::read_to_string(&path) {
+                    Ok(existing) if existing == text => continue,
+                    Ok(_) => {}
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(error),
+                }
+                fs::write(path, text)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// The body after an optional frontmatter block and its blank separator.
+fn index_body(text: &str) -> &str {
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+    let mut lines = text.split_inclusive('\n');
+    if !lines.next().is_some_and(crate::document::is_delimiter) {
+        return text;
+    }
+    let mut offset = text.find('\n').map_or(text.len(), |i| i + 1);
+    for line in lines {
+        offset += line.len();
+        if crate::document::is_delimiter(line) {
+            let body = &text[offset..];
+            return body
+                .strip_prefix("\r\n")
+                .or_else(|| body.strip_prefix('\n'))
+                .unwrap_or(body);
+        }
+    }
+    text
 }
 
 fn load_doc(path: &Path) -> Option<Document> {
@@ -340,20 +445,16 @@ fn load_doc(path: &Path) -> Option<Document> {
     Document::parse(&text).ok()
 }
 
-fn write_index(
-    directory: &Path,
-    bundle_root: &Path,
-    entries: &[IndexEntry],
-) -> io::Result<PathBuf> {
-    let index_path = directory.join(INDEX_FILE);
+fn index_text(directory: &Path, bundle_root: &Path, entries: &[IndexEntry]) -> String {
     let body = build_index_text_with_encoded_links(entries);
-    let text = if directory == bundle_root {
-        format!("{}{body}", root_frontmatter(bundle_root, &index_path))
+    if directory == bundle_root {
+        format!(
+            "{}{body}",
+            root_frontmatter(bundle_root, &directory.join(INDEX_FILE))
+        )
     } else {
         body
-    };
-    fs::write(&index_path, text)?;
-    Ok(index_path)
+    }
 }
 
 /// The frontmatter block to open the bundle-root `index.md` with, delimiters

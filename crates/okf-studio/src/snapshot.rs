@@ -11,9 +11,9 @@ use crate::search::{SearchEntry, SearchIndex};
 use okf_core::log::{Log, LogEntry};
 use okf_core::{
     ActorKind, AttestedComputation, Bundle, BundleError, ComputationSource, ConceptId, Date,
-    DateTimeField, Freshness, Status, TrustTier,
+    DateTime, DateTimeField, Freshness, Status, TrustTier,
 };
-use okf_validator::{Language, Report, check_syntax, lint_bundle_at, validate_bundle_at};
+use okf_validator::{Language, Report, check_syntax, lint_bundle_at, validate_bundle_at_instant};
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 
@@ -24,12 +24,12 @@ pub struct ConceptMeta {
     pub tier: TrustTier,
     /// Lifecycle status.
     pub status: Status,
-    /// Whether the concept is stale on the snapshot's `today`. A concept whose
+    /// Whether the concept is stale at the snapshot's `evaluated_at`. A concept whose
     /// `stale_after` does not parse counts as stale: it is never shown as
     /// fresh.
     pub stale: bool,
-    /// Where the concept stands against its `stale_after` on the snapshot's
-    /// `today`: undated, fresh, stale, or malformed (present but unparseable).
+    /// Where the concept stands against its `stale_after` at the snapshot's
+    /// `evaluated_at`: undated, fresh, stale, or malformed (present but unparseable).
     pub freshness: Freshness,
     /// Whether every verification predates the last change to the content,
     /// which leaves the concept unverified.
@@ -190,8 +190,10 @@ pub struct FileTree {
 pub struct Snapshot {
     /// Monotonically increasing rebuild counter.
     pub generation: u64,
-    /// The pinned or wall-clock date staleness is evaluated against.
+    /// The UTC date of `evaluated_at`, used for calendar-day displays.
     pub today: Date,
+    /// The pinned or wall-clock instant staleness is evaluated against.
+    pub evaluated_at: DateTime,
     /// The loaded bundle, as-is.
     pub bundle: Bundle,
     /// Conformance findings.
@@ -230,16 +232,33 @@ impl Snapshot {
         today: Option<Date>,
         generation: u64,
     ) -> Result<Self, BundleError> {
+        Self::build_at_instant(root, today.map(|day| day.to_utc_datetime()), generation)
+    }
+
+    /// Loads a snapshot evaluated at a pinned instant, or the current time.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BundleError`] for the same failures as [`Snapshot::build`].
+    pub fn build_at_instant(
+        root: &std::path::Path,
+        at: Option<DateTime>,
+        generation: u64,
+    ) -> Result<Self, BundleError> {
         let bundle = Bundle::load(root)?;
-        let today = today.or_else(Date::today_utc).unwrap_or(Date {
-            year: 2026,
-            month: 1,
-            day: 1,
+        let evaluated_at = at.or_else(DateTime::now_utc).unwrap_or_else(|| {
+            Date {
+                year: 2026,
+                month: 1,
+                day: 1,
+            }
+            .to_utc_datetime()
         });
-        let validation = validate_bundle_at(&bundle, Some(today));
+        let today = evaluated_at.utc_date();
+        let validation = validate_bundle_at_instant(&bundle, Some(evaluated_at));
         let lint = lint_bundle_at(&bundle, Some(today));
 
-        let concept_meta = build_meta(&bundle, &validation, &lint, today);
+        let concept_meta = build_meta(&bundle, &validation, &lint, evaluated_at);
         let tree = build_tree(&bundle);
         let graph = GraphModel::build(&bundle);
         let search = build_search(&bundle, &concept_meta);
@@ -251,6 +270,7 @@ impl Snapshot {
         Ok(Self {
             generation,
             today,
+            evaluated_at,
             bundle,
             validation,
             lint,
@@ -281,14 +301,15 @@ fn build_meta(
     bundle: &Bundle,
     validation: &Report,
     lint: &Report,
-    today: Date,
+    at: DateTime,
 ) -> HashMap<ConceptId, ConceptMeta> {
+    let today = at.utc_date();
     let mut meta = HashMap::new();
     for concept in bundle.concepts() {
         let fm = &concept.document.frontmatter;
         let stale_after = fm.stale_after();
-        let stale = concept.is_stale_on(today);
-        let freshness = concept.freshness_at(today.to_utc_datetime());
+        let stale = concept.is_stale_at(at);
+        let freshness = concept.freshness_at(at);
         let effective = stale_after
             .as_ref()
             .and_then(DateTimeField::instant)

@@ -2,7 +2,7 @@
 //! round-trips against tempdir bundles, and `TestBackend` rendering.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use okf_core::{ConceptId, Date};
+use okf_core::{ConceptId, Date, DateTime};
 use okf_studio::app::{App, Command, Msg, Overlay, PreviewReport, RefactorOp, TreeSel};
 use okf_studio::snapshot::Snapshot;
 use okf_studio::{StudioOptions, Tab};
@@ -104,6 +104,7 @@ fn app_with(bundle: &TestBundle) -> App {
     let mut app = App::new(&StudioOptions {
         root: bundle.root.clone(),
         today: Some(TODAY),
+        at: None,
         no_watch: true,
         initial_tab: None,
         author: Some("human:tester".to_string()),
@@ -124,6 +125,65 @@ fn ch(app: &mut App, c: char) {
 // ---------------------------------------------------------------------------
 // Snapshot pipeline.
 // ---------------------------------------------------------------------------
+
+#[test]
+fn snapshot_uses_the_exact_instant_for_all_staleness_views() {
+    let bundle = fixture();
+    write(
+        &bundle.root,
+        "policies/remote_work.md",
+        "---\ntype: Policy\nstale_after: 2026-08-25T10:00:00.5Z\n---\n\n# Remote work\n",
+    );
+    let id = ConceptId::parse("policies/remote_work").unwrap();
+    for (raw, stale) in [
+        ("2026-08-25T10:00:00.499999999Z", false),
+        ("2026-08-25T10:00:00.5Z", true),
+        ("2026-08-26T00:00:00.5+14:00", true),
+    ] {
+        let at = DateTime::parse_rfc3339(raw).unwrap();
+        let snap = Snapshot::build_at_instant(&bundle.root, Some(at), 1).unwrap();
+        assert_eq!(snap.evaluated_at, at);
+        assert_eq!(snap.today, TODAY);
+        assert_eq!(snap.meta(&id).unwrap().stale, stale);
+        assert_eq!(
+            snap.meta(&id).unwrap().freshness,
+            if stale {
+                okf_core::Freshness::Stale
+            } else {
+                okf_core::Freshness::Fresh
+            }
+        );
+        assert_eq!(snap.stats.stale, usize::from(stale));
+        assert_eq!(snap.search.search("is:stale", 10).len(), usize::from(stale));
+        assert_eq!(
+            snap.validation
+                .diagnostics
+                .iter()
+                .filter(|d| d.message.starts_with("stale since "))
+                .count(),
+            usize::from(stale)
+        );
+    }
+}
+
+#[test]
+fn an_unpinned_snapshot_uses_the_clock_not_midnight() {
+    let bundle = fixture();
+    let before = DateTime::now_utc().unwrap();
+    write(
+        &bundle.root,
+        "policies/remote_work.md",
+        &format!("---\ntype: Policy\nstale_after: \"{before}\"\n---\n\n# Remote work\n"),
+    );
+    let snap = Snapshot::build(&bundle.root, None, 1).unwrap();
+    let after = DateTime::now_utc().unwrap();
+    assert!(snap.evaluated_at >= before && snap.evaluated_at <= after);
+    assert!(
+        snap.meta(&ConceptId::parse("policies/remote_work").unwrap())
+            .unwrap()
+            .stale
+    );
+}
 
 #[test]
 fn snapshot_derives_the_world_model() {
@@ -339,6 +399,50 @@ fn recv_until<F: Fn(&Msg) -> bool>(rx: &std::sync::mpsc::Receiver<Msg>, accept: 
 }
 
 #[test]
+fn worker_keeps_an_instant_pin_until_the_user_changes_it() {
+    let bundle = fixture();
+    write(
+        &bundle.root,
+        "policies/remote_work.md",
+        "---\ntype: Policy\nstale_after: 2026-08-25T10:00:00Z\n---\n\n# Remote work\n",
+    );
+    let at = DateTime::parse_rfc3339("2026-08-25T12:00:00Z").unwrap();
+    let id = ConceptId::parse("policies/remote_work").unwrap();
+    let (tx, rx) = channel();
+    let worker = okf_studio::worker::spawn(
+        okf_studio::worker::WorkerConfig {
+            root: bundle.root.clone(),
+            today: None,
+            at: Some(at),
+            author: "human:tester".to_string(),
+        },
+        tx,
+    );
+    for _ in 0..2 {
+        worker.send(Command::Reload).unwrap();
+        let Msg::SnapshotReady(snap) = recv_until(&rx, |m| matches!(m, Msg::SnapshotReady(_)))
+        else {
+            unreachable!()
+        };
+        assert_eq!(snap.evaluated_at, at);
+        assert!(snap.meta(&id).unwrap().stale);
+    }
+    worker.send(Command::SetToday(Some(TODAY))).unwrap();
+    let Msg::SnapshotReady(snap) = recv_until(&rx, |m| matches!(m, Msg::SnapshotReady(_))) else {
+        unreachable!()
+    };
+    assert_eq!(snap.evaluated_at, TODAY.to_utc_datetime());
+    assert!(!snap.meta(&id).unwrap().stale);
+    let before = DateTime::now_utc().unwrap();
+    worker.send(Command::SetToday(None)).unwrap();
+    let Msg::SnapshotReady(snap) = recv_until(&rx, |m| matches!(m, Msg::SnapshotReady(_))) else {
+        unreachable!()
+    };
+    assert!(snap.evaluated_at >= before && snap.evaluated_at <= DateTime::now_utc().unwrap());
+    worker.send(Command::Shutdown).unwrap();
+}
+
+#[test]
 fn worker_reloads_stamps_and_refactors() {
     let bundle = fixture();
     let (tx, rx) = channel();
@@ -346,6 +450,7 @@ fn worker_reloads_stamps_and_refactors() {
         okf_studio::worker::WorkerConfig {
             root: bundle.root.clone(),
             today: Some(TODAY),
+            at: None,
             author: "human:tester".to_string(),
         },
         tx,
@@ -424,6 +529,7 @@ fn worker_extends_stale_after() {
         okf_studio::worker::WorkerConfig {
             root: bundle.root.clone(),
             today: Some(TODAY),
+            at: None,
             author: "human:tester".to_string(),
         },
         tx,

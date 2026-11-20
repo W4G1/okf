@@ -29,7 +29,7 @@ pub mod worker;
 
 use app::{App, Command, Msg};
 use crossterm::event::{self, Event};
-use okf_core::Date;
+use okf_core::{Date, DateTime};
 use std::io::Write as _;
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -70,8 +70,10 @@ impl std::str::FromStr for Tab {
 pub struct StudioOptions {
     /// Bundle directory (defaults to `.`, same as every other subcommand).
     pub root: PathBuf,
-    /// Pin "today" for deterministic staleness display (mirrors `--today`).
+    /// Pin midnight UTC on this date for staleness display (mirrors `--today`).
     pub today: Option<Date>,
+    /// Pin the evaluation instant (mirrors `--at`); takes precedence over `today`.
+    pub at: Option<DateTime>,
     /// Disable the file watcher (single snapshot; useful over slow FS/NFS).
     pub no_watch: bool,
     /// Start on a specific workspace tab.
@@ -86,6 +88,7 @@ impl Default for StudioOptions {
         Self {
             root: PathBuf::from("."),
             today: None,
+            at: None,
             no_watch: false,
             initial_tab: None,
             author: None,
@@ -118,6 +121,7 @@ pub fn run(options: StudioOptions) -> std::io::Result<ExitCode> {
         worker::WorkerConfig {
             root: options.root,
             today: options.today,
+            at: options.at,
             author: app.author.clone(),
         },
         msg_tx,

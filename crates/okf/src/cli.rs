@@ -19,7 +19,7 @@
 //!   diff         <a> <b>    OKF-semantics diff between two bundles (--json).
 //!   index        [bundle]   (Re)generate every index.md in a bundle (--json).
 //!   parse        <file>     Parse one concept document and print its structure (--json).
-//!   studio       [bundle]   Open the interactive terminal studio (--today, --tab, --no-watch).
+//!   studio       [bundle]   Open the interactive terminal studio (--today, --at, --tab, --no-watch).
 //! ```
 
 #![warn(clippy::pedantic, clippy::nursery)]
@@ -99,15 +99,9 @@ fn install_broken_pipe_hook() {
     });
 }
 
-/// The instant freshness is judged at: the start of the day given with
-/// `--today`, or now when no day was given.
-///
-/// A concept is stale when `now >= stale_after`, so without a pinned day the
-/// comparison uses the actual time. Pinning a day keeps a CI run
-/// reproducible.
-fn evaluation_time(today: Option<Date>) -> Option<DateTime> {
-    today
-        .map(|day| day.to_utc_datetime())
+/// Use the pinned instant, midnight UTC on a pinned day, or the system clock.
+fn evaluation_time(today: Option<Date>, at: Option<DateTime>) -> Option<DateTime> {
+    at.or_else(|| today.map(|day| day.to_utc_datetime()))
         .or_else(DateTime::now_utc)
 }
 
@@ -144,6 +138,12 @@ fn find_bundle_root(start: &Path) -> Option<PathBuf> {
 
 fn parse_date(raw: &str) -> Result<Date, String> {
     Date::parse(raw).ok_or_else(|| format!("--today is not a YYYY-MM-DD date: {raw}"))
+}
+
+fn parse_instant(raw: &str) -> Result<DateTime, String> {
+    DateTime::parse_rfc3339(raw)
+        .filter(|instant| instant.has_time)
+        .ok_or_else(|| format!("--at requires an RFC 3339 date-time with a UTC offset: {raw}"))
 }
 
 static CLI_VERSION: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
@@ -318,9 +318,13 @@ pub struct ValidateArgs {
     #[arg(long)]
     pub author: Option<String>,
 
-    /// Evaluate staleness against this date instead of today
+    /// Evaluate at 00:00 UTC on this date instead of the system clock
     #[arg(long, value_parser = parse_date)]
     pub today: Option<Date>,
+
+    /// Evaluate at this RFC 3339 timestamp instead of the system clock
+    #[arg(long, value_name = "RFC3339", value_parser = parse_instant, conflicts_with = "today")]
+    pub at: Option<DateTime>,
 
     /// Output results as JSON
     #[arg(short, long)]
@@ -337,9 +341,13 @@ pub struct InfoArgs {
     #[arg(default_value = ".")]
     pub bundle: PathBuf,
 
-    /// Evaluate staleness against this date instead of today
+    /// Evaluate at 00:00 UTC on this date instead of the system clock
     #[arg(long, value_parser = parse_date)]
     pub today: Option<Date>,
+
+    /// Evaluate at this RFC 3339 timestamp instead of the system clock
+    #[arg(long, value_name = "RFC3339", value_parser = parse_instant, conflicts_with = "today")]
+    pub at: Option<DateTime>,
 
     /// Output results as JSON
     #[arg(short, long)]
@@ -356,9 +364,13 @@ pub struct TrustArgs {
     #[arg(default_value = ".")]
     pub bundle: PathBuf,
 
-    /// Evaluate staleness against this date instead of today
+    /// Evaluate at 00:00 UTC on this date instead of the system clock
     #[arg(long, value_parser = parse_date)]
     pub today: Option<Date>,
+
+    /// Evaluate at this RFC 3339 timestamp instead of the system clock
+    #[arg(long, value_name = "RFC3339", value_parser = parse_instant, conflicts_with = "today")]
+    pub at: Option<DateTime>,
 
     /// Output results as JSON
     #[arg(short, long)]
@@ -456,9 +468,13 @@ pub struct ParseArgs {
     /// Concept file to parse
     pub file: PathBuf,
 
-    /// Evaluate staleness against this date instead of today
+    /// Evaluate at 00:00 UTC on this date instead of the system clock
     #[arg(long, value_parser = parse_date)]
     pub today: Option<Date>,
+
+    /// Evaluate at this RFC 3339 timestamp instead of the system clock
+    #[arg(long, value_name = "RFC3339", value_parser = parse_instant, conflicts_with = "today")]
+    pub at: Option<DateTime>,
 
     /// Output results as JSON
     #[arg(short, long)]
@@ -506,9 +522,13 @@ pub struct LintArgs {
     #[arg(long)]
     pub author: Option<String>,
 
-    /// Evaluate staleness against this date instead of today
+    /// Evaluate at 00:00 UTC on this date instead of the system clock
     #[arg(long, value_parser = parse_date)]
     pub today: Option<Date>,
+
+    /// Evaluate at this RFC 3339 timestamp instead of the system clock
+    #[arg(long, value_name = "RFC3339", value_parser = parse_instant, conflicts_with = "today")]
+    pub at: Option<DateTime>,
 
     /// Output results as JSON
     #[arg(short, long)]
@@ -741,9 +761,13 @@ pub struct StudioArgs {
     #[arg(default_value = ".")]
     pub bundle: PathBuf,
 
-    /// Evaluate staleness against this date instead of the system clock
+    /// Evaluate at 00:00 UTC on this date instead of the system clock
     #[arg(long, value_parser = parse_date)]
     pub today: Option<Date>,
+
+    /// Evaluate at this RFC 3339 timestamp instead of the system clock
+    #[arg(long, value_name = "RFC3339", value_parser = parse_instant, conflicts_with = "today")]
+    pub at: Option<DateTime>,
 
     /// Do not watch the filesystem for changes
     #[arg(long)]
@@ -838,6 +862,7 @@ fn cmd_studio(args: &StudioArgs) -> Result<ExitCode, CliError> {
     okf_studio::run(okf_studio::StudioOptions {
         root: args.bundle.clone(),
         today: args.today,
+        at: args.at,
         no_watch: args.no_watch,
         initial_tab,
         author: args.author.clone(),
@@ -970,7 +995,7 @@ fn cmd_validate(args: &ValidateArgs) -> Result<ExitCode, CliError> {
         target_id,
         concept_count,
     } = load_target(raw_path)?;
-    let full_report = validate_bundle_at_instant(&bundle, evaluation_time(args.today));
+    let full_report = validate_bundle_at_instant(&bundle, evaluation_time(args.today, args.at));
 
     let report = if let Some(target_file) = &target_path {
         let target_canon = target_file.canonicalize().ok();
@@ -1098,7 +1123,7 @@ fn cmd_lint(args: &LintArgs) -> Result<ExitCode, CliError> {
         target_id,
         concept_count,
     } = load_target(raw_path)?;
-    let today_date = args.today.or_else(Date::today_utc);
+    let today_date = evaluation_time(args.today, args.at).map(|instant| instant.utc_date());
     let full_report = lint_bundle_at(&bundle, today_date);
 
     let report = if let Some(target_file) = &target_path {
@@ -1177,7 +1202,7 @@ fn cmd_lint(args: &LintArgs) -> Result<ExitCode, CliError> {
 fn cmd_info(args: &InfoArgs) -> Result<ExitCode, CliError> {
     let path = &args.bundle;
     let bundle = load(path)?;
-    let now = evaluation_time(args.today);
+    let now = evaluation_time(args.today, args.at);
     let json = args.json || args.format.as_deref() == Some("json");
 
     if json {
@@ -1309,7 +1334,7 @@ fn cmd_info(args: &InfoArgs) -> Result<ExitCode, CliError> {
 fn cmd_trust(args: &TrustArgs) -> Result<ExitCode, CliError> {
     let path = &args.bundle;
     let bundle = load(path)?;
-    let now = evaluation_time(args.today);
+    let now = evaluation_time(args.today, args.at);
     let json = args.json || args.format.as_deref() == Some("json");
 
     if json {
@@ -1550,7 +1575,7 @@ fn cmd_parse(args: &ParseArgs) -> Result<ExitCode, CliError> {
     let text = std::fs::read_to_string(path).map_err(|e| CliError::no_input(e.to_string()))?;
     let doc = Document::parse(&text).map_err(|e| CliError::data(e.to_string()))?;
     let json = args.json || args.format.as_deref() == Some("json");
-    let now = evaluation_time(args.today);
+    let now = evaluation_time(args.today, args.at);
 
     if json {
         print_parse_json(&doc, &path.to_string_lossy(), now);
@@ -1610,7 +1635,7 @@ fn cmd_fmt(args: &FmtArgs) -> Result<ExitCode, CliError> {
                 let val = serde_json::json!({
                     "formatted_count": 0,
                     "error_count": 0,
-                    "written": write,
+                    "written": false,
                     "files": Vec::<String>::new(),
                 });
                 println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());
@@ -1642,6 +1667,9 @@ fn cmd_fmt(args: &FmtArgs) -> Result<ExitCode, CliError> {
                 }
             };
             if write {
+                if out == text {
+                    continue;
+                }
                 if let Err(e) = std::fs::write(file_path, &out) {
                     eprintln!("error writing {}: {e}", file_path.display());
                     error_count += 1;
@@ -1662,7 +1690,7 @@ fn cmd_fmt(args: &FmtArgs) -> Result<ExitCode, CliError> {
             let val = serde_json::json!({
                 "formatted_count": formatted_count,
                 "error_count": error_count,
-                "written": write,
+                "written": write && formatted_count > 0,
                 "files": formatted_files,
             });
             println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());
@@ -1685,17 +1713,20 @@ fn cmd_fmt(args: &FmtArgs) -> Result<ExitCode, CliError> {
             format_markdown_file(target_path, &text).map_err(|e| CliError::data(e.to_string()))?;
 
         if write {
-            std::fs::write(target_path, &out).map_err(|e| CliError::no_input(e.to_string()))?;
+            let changed = out != text;
+            if changed {
+                std::fs::write(target_path, &out).map_err(|e| CliError::no_input(e.to_string()))?;
+            }
             if json {
                 let val = serde_json::json!({
                     "okf_version": crate::OKF_VERSION,
-                    "formatted_count": 1,
+                    "formatted_count": usize::from(changed),
                     "error_count": 0,
-                    "written": true,
+                    "written": changed,
                     "file": path_str,
                 });
                 println!("{}", serde_json::to_string_pretty(&val).unwrap_or_default());
-            } else {
+            } else if changed {
                 println!("formatted {path_str}");
             }
         } else if json {

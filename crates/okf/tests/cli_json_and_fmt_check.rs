@@ -15,6 +15,107 @@ fn code(status: ExitStatus) -> i32 {
 }
 
 #[test]
+fn cli_fmt_write_reports_and_writes_only_changed_files() {
+    let tmp = TempDir::new();
+    tmp.write("index.md", "---\nokf_version: \"0.3\"\n---\n\n# Root\n");
+    tmp.write("clean.md", "---\ntype: Note\n---\n\n# Clean\n");
+    tmp.write("messy.md", "---\ntype: Note\ntags: [one]\n---\n\n# Messy\n");
+    tmp.write("log.md", "# Log\n\n## 2026-07-01\n\n- Leave this alone.\n");
+    let timestamp =
+        std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+    let originals: Vec<_> = ["index.md", "clean.md", "log.md"]
+        .into_iter()
+        .map(|name| {
+            let path = tmp.path().join(name);
+            std::fs::File::options()
+                .write(true)
+                .open(&path)
+                .unwrap()
+                .set_modified(timestamp)
+                .unwrap();
+            let modified = std::fs::metadata(&path).unwrap().modified().unwrap();
+            (path, modified)
+        })
+        .collect();
+
+    let clean_path = tmp.path().join("clean.md");
+    let out = okf()
+        .arg("fmt")
+        .arg(&clean_path)
+        .arg("-w")
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    assert!(out.stdout.is_empty());
+    let out = okf()
+        .arg("fmt")
+        .arg(&clean_path)
+        .args(["-w", "--json"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(value["formatted_count"], 0);
+    assert_eq!(value["written"], false);
+
+    let out = okf()
+        .arg("fmt")
+        .arg(tmp.path())
+        .args(["-w", "--json"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(value["formatted_count"], 1);
+    assert_eq!(
+        value["files"],
+        serde_json::json!([tmp.path().join("messy.md").to_string_lossy()])
+    );
+    assert_eq!(value["written"], true);
+
+    let out = okf().arg("fmt").arg(tmp.path()).arg("-w").output().unwrap();
+    assert!(out.status.success());
+    assert!(String::from_utf8_lossy(&out.stdout).contains("0 file(s) formatted"));
+    let out = okf()
+        .arg("fmt")
+        .arg(tmp.path())
+        .args(["-w", "--json"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(value["formatted_count"], 0);
+    assert_eq!(value["files"], serde_json::json!([]));
+    assert_eq!(value["written"], false);
+    for (path, modified) in originals {
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().modified().unwrap(),
+            modified,
+            "{}",
+            path.display()
+        );
+    }
+    // Preview mode must still print the requested document, even if it is clean.
+    let out = okf().arg("fmt").arg(clean_path).output().unwrap();
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8(out.stdout).unwrap(), tmp.read("clean.md"));
+    // Bundle checks must not try to treat log entries as concept frontmatter.
+    let out = okf()
+        .arg("fmt")
+        .arg(tmp.path())
+        .args(["--check", "--json"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(value["clean"], true);
+}
+
+#[test]
 fn cli_fmt_check_detects_unformatted_files() {
     let tmp = TempDir::new();
     let bundle_path = tmp.path().join("check_bundle");

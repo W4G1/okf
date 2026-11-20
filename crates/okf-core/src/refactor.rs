@@ -25,7 +25,7 @@ use crate::concept_id::ConceptId;
 use crate::date::Date;
 use crate::document::Document;
 use crate::frontmatter::Frontmatter;
-use crate::index::regenerate_indexes;
+use crate::index::RefactorIndexes;
 use crate::links::{self, Link, LinkKind};
 use crate::scaffold::{current_iso_timestamp, default_author};
 use crate::yaml::Value;
@@ -124,7 +124,7 @@ pub struct MoveOptions {
     pub dry_run: bool,
     /// Overwrite destination file if it exists.
     pub force: bool,
-    /// Regenerate index.md listings after move.
+    /// Update generated index.md listings after move, preserving custom indexes.
     pub update_index: bool,
     /// Record the move in log.md.
     pub update_log: bool,
@@ -216,7 +216,7 @@ pub struct RemoveOptions {
     pub redirect_to: Option<ConceptId>,
     /// Convert inbound links to plain text (`[Text](dest)` -> `Text`).
     pub unlink: bool,
-    /// Regenerate index.md listings after removal.
+    /// Update generated index.md listings after removal, preserving custom indexes.
     pub update_index: bool,
     /// Record the deletion in log.md.
     pub update_log: bool,
@@ -299,7 +299,7 @@ pub struct SplitOptions {
     pub force: bool,
     /// If true, simulate changes without writing to disk.
     pub dry_run: bool,
-    /// Regenerate index.md listings after split.
+    /// Update generated index.md listings after split, preserving custom indexes.
     pub update_index: bool,
     /// Record the split in log.md.
     pub update_log: bool,
@@ -392,7 +392,7 @@ pub struct MergeOptions {
     pub force: bool,
     /// If true, simulate changes without writing to disk.
     pub dry_run: bool,
-    /// Regenerate index.md listings after merge.
+    /// Update generated index.md listings after merge, preserving custom indexes.
     pub update_index: bool,
     /// Record the merge in log.md.
     pub update_log: bool,
@@ -935,6 +935,10 @@ pub fn move_concept(
         .then(|| redirect_stub(&source_concept.document, source, target, options));
 
     if !options.dry_run {
+        let indexes = options
+            .update_index
+            .then(|| RefactorIndexes::capture(bundle.root()))
+            .transpose()?;
         // Create destination directory if needed
         if let Some(parent) = target_path.parent() {
             fs::create_dir_all(parent)?;
@@ -957,9 +961,8 @@ pub fn move_concept(
             fs::write(&path, doc.serialize())?;
         }
 
-        // Regenerate indexes
-        if options.update_index {
-            let _ = regenerate_indexes(bundle.root());
+        if let Some(indexes) = indexes {
+            indexes.apply(bundle.root())?;
         }
 
         // Update log.md
@@ -1165,6 +1168,10 @@ pub fn remove_concept(
     }
 
     if !options.dry_run {
+        let indexes = options
+            .update_index
+            .then(|| RefactorIndexes::capture(bundle.root()))
+            .transpose()?;
         // Delete target file
         if target_path.exists() {
             fs::remove_file(&target_path)?;
@@ -1175,9 +1182,8 @@ pub fn remove_concept(
             fs::write(&path, doc.serialize())?;
         }
 
-        // Regenerate indexes
-        if options.update_index {
-            let _ = regenerate_indexes(bundle.root());
+        if let Some(indexes) = indexes {
+            indexes.apply(bundle.root())?;
         }
 
         // Update log.md
@@ -1360,14 +1366,18 @@ pub fn split_concept(
     let affected_files = vec![source_path.clone(), target_path.clone()];
 
     if !options.dry_run {
+        let indexes = options
+            .update_index
+            .then(|| RefactorIndexes::capture(bundle.root()))
+            .transpose()?;
         if let Some(parent) = target_path.parent() {
             fs::create_dir_all(parent)?;
         }
         fs::write(&target_path, target_doc.serialize())?;
         fs::write(&source_path, new_source_doc.serialize())?;
 
-        if options.update_index {
-            let _ = regenerate_indexes(bundle.root());
+        if let Some(indexes) = indexes {
+            indexes.apply(bundle.root())?;
         }
 
         if options.update_log {
@@ -1664,6 +1674,10 @@ pub fn merge_concepts(
     // itself, so it is left for the author; only body links are rewritten.
 
     if !options.dry_run {
+        let indexes = options
+            .update_index
+            .then(|| RefactorIndexes::capture(bundle.root()))
+            .transpose()?;
         // Write updated target
         fs::write(&target_path, target_doc.serialize())?;
 
@@ -1677,9 +1691,8 @@ pub fn merge_concepts(
             fs::write(&path, doc.serialize())?;
         }
 
-        // Regenerate indexes
-        if options.update_index {
-            let _ = regenerate_indexes(bundle.root());
+        if let Some(indexes) = indexes {
+            indexes.apply(bundle.root())?;
         }
 
         // Update log.md

@@ -151,6 +151,14 @@ pub struct Frontmatter {
     /// How the block was written, when it was parsed from text. See
     /// [`Frontmatter::to_yaml_preserving`].
     source: Option<Arc<SourceText>>,
+    /// Document formatting, not part of the mapping or its equality.
+    pub(crate) document_layout: Option<DocumentLayout>,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct DocumentLayout {
+    pub blank_separator: bool,
+    pub crlf: bool,
 }
 
 /// The original text of a parsed frontmatter block, entry by entry, with the
@@ -184,13 +192,18 @@ impl Frontmatter {
         Self {
             map: Mapping::new(),
             source: None,
+            document_layout: None,
         }
     }
 
     /// Wraps an existing mapping.
     #[must_use]
     pub const fn from_mapping(map: Mapping) -> Self {
-        Self { map, source: None }
+        Self {
+            map,
+            source: None,
+            document_layout: None,
+        }
     }
 
     /// Parses the text of a frontmatter block (without its `---` delimiters),
@@ -216,7 +229,11 @@ impl Frontmatter {
                         values: map.entries().to_vec(),
                     })
                 });
-                Ok(Self { map, source })
+                Ok(Self {
+                    map,
+                    source,
+                    document_layout: None,
+                })
             }
             _ => Err(DocumentError::FrontmatterNotMapping),
         }
@@ -229,8 +246,9 @@ impl Frontmatter {
     /// survive. An entry that was added, or whose value changed, is emitted in
     /// the canonical block style; the comment lines that preceded a changed
     /// entry are kept, and those of a removed entry go with it. Entries follow
-    /// the current key order, so reordering keys moves their text without
-    /// rewriting it.
+    /// the current key order. If moving or removing an entry makes adjacent
+    /// blank lines change a preserved value, only that entry is re-emitted
+    /// canonically to keep its value intact.
     ///
     /// A block that was built in code rather than parsed has no original
     /// text, and this is then the same as [`Frontmatter::to_yaml_canonical`].
@@ -240,25 +258,49 @@ impl Frontmatter {
             return self.to_yaml_canonical();
         };
         let mut used = vec![false; source.values.len()];
-        let mut out = String::new();
+        let mut entries: Vec<(&str, Cow<'_, str>)> = Vec::with_capacity(self.map.len());
         for (key, value) in self.map.entries() {
             let original = source
                 .values
                 .iter()
                 .enumerate()
                 .find(|(i, (k, _))| !used[*i] && k == key);
-            match original {
+            let entry = match original {
                 Some((i, (_, original_value))) => {
                     used[i] = true;
                     let entry = &source.layout.entries[i];
-                    out.push_str(&entry.leading);
-                    if original_value == value {
-                        out.push_str(&entry.text);
+                    let text = if original_value == value {
+                        Cow::Borrowed(entry.text.as_str())
                     } else {
-                        out.push_str(&Value::entry_to_yaml_string(key, value));
-                    }
+                        Cow::Owned(Value::entry_to_yaml_string(key, value))
+                    };
+                    (entry.leading.as_str(), text)
                 }
-                None => out.push_str(&Value::entry_to_yaml_string(key, value)),
+                None => ("", Cow::Owned(Value::entry_to_yaml_string(key, value))),
+            };
+            entries.push(entry);
+        }
+
+        let mut out = String::new();
+        for (i, (leading, text)) in entries.iter().enumerate() {
+            let (key, value) = &self.map.entries()[i];
+            let following = entries
+                .get(i + 1)
+                .map_or(source.layout.trailing.as_str(), |(leading, _)| *leading);
+            // A moved `|+` scalar can absorb blanks that originally followed
+            // another entry. Check its new boundary before reusing raw text;
+            // quoting only the affected entry leaves other styles intact.
+            let keeps_value = following.is_empty()
+                || matches!(
+                    Value::parse(&format!("{text}{following}")),
+                    Ok(Value::Mapping(map)) if map.len() == 1
+                        && map.entries()[0].0 == *key && map.entries()[0].1 == *value
+                );
+            out.push_str(leading);
+            if keeps_value {
+                out.push_str(text);
+            } else {
+                out.push_str(&Value::entry_to_yaml_string(key, value));
             }
         }
         out.push_str(&source.layout.trailing);
@@ -364,9 +406,11 @@ impl Frontmatter {
     /// rewritten, so only the serialized order changes.
     pub fn reorder_preferred(&mut self) {
         let mut ordered = Mapping::new();
-        for key in PREFERRED_KEY_ORDER {
-            if let Some(value) = self.map.get(key) {
-                ordered.insert(key, value.clone());
+        for preferred in PREFERRED_KEY_ORDER {
+            for (key, value) in self.map.iter() {
+                if key.as_str() == Some(preferred) {
+                    ordered.push_raw(key.clone(), value.clone());
+                }
             }
         }
         for (key, value) in self.map.iter() {

@@ -10,7 +10,7 @@ use crate::snapshot::Snapshot;
 use okf_core::log::append_log_entry;
 use okf_core::scaffold::current_iso_timestamp;
 use okf_core::{
-    ConceptOptions, Date, Document, FixOptions, MergeOptions, MoveOptions, RefactorError,
+    ConceptOptions, Date, DateTime, Document, FixOptions, MergeOptions, MoveOptions, RefactorError,
     RemoveOptions, RenameSectionOptions, SplitOptions, Value, create_concept, merge_concepts,
     move_concept, remediate_bundle, remove_concept, rename_section, split_concept, yaml::Mapping,
 };
@@ -24,6 +24,8 @@ pub struct WorkerConfig {
     pub root: PathBuf,
     /// Pinned evaluation date, when given.
     pub today: Option<Date>,
+    /// Pinned evaluation instant; takes precedence over `today`.
+    pub at: Option<DateTime>,
     /// Author identity for verification stamps and log entries.
     pub author: String,
 }
@@ -39,35 +41,39 @@ pub fn spawn(config: WorkerConfig, msg_tx: Sender<Msg>) -> Sender<Command> {
 #[allow(clippy::too_many_lines)]
 fn run_worker(config: &WorkerConfig, cmd_rx: &Receiver<Command>, msg_tx: &Sender<Msg>) {
     let mut generation: u64 = 0;
-    let mut today = config.today;
+    let mut at = config
+        .at
+        .or_else(|| config.today.map(|day| day.to_utc_datetime()));
     let mut snapshot: Option<Arc<Snapshot>> = None;
 
-    let reload =
-        |generation: &mut u64, today: Option<Date>, snapshot: &mut Option<Arc<Snapshot>>| -> bool {
-            *generation += 1;
-            match Snapshot::build(&config.root, today, *generation) {
-                Ok(snap) => {
-                    let snap = Arc::new(snap);
-                    *snapshot = Some(Arc::clone(&snap));
-                    let _ = msg_tx.send(Msg::SnapshotReady(snap));
-                    true
-                }
-                Err(e) => {
-                    let _ = msg_tx.send(Msg::SnapshotFailed(e.to_string()));
-                    false
-                }
+    let reload = |generation: &mut u64,
+                  at: Option<DateTime>,
+                  snapshot: &mut Option<Arc<Snapshot>>|
+     -> bool {
+        *generation += 1;
+        match Snapshot::build_at_instant(&config.root, at, *generation) {
+            Ok(snap) => {
+                let snap = Arc::new(snap);
+                *snapshot = Some(Arc::clone(&snap));
+                let _ = msg_tx.send(Msg::SnapshotReady(snap));
+                true
             }
-        };
+            Err(e) => {
+                let _ = msg_tx.send(Msg::SnapshotFailed(e.to_string()));
+                false
+            }
+        }
+    };
 
     while let Ok(command) = cmd_rx.recv() {
         match command {
             Command::Shutdown => break,
             Command::Reload => {
-                reload(&mut generation, today, &mut snapshot);
+                reload(&mut generation, at, &mut snapshot);
             }
             Command::SetToday(date) => {
-                today = date;
-                reload(&mut generation, today, &mut snapshot);
+                at = date.map(|day| day.to_utc_datetime());
+                reload(&mut generation, at, &mut snapshot);
             }
             Command::Preview { request, op } => {
                 let result = snapshot.as_ref().map_or_else(
@@ -79,7 +85,7 @@ fn run_worker(config: &WorkerConfig, cmd_rx: &Receiver<Command>, msg_tx: &Sender
             Command::Apply(op) => {
                 // Re-run against the freshest bundle: if files changed since
                 // the preview, the apply still operates on disk truth.
-                reload(&mut generation, today, &mut snapshot);
+                reload(&mut generation, at, &mut snapshot);
                 let result = snapshot.as_ref().map_or_else(
                     || Err(RefactorError::Io("no snapshot loaded yet".into())),
                     |snap| run_refactor(snap, &op, false, &config.author),
@@ -89,17 +95,17 @@ fn run_worker(config: &WorkerConfig, cmd_rx: &Receiver<Command>, msg_tx: &Sender
                         .map(|report| toast_for(&report))
                         .map_err(|e| e.to_string()),
                 ));
-                reload(&mut generation, today, &mut snapshot);
+                reload(&mut generation, at, &mut snapshot);
             }
             Command::StampVerification(id) => {
                 let result = stamp_verification(config, &id);
                 let _ = msg_tx.send(Msg::Applied(result));
-                reload(&mut generation, today, &mut snapshot);
+                reload(&mut generation, at, &mut snapshot);
             }
             Command::SetStaleAfter(id, date) => {
                 let result = set_stale_after(config, &id, date);
                 let _ = msg_tx.send(Msg::Applied(result));
-                reload(&mut generation, today, &mut snapshot);
+                reload(&mut generation, at, &mut snapshot);
             }
             Command::CreateConcept {
                 rel_path,
@@ -116,7 +122,7 @@ fn run_worker(config: &WorkerConfig, cmd_rx: &Receiver<Command>, msg_tx: &Sender
                     .map(|path| format!("✔ created {}", path.display()))
                     .map_err(|e| e.to_string());
                 let _ = msg_tx.send(Msg::Applied(result));
-                reload(&mut generation, today, &mut snapshot);
+                reload(&mut generation, at, &mut snapshot);
             }
             Command::PreviewFix => match remediate_bundle(&config.root, &FixOptions::default()) {
                 Ok(report) => {
@@ -140,7 +146,7 @@ fn run_worker(config: &WorkerConfig, cmd_rx: &Receiver<Command>, msg_tx: &Sender
                     })
                     .map_err(|e| e.to_string());
                 let _ = msg_tx.send(Msg::Applied(result));
-                reload(&mut generation, today, &mut snapshot);
+                reload(&mut generation, at, &mut snapshot);
             }
             Command::ApplyFix => {
                 // Re-run so the applied fix reflects the current disk state,
@@ -153,7 +159,7 @@ fn run_worker(config: &WorkerConfig, cmd_rx: &Receiver<Command>, msg_tx: &Sender
                     })
                     .map_err(|e| e.to_string());
                 let _ = msg_tx.send(Msg::Applied(result));
-                reload(&mut generation, today, &mut snapshot);
+                reload(&mut generation, at, &mut snapshot);
             }
         }
     }

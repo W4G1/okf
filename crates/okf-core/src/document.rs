@@ -21,7 +21,9 @@
 use crate::computation::{AttestedComputation, InlineComputation};
 use crate::error::DocumentError;
 use crate::footnotes::{self, FootnoteDef, FootnoteRef};
-use crate::frontmatter::{Frontmatter, RECOMMENDED_FRONTMATTER_KEYS, REQUIRED_FRONTMATTER_KEYS};
+use crate::frontmatter::{
+    DocumentLayout, Frontmatter, RECOMMENDED_FRONTMATTER_KEYS, REQUIRED_FRONTMATTER_KEYS,
+};
 use crate::links::{self, Citation, Link};
 use crate::provenance::{self, Attribution};
 
@@ -66,16 +68,11 @@ impl Document {
     ///
     /// # Line endings
     ///
-    /// The two paths handle line endings the same way the reference
-    /// implementation does, by deliberate parity:
-    /// - **No frontmatter**: the body is kept verbatim, so a file with CRLF
-    ///   line endings round-trips byte-identically. This mirrors the
-    ///   reference's `return cls(frontmatter={}, body=text)`.
-    /// - **With frontmatter**: the body is rebuilt via `lines().join("\n")`,
-    ///   which normalizes `\r\n` (and a trailing `\r`) to `\n`. This mirrors
-    ///   the reference's `text.splitlines()` + `"\n".join(...)`. Anything
-    ///   inside the frontmatter block is likewise normalized before YAML
-    ///   parsing.
+    /// Without frontmatter, the body is kept verbatim. With frontmatter,
+    /// the body and YAML are read as LF text, as in the reference parser,
+    /// but the opening delimiter's line ending and the blank separator are
+    /// remembered. [`Document::serialize`] restores them on a rewrite;
+    /// [`Document::serialize_canonical`] deliberately emits LF.
     ///
     /// # Errors
     ///
@@ -103,8 +100,22 @@ impl Document {
         }
         let end_idx = end_idx.ok_or(DocumentError::UnterminatedFrontmatter)?;
 
-        let fm_text = lines[1..end_idx].join("\n");
-        let frontmatter = Frontmatter::parse(&fm_text)?;
+        // Every YAML line, including the last, ended before the closing
+        // delimiter. Keep that newline: `|+` scalars count trailing blanks.
+        let fm_text = lines[1..end_idx]
+            .iter()
+            .fold(String::new(), |mut out, line| {
+                out.push_str(line);
+                out.push('\n');
+                out
+            });
+        let mut frontmatter = Frontmatter::parse(&fm_text)?;
+        frontmatter.document_layout = Some(DocumentLayout {
+            blank_separator: lines.get(end_idx + 1) == Some(&""),
+            crlf: text
+                .split_once('\n')
+                .is_some_and(|(first, _)| first.ends_with('\r')),
+        });
 
         let mut body = lines[end_idx + 1..].join("\n");
         if let Some(stripped) = body.strip_prefix('\n') {
@@ -129,9 +140,11 @@ impl Document {
     }
 
     /// Serializes the document back to text: frontmatter delimited by `---`,
-    /// a blank line, then the body (terminated by a newline). If the
-    /// frontmatter is empty, the delimiters are omitted and only the body is
-    /// emitted.
+    /// then the body (terminated by a newline). Parsed documents keep their
+    /// blank separator and LF or CRLF line endings; new documents use a blank
+    /// separator and LF. An empty body does not gain a separator, but keeps
+    /// one that was present when parsed. If the frontmatter is empty, only
+    /// the body is emitted.
     ///
     /// Frontmatter entries whose value has not changed since the document was
     /// parsed are written back exactly as they were, so a rewrite touches only
@@ -141,7 +154,7 @@ impl Document {
     /// [`Document::serialize_canonical`].
     #[must_use]
     pub fn serialize(&self) -> String {
-        self.serialize_with(&self.frontmatter.to_yaml_preserving())
+        self.serialize_with(&self.frontmatter.to_yaml_preserving(), false)
     }
 
     /// Serializes the document with its frontmatter re-emitted in the
@@ -151,20 +164,33 @@ impl Document {
     /// [`Document::serialize`], which leaves untouched values as written.
     #[must_use]
     pub fn serialize_canonical(&self) -> String {
-        self.serialize_with(&self.frontmatter.to_yaml_canonical())
+        self.serialize_with(&self.frontmatter.to_yaml_canonical(), true)
     }
 
-    fn serialize_with(&self, frontmatter_yaml: &str) -> String {
-        let body = if self.body.ends_with('\n') {
+    fn serialize_with(&self, frontmatter_yaml: &str, canonical: bool) -> String {
+        let body = if self.body.is_empty() || self.body.ends_with('\n') {
             self.body.clone()
         } else {
             format!("{}\n", self.body)
         };
-        if self.frontmatter.is_empty() {
+        let layout = self.frontmatter.document_layout;
+        let text = if self.frontmatter.is_empty() {
             body
         } else {
-            let fm_text = frontmatter_yaml.trim_end();
-            format!("{FRONTMATTER_DELIM}\n{fm_text}\n{FRONTMATTER_DELIM}\n\n{body}")
+            let has_separator = if canonical {
+                !body.is_empty()
+            } else {
+                layout.map_or(!body.is_empty(), |layout| layout.blank_separator)
+            };
+            let separator = if has_separator { "\n" } else { "" };
+            // Do not trim the YAML: trailing blank lines can belong to a `|+`
+            // scalar. Both YAML serializers already terminate their output.
+            format!("{FRONTMATTER_DELIM}\n{frontmatter_yaml}{FRONTMATTER_DELIM}\n{separator}{body}")
+        };
+        if !canonical && layout.is_some_and(|layout| layout.crlf) {
+            text.replace("\r\n", "\n").replace('\n', "\r\n")
+        } else {
+            text
         }
     }
 

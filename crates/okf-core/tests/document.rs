@@ -15,6 +15,171 @@ fn with_frontmatter(frontmatter: &str) -> Document {
 }
 
 #[test]
+fn rewrites_preserve_the_frontmatter_separator() {
+    for separator in ["", "\n", "\n\n"] {
+        let src = format!("---\ntype: X\n---\n{separator}Body.\n");
+        let mut doc = Document::parse(&src).unwrap();
+        assert_eq!(doc.serialize(), src);
+        doc.frontmatter.set("type", Value::from("Y"));
+        assert_eq!(doc.serialize(), src.replacen("type: X", "type: \"Y\"", 1));
+        assert_eq!(
+            Document::parse(&src).unwrap().serialize_canonical(),
+            format!("---\ntype: X\n---\n\n{}\n", doc.body)
+        );
+    }
+}
+
+#[test]
+fn frontmatter_only_documents_do_not_gain_blank_lines() {
+    let src = "---\ntype: X\n---\n";
+    let doc = Document::parse(src).unwrap();
+    assert_eq!(doc.serialize(), src);
+    assert_eq!(doc.serialize_canonical(), src);
+    assert_eq!(Document::new(doc.frontmatter, "").serialize(), src);
+}
+
+#[test]
+fn empty_bodies_keep_an_existing_separator_on_normal_rewrites() {
+    for newline in ["\n", "\r\n"] {
+        for separator in ["", newline] {
+            let src = format!("---{newline}type: Note{newline}---{newline}{separator}");
+            let mut doc = Document::parse(&src).unwrap();
+            assert_eq!(doc.serialize(), src);
+            assert_eq!(doc.serialize_canonical(), "---\ntype: Note\n---\n");
+            doc.frontmatter.set("type", Value::from("Policy"));
+            assert_eq!(doc.serialize(), src.replace("type: Note", "type: Policy"));
+        }
+    }
+}
+
+#[test]
+fn rewriting_crlf_preserves_line_endings() {
+    let src = "---\r\ntype: X\r\ntags: [a, b] # keep\r\n---\r\nBody.\r\n\r\nMore.\r\n";
+    let mut doc = Document::parse(src).unwrap();
+    assert_eq!(doc.serialize(), src);
+    doc.frontmatter.set("type", Value::from("Y"));
+    doc.body = doc.body.replace("More.", "Changed.");
+    assert_eq!(
+        doc.serialize(),
+        src.replace("type: X", "type: \"Y\"")
+            .replace("More.", "Changed.")
+    );
+    assert!(!doc.serialize_canonical().contains('\r'));
+}
+
+#[test]
+fn removing_frontmatter_keeps_crlf_in_the_body() {
+    for yaml in ["", "type: Note\r\n"] {
+        let mut doc = Document::parse(&format!("---\r\n{yaml}---\r\n\r\nBody.\r\n")).unwrap();
+        doc.frontmatter.remove("type");
+        assert_eq!(doc.serialize(), "Body.\r\n");
+    }
+}
+
+#[test]
+fn keep_block_scalars_preserve_all_trailing_newlines() {
+    for suffix in ["", "title: Example\n"] {
+        let src = format!("---\ntype: X\nx-note: |+\n  Text.\n\n\n{suffix}---\n\nBody.\n");
+        let mut doc = Document::parse(&src).unwrap();
+        assert_eq!(
+            doc.frontmatter.get("x-note").unwrap().as_str(),
+            Some("Text.\n\n\n")
+        );
+        assert_eq!(doc.serialize(), src);
+        let canonical = doc.serialize_canonical();
+        assert_eq!(
+            Document::parse(&canonical).unwrap().frontmatter,
+            doc.frontmatter
+        );
+        doc.frontmatter.set("x-note", Value::from("Changed.\n\n\n"));
+        assert_eq!(
+            Document::parse(&doc.serialize())
+                .unwrap()
+                .frontmatter
+                .get("x-note")
+                .unwrap()
+                .as_str(),
+            Some("Changed.\n\n\n")
+        );
+    }
+}
+
+#[test]
+fn reordering_keeps_blank_lines_with_their_keep_scalar() {
+    for entry in [
+        "description: |+\n  Text.\n\n\n",
+        "sources:\n  - resource: |+\n      Text.\n\n\n",
+    ] {
+        let mut doc = with_frontmatter(&format!("{entry}type: Note"));
+        doc.frontmatter.reorder_preferred();
+        let out = doc.serialize();
+        assert_eq!(
+            Document::parse(&out).unwrap().frontmatter,
+            doc.frontmatter,
+            "{out}"
+        );
+    }
+}
+
+#[test]
+fn editing_entry_boundaries_does_not_add_blank_lines_to_keep_scalars() {
+    for entry in [
+        "x-note: |+\n  Text.\n",
+        "sources:\n  - resource: |+\n      Text.\n",
+    ] {
+        for trailing in [
+            "\n",
+            "\n# Keep this comment.\nx-other: [one, two] # keep this style\n",
+        ] {
+            for reorder in [true, false] {
+                let src = format!("---\n{entry}title: 'A'\ntype: Note\n{trailing}---\n");
+                let mut doc = Document::parse(&src).unwrap();
+                assert_eq!(doc.serialize(), src);
+                if reorder {
+                    doc.frontmatter.reorder_preferred();
+                } else {
+                    doc.frontmatter.remove("title");
+                    doc.frontmatter.remove("type");
+                }
+                let out = doc.serialize();
+                assert_eq!(
+                    Document::parse(&out).unwrap().frontmatter,
+                    doc.frontmatter,
+                    "{out}"
+                );
+                if reorder {
+                    assert!(
+                        out.contains("title: 'A'"),
+                        "unrelated entries must keep their style: {out}"
+                    );
+                }
+                if trailing.contains("x-other") {
+                    assert!(
+                        out.contains(trailing),
+                        "unrelated comments and style must survive: {out}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn reorder_preferred_keeps_duplicate_keys_and_their_values() {
+    let mut doc = with_frontmatter(
+        "x-note: first\ntitle: First # keep\ntype: X\ntitle: Second\ntype: Y\nx-note: second\n42: other",
+    );
+    let original_len = doc.frontmatter.len();
+    doc.frontmatter.reorder_preferred();
+    assert_eq!(doc.frontmatter.len(), original_len);
+    let out = doc.serialize();
+    assert!(out.starts_with("---\ntype: X\ntype: Y\ntitle: First # keep\ntitle: Second\n"));
+    assert_eq!(Document::parse(&out).unwrap().frontmatter, doc.frontmatter);
+    doc.frontmatter.reorder_preferred();
+    assert_eq!(doc.serialize(), out);
+}
+
+#[test]
 fn roundtrip_preserves_frontmatter_and_body() {
     let src = "---\n\
         type: BigQuery Table\n\
@@ -547,42 +712,22 @@ fn a_non_string_type_is_coerced_not_dropped() {
 }
 
 #[test]
-fn line_endings_match_the_reference_parser() {
-    // The reference implementation's two parse paths handle line endings
-    // differently, and this crate mirrors that by deliberate parity:
-    //
-    //  * no frontmatter -> `return cls(body=text)`: the body is kept verbatim,
-    //    so CRLF round-trips byte-identically;
-    //  * frontmatter    -> `splitlines()` + `"\n".join(...)`: the body (and
-    //    the frontmatter text) is normalized to `\n`.
-    //
-    // Locking the behaviour in so a "fix" that normalizes both paths does not
-    // silently break parity with the reference bundles.
-
+fn line_endings_survive_rewrites_but_canonical_output_uses_lf() {
     // No frontmatter: CRLF is preserved verbatim.
     let src = "# Hello\r\n\r\nNo frontmatter here.\r\n";
     let doc = Document::parse(src).unwrap();
     assert!(doc.frontmatter.is_empty());
     assert_eq!(doc.body, src);
+    assert_eq!(doc.serialize(), src);
 
-    // With frontmatter: CRLF in the body is normalized to LF, and the `\r` on
-    // the closing `---` is stripped so the delimiter is still recognized.
+    // The body API still exposes normalized text, but a rewrite restores
+    // the parsed line endings rather than reformatting the entire file.
     let src = "---\r\ntype: X\r\n---\r\n\r\n# Hello\r\n\r\nBody.\r\n";
     let doc = Document::parse(src).unwrap();
     assert_eq!(doc.frontmatter.type_().as_deref(), Some("X"));
     assert_eq!(doc.body, "# Hello\n\nBody.");
-
-    // Re-serializing always emits `\n`; a CRLF file that went through the
-    // frontmatter path therefore does not round-trip byte-identically,
-    // matching the reference's `serialize()` which joins on `"\n"`. Asserting
-    // both the absence of CR and that the bytes differ, so a future
-    // `serialize()` change that no-op'd the input still fails this test.
-    let serialized = doc.serialize();
-    assert!(
-        !serialized.contains('\r'),
-        "serialize must not emit CR: {serialized:?}"
-    );
-    assert_ne!(serialized, src, "serialize must not round-trip CRLF");
+    assert_eq!(doc.serialize(), src);
+    assert_eq!(doc.serialize_canonical(), src.replace("\r\n", "\n"));
 }
 
 #[test]
