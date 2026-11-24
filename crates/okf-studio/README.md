@@ -11,7 +11,7 @@ navigate, audit, and refactor it interactively — without leaving the terminal.
 
 ```text
 cargo install okf     # the studio ships in the default feature set
-okf studio [bundle]   # --today, --tab, --no-watch, --author
+okf studio [bundle]   # --today, --at, --tab, --no-watch, --author
 ```
 
 ## Workspaces

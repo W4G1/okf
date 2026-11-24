@@ -312,7 +312,7 @@ Actors are written `<producer>/<version>` for an agent or tool, or `<scheme>:<id
 Knowledge decays over time. The `stale_after` field gives a concept an explicit review date. Like every OKF timestamp it is an RFC 3339 date-time with an offset (`"2026-12-31T00:00:00Z"`) or a date (`"2026-12-31"`, the start of that day in UTC).
 
 - `okf trust .` flags stale concepts in terminal output.
-- Staleness is judged against the current time. `okf validate . --today 2026-07-01` pins a day instead (judged at its start, in UTC), which keeps a CI run reproducible.
+- Staleness is judged against the current time. `okf validate . --today 2026-07-01` pins a day instead (judged at its start, in UTC), which keeps a CI run reproducible. `--at 2026-07-01T09:30:00+02:00` pins an exact instant; it takes a full RFC 3339 date-time with an offset and cannot be combined with `--today`. `validate`, `lint`, `info`, `trust`, `parse`, and `studio` accept both.
 - A `stale_after` that does not parse is never treated as fresh: the concept counts as stale and the value is reported as malformed.
 
 Stale means the content needs to be checked again, not that it is false. Freshness and trust are independent.
@@ -416,6 +416,9 @@ okf studio ./company_knowledge --tab graph
 
 # Check staleness against a pinned date and set an author identity
 okf studio ./company_knowledge --today 2026-12-01 --author "human:sarah"
+
+# Or against an exact instant (verification stamps still record the actual time)
+okf studio ./company_knowledge --at 2026-12-01T09:30:00Z
 ```
 
 ### Scaffolding: init and new
@@ -483,6 +486,9 @@ okf validate ./company_knowledge
 
 # Check conformance against a specific evaluation date
 okf validate ./company_knowledge --today 2026-12-01
+
+# Or against an exact instant (RFC 3339 with an offset)
+okf validate ./company_knowledge --at 2026-12-01T09:30:00+01:00
 
 # Automatically fix what can be fixed (and migrate v0.1 and v0.2 forms)
 okf validate ./company_knowledge --fix
@@ -827,7 +833,7 @@ This repository is structured as a multi-crate Rust workspace:
 - **Computed, not stored, trust signals:** Trust tiers and credibility signals are derived at query time from verified actors. Storing a subjective trust number is fragile and non-portable.
 - **Permissive and resilient loading:** `Bundle::load` never crashes on a single broken file; parse errors and broken links are collected as diagnostic graph items so you can inspect and fix them. The typed accessors apply the specification's rules for values that are absent, empty, or oddly shaped, so a scalar `tags` reads as one tag and an entry without its required key is ignored.
 - **Never read outside the bundle:** a path that climbs out of the bundle root, or a symbolic link that leads out of it, is treated as external and is not opened.
-- **Deterministic by default:** `validate_bundle` never looks at the clock; staleness is checked only when a time is passed in (`validate_bundle_at`, `validate_bundle_at_instant`). The CLI judges staleness at the current time, and `--today` pins a day so that a run is reproducible.
+- **Deterministic by default:** `validate_bundle` never looks at the clock; staleness is checked only when a time is passed in (`validate_bundle_at`, `validate_bundle_at_instant`). The CLI judges staleness at the current time, and `--today` pins a day, or `--at` an exact instant, so that a run is reproducible.
 
 ---
 
